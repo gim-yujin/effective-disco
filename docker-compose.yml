@@ -1,0 +1,61 @@
+# ────────────────────────────────────────────────────────────
+# docker-compose.yml
+# 개발/스테이징용 단일 호스트 배포 구성.
+# 프로덕션에서는 Secrets Manager나 Vault로 민감 값을 관리할 것.
+# ────────────────────────────────────────────────────────────
+
+services:
+
+  # ── PostgreSQL 데이터베이스 ────────────────────────────────
+  db:
+    image: postgres:16-alpine          # 경량 Alpine 기반 PostgreSQL 16
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: effectivedisco      # 생성할 데이터베이스 이름
+      POSTGRES_USER: effectivedisco    # 접속 사용자
+      POSTGRES_PASSWORD: ${DB_PASSWORD} # .env 에서 주입 (필수)
+    volumes:
+      - db_data:/var/lib/postgresql/data  # 데이터 영속성 보장
+    healthcheck:
+      # pg_isready 로 DB가 실제로 쿼리를 받을 준비가 됐는지 확인
+      test: ["CMD-SHELL", "pg_isready -U effectivedisco -d effectivedisco"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  # ── Spring Boot 애플리케이션 ──────────────────────────────
+  app:
+    build:
+      context: .          # 프로젝트 루트의 Dockerfile 사용
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    ports:
+      - "${APP_PORT:-8080}:8080"    # 호스트 포트는 .env로 변경 가능 (기본 8080)
+    depends_on:
+      db:
+        condition: service_healthy  # DB 헬스체크 통과 후 앱 시작
+    environment:
+      # Spring Boot relaxed binding: SPRING_DATASOURCE_URL → spring.datasource.url
+      SPRING_DATASOURCE_URL: jdbc:postgresql://db:5432/effectivedisco
+      SPRING_DATASOURCE_USERNAME: effectivedisco
+      SPRING_DATASOURCE_PASSWORD: ${DB_PASSWORD}
+
+      # JPA — 프로덕션에서는 SQL 로그 비활성화
+      SPRING_JPA_SHOW_SQL: "false"
+
+      # Hibernate DDL: validate(스키마 변경 금지) 또는 update(자동 마이그레이션)
+      # 프로덕션에서는 Flyway/Liquibase 사용을 권장하며 여기서는 update 유지
+      SPRING_JPA_HIBERNATE_DDL_AUTO: update
+
+      # JWT 설정 — .env 에서 주입 (필수)
+      JWT_SECRET: ${JWT_SECRET}
+      JWT_EXPIRATION: ${JWT_EXPIRATION:-86400000}  # 기본 24시간
+
+      # JVM 힙 크기 등 JVM 옵션 (선택)
+      JAVA_OPTS: ${JAVA_OPTS:--Xmx512m}
+
+# ── Named Volume ──────────────────────────────────────────
+volumes:
+  db_data:
+    # docker volume inspect effectivedisco_db_data 로 경로 확인 가능

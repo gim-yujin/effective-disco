@@ -89,6 +89,17 @@ public class PostService {
         return new PostResponse(post, postLikeRepository.countByPost(post));
     }
 
+    /**
+     * 특정 사용자가 작성한 게시물을 최신순으로 페이징 반환.
+     * 프로필 페이지의 "작성한 게시물" 섹션에 사용한다.
+     */
+    public Page<PostResponse> getPostsByAuthor(String username, int page, int size) {
+        User user = findUser(username);
+        return postRepository
+                .findByAuthorOrderByCreatedAtDesc(user, PageRequest.of(page, size))
+                .map(post -> new PostResponse(post, postLikeRepository.countByPost(post)));
+    }
+
     /** 전체 태그 이름 목록 (태그 필터 바 렌더링용) */
     public List<String> getAllTagNames() {
         return tagRepository.findAllByOrderByNameAsc().stream()

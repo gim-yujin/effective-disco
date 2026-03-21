@@ -103,7 +103,12 @@
                                th:text="'#' + ${t}">태그</a>
                         </span>
                     </td>
-                    <td class="col-author" th:text="${post.author}">작성자</td>
+                    <!-- 작성자 이름 클릭 → 프로필 페이지 -->
+                    <td class="col-author">
+                        <a class="author-link"
+                           th:href="@{/users/{u}(u=${post.author})}"
+                           th:text="${post.author}">작성자</a>
+                    </td>
                     <td class="col-date"
                         th:text="${#temporals.format(post.createdAt, 'yy/MM/dd')}">날짜</td>
                     <td class="col-views"    th:text="${post.viewCount}">0</td>

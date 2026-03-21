@@ -9,7 +9,9 @@
         <nav>
             <sec:authorize access="isAuthenticated()">
                 <!-- 로그인 상태: 사용자명·로그아웃 표시 -->
-                <span sec:authentication="name"></span>
+                <a class="author-link"
+                   th:href="@{/users/{u}(u=${#authentication.name})}"
+                   sec:authentication="name"></a>
                 <a th:href="@{/logout}"
                    onclick="return confirm('로그아웃 하시겠습니까?')">[로그아웃]</a>
             </sec:authorize>

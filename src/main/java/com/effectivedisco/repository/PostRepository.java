@@ -55,4 +55,16 @@ public interface PostRepository extends JpaRepository<Post, Long> {
 
     /** 게시판별 게시물 수 (홈 화면 게시판 목록의 "N개" 표시용) */
     long countByBoard(Board board);
+
+    /* ── 프로필 관련 쿼리 ────────────────────────────────────── */
+
+    /**
+     * 특정 사용자가 작성한 게시물을 최신순으로 페이징 조회.
+     * 프로필 페이지의 "작성한 게시물" 목록에 사용한다.
+     */
+    Page<Post> findByAuthorOrderByCreatedAtDesc(
+            com.effectivedisco.domain.User author, Pageable pageable);
+
+    /** 특정 사용자의 총 게시물 수 (프로필 통계 표시용) */
+    long countByAuthor(com.effectivedisco.domain.User author);
 }
