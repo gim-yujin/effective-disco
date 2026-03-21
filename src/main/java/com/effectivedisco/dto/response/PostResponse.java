@@ -20,6 +20,13 @@ public class PostResponse {
     private final int viewCount;
     private final List<String> tags;
 
+    /**
+     * 게시물이 속한 게시판 이름·슬러그.
+     * 게시판이 지정되지 않은 기존 게시물은 null을 반환한다.
+     */
+    private final String boardName;
+    private final String boardSlug;
+
     public PostResponse(Post post, long likeCount) {
         this.id = post.getId();
         this.title = post.getTitle();
@@ -34,6 +41,9 @@ public class PostResponse {
                 .map(t -> t.getName())
                 .sorted()
                 .collect(Collectors.toList());
+        // 게시판이 null(미분류)인 경우 boardName/boardSlug도 null
+        this.boardName = post.getBoard() != null ? post.getBoard().getName() : null;
+        this.boardSlug = post.getBoard() != null ? post.getBoard().getSlug() : null;
     }
 
     public PostResponse(Post post) {

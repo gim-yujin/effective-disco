@@ -11,7 +11,25 @@
 
 <main>
     <div class="container">
-        <a class="back-link" th:href="@{/}">&larr; 목록으로</a>
+        <!--
+            빵 부스러기(breadcrumb).
+            게시판이 지정된 게시물: 홈 > 게시판명 > 게시물제목
+            미분류 게시물: 홈 > 게시물제목
+        -->
+        <div class="breadcrumb">
+            <a th:href="@{/}">홈</a>
+            <span class="breadcrumb-sep">&rsaquo;</span>
+            <th:block th:if="${post.boardSlug != null}">
+                <a th:href="@{/boards/{slug}(slug=${post.boardSlug})}"
+                   th:text="${post.boardName}">게시판</a>
+                <span class="breadcrumb-sep">&rsaquo;</span>
+            </th:block>
+            <span th:text="${post.title}">게시물 제목</span>
+        </div>
+
+        <!-- 목록으로 돌아가는 링크: 게시판이 있으면 게시판 목록, 없으면 홈 -->
+        <a class="back-link"
+           th:href="${post.boardSlug != null} ? '/boards/' + ${post.boardSlug} : '/'">&larr; 목록으로</a>
 
         <div class="post-header">
             <h2 th:text="${post.title}">제목</h2>

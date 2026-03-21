@@ -2,11 +2,13 @@ package com.effectivedisco.controller.web;
 
 import com.effectivedisco.dto.request.CommentRequest;
 import com.effectivedisco.dto.request.PostRequest;
+import com.effectivedisco.dto.response.BoardResponse;
 import com.effectivedisco.dto.response.PostResponse;
+import com.effectivedisco.service.BoardService;
 import com.effectivedisco.service.CommentService;
 import com.effectivedisco.service.PostService;
-import lombok.RequiredArgsConstructor;
 import jakarta.servlet.http.HttpSession;
+import lombok.RequiredArgsConstructor;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.stereotype.Controller;
@@ -14,74 +16,159 @@ import org.springframework.ui.Model;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.HashSet;
+import java.util.List;
 import java.util.Set;
 
+/**
+ * 웹(Thymeleaf) 컨트롤러.
+ *
+ * URL 구조:
+ *   /                              홈 — 게시판 목록
+ *   /boards/{slug}                 게시판별 게시물 목록
+ *   /boards/{slug}/posts/new       특정 게시판에 글쓰기 폼
+ *   /boards/{slug}/posts           글쓰기 폼 제출
+ *   /posts/{id}                    게시물 상세
+ *   /posts/{id}/edit               게시물 수정 폼
+ *   /posts/{id}/delete             게시물 삭제
+ *   /posts/{id}/like               좋아요 토글
+ *   /posts/{postId}/comments/**    댓글·대댓글 CRUD
+ */
 @Controller
 @RequiredArgsConstructor
 public class BoardWebController {
 
-    private final PostService postService;
+    private final PostService    postService;
+    private final BoardService   boardService;
     private final CommentService commentService;
 
+    /* ══════════════════════════════════════════════════════════
+     * 홈 / 게시판 목록
+     * ══════════════════════════════════════════════════════════ */
+
+    /**
+     * 홈 화면 — 게시판 목록.
+     * 각 게시판의 이름·설명·게시물 수를 표시한다.
+     */
     @GetMapping("/")
-    public String index(@RequestParam(defaultValue = "0") int page,
-                        @RequestParam(defaultValue = "20") int size,
-                        @RequestParam(required = false) String keyword,
-                        @RequestParam(required = false) String tag,
-                        Model model) {
-        model.addAttribute("posts", postService.getPosts(page, size, keyword, tag));
-        model.addAttribute("keyword", keyword != null ? keyword : "");
-        model.addAttribute("tag", tag != null ? tag : "");
-        model.addAttribute("allTags", postService.getAllTagNames());
-        return "index";
+    public String boardList(Model model) {
+        List<BoardResponse> boards = boardService.getAllBoards();
+        model.addAttribute("boards", boards);
+        return "boards/index"; // templates/boards/index.html
     }
 
+    /* ══════════════════════════════════════════════════════════
+     * 게시판별 게시물 목록
+     * ══════════════════════════════════════════════════════════ */
+
+    /**
+     * 특정 게시판의 게시물 목록.
+     * keyword(검색)와 tag(태그 필터)를 조합해 사용할 수 있다.
+     *
+     * @param slug 게시판 슬러그 (URL 경로 변수)
+     */
+    @GetMapping("/boards/{slug}")
+    public String boardPostList(@PathVariable String slug,
+                                @RequestParam(defaultValue = "0") int page,
+                                @RequestParam(defaultValue = "20") int size,
+                                @RequestParam(required = false) String keyword,
+                                @RequestParam(required = false) String tag,
+                                Model model) {
+        // 게시물 목록 (게시판 내 검색/필터 포함)
+        model.addAttribute("posts",   postService.getPosts(page, size, keyword, tag, slug));
+        // 현재 게시판 정보 (헤더·빵 부스러기 표시용)
+        model.addAttribute("board",   boardService.getBoard(slug));
+        model.addAttribute("keyword", keyword != null ? keyword : "");
+        model.addAttribute("tag",     tag     != null ? tag     : "");
+        // 이 게시판 안에서 사용된 태그 목록 (태그 필터 바)
+        model.addAttribute("allTags", postService.getAllTagNames());
+        return "boards/list"; // templates/boards/list.html
+    }
+
+    /* ══════════════════════════════════════════════════════════
+     * 게시물 작성 (게시판 지정)
+     * ══════════════════════════════════════════════════════════ */
+
+    /**
+     * 특정 게시판에 새 게시물을 작성하는 폼.
+     * boardSlug 가 hidden 필드로 PostRequest에 미리 채워진다.
+     */
+    @GetMapping("/boards/{slug}/posts/new")
+    public String newPostForm(@PathVariable String slug, Model model) {
+        PostRequest postRequest = new PostRequest();
+        postRequest.setBoardSlug(slug); // 게시판 슬러그를 폼에 미리 설정
+        model.addAttribute("postRequest", postRequest);
+        model.addAttribute("board",  boardService.getBoard(slug));
+        model.addAttribute("isEdit", false);
+        return "post/form";
+    }
+
+    /**
+     * 새 게시물 저장.
+     * 폼에서 전달된 boardSlug 를 PostRequest 에서 읽어 서비스로 전달한다.
+     * 저장 후 생성된 게시물 상세 페이지로 리다이렉트한다.
+     */
+    @PostMapping("/boards/{slug}/posts")
+    public String createPost(@PathVariable String slug,
+                             @ModelAttribute PostRequest postRequest,
+                             @AuthenticationPrincipal UserDetails userDetails) {
+        // URL 경로의 slug를 우선 적용 (폼 조작 방지)
+        postRequest.setBoardSlug(slug);
+        PostResponse post = postService.createPost(postRequest, userDetails.getUsername());
+        return "redirect:/posts/" + post.getId();
+    }
+
+    /* ══════════════════════════════════════════════════════════
+     * 게시물 상세
+     * ══════════════════════════════════════════════════════════ */
+
+    /**
+     * 게시물 상세 페이지.
+     *
+     * 세션 기반 조회수 중복 방지:
+     * HttpSession 의 "viewedPosts" Set에 포함되지 않은 게시물 ID만 조회수를 증가시킨다.
+     * 같은 세션(= 브라우저 탭) 내에서 같은 게시물을 새로 고침해도 중복 카운트되지 않는다.
+     */
     @GetMapping("/posts/{id}")
-    public String postDetail(@PathVariable Long id, Model model,
+    public String postDetail(@PathVariable Long id,
+                             Model model,
                              @AuthenticationPrincipal UserDetails userDetails,
                              HttpSession session) {
+        // 세션에서 이미 조회한 게시물 ID Set을 가져오거나 새로 생성
         @SuppressWarnings("unchecked")
         Set<Long> viewed = (Set<Long>) session.getAttribute("viewedPosts");
         if (viewed == null) {
             viewed = new HashSet<>();
             session.setAttribute("viewedPosts", viewed);
         }
+        // 처음 방문한 게시물이면 조회수를 1 증가
         if (viewed.add(id)) {
             postService.incrementViewCount(id);
         }
-        model.addAttribute("post", postService.getPost(id));
-        model.addAttribute("comments", commentService.getComments(id));
+
+        PostResponse post = postService.getPost(id);
+        model.addAttribute("post",           post);
+        model.addAttribute("comments",       commentService.getComments(id));
         model.addAttribute("commentRequest", new CommentRequest());
-        boolean liked = userDetails != null && postService.isLikedByUser(id, userDetails.getUsername());
+
+        // 현재 사용자의 좋아요 여부 (비로그인이면 false)
+        boolean liked = userDetails != null
+                && postService.isLikedByUser(id, userDetails.getUsername());
         model.addAttribute("liked", liked);
+
         return "post/detail";
     }
 
-    @PostMapping("/posts/{id}/like")
-    public String toggleLike(@PathVariable Long id,
-                             @AuthenticationPrincipal UserDetails userDetails) {
-        postService.toggleLike(id, userDetails.getUsername());
-        return "redirect:/posts/" + id;
-    }
+    /* ══════════════════════════════════════════════════════════
+     * 게시물 수정·삭제·좋아요
+     * ══════════════════════════════════════════════════════════ */
 
-    @GetMapping("/posts/new")
-    public String newPostForm(Model model) {
-        model.addAttribute("postRequest", new PostRequest());
-        model.addAttribute("isEdit", false);
-        return "post/form";
-    }
-
-    @PostMapping("/posts")
-    public String createPost(@ModelAttribute PostRequest postRequest,
-                             @AuthenticationPrincipal UserDetails userDetails) {
-        PostResponse post = postService.createPost(postRequest, userDetails.getUsername());
-        return "redirect:/posts/" + post.getId();
-    }
-
+    /** 게시물 수정 폼 — 작성자 본인만 접근 가능 */
     @GetMapping("/posts/{id}/edit")
-    public String editPostForm(@PathVariable Long id, Model model,
+    public String editPostForm(@PathVariable Long id,
+                               Model model,
                                @AuthenticationPrincipal UserDetails userDetails) {
         PostResponse post = postService.getPost(id);
+        // 작성자가 아니면 상세 페이지로 리다이렉트
         if (!post.getAuthor().equals(userDetails.getUsername())) {
             return "redirect:/posts/" + id;
         }
@@ -89,12 +176,17 @@ public class BoardWebController {
         postRequest.setTitle(post.getTitle());
         postRequest.setContent(post.getContent());
         postRequest.setTagsInput(String.join(", ", post.getTags()));
+        postRequest.setBoardSlug(post.getBoardSlug()); // 게시판 정보 유지
+
         model.addAttribute("postRequest", postRequest);
-        model.addAttribute("postId", id);
-        model.addAttribute("isEdit", true);
+        model.addAttribute("postId",      id);
+        model.addAttribute("board",       post.getBoardSlug() != null
+                                          ? boardService.getBoard(post.getBoardSlug()) : null);
+        model.addAttribute("isEdit",      true);
         return "post/form";
     }
 
+    /** 게시물 수정 저장 */
     @PostMapping("/posts/{id}/edit")
     public String updatePost(@PathVariable Long id,
                              @ModelAttribute PostRequest postRequest,
@@ -103,13 +195,39 @@ public class BoardWebController {
         return "redirect:/posts/" + id;
     }
 
+    /**
+     * 게시물 삭제.
+     * 삭제 후 해당 게시판 목록으로 돌아간다.
+     * 게시판 미지정(boardSlug=null) 게시물은 홈("/")으로 이동한다.
+     */
     @PostMapping("/posts/{id}/delete")
     public String deletePost(@PathVariable Long id,
                              @AuthenticationPrincipal UserDetails userDetails) {
+        // 삭제 전에 게시판 슬러그를 미리 저장 (삭제 후엔 조회 불가)
+        PostResponse post = postService.getPost(id);
+        String boardSlug = post.getBoardSlug();
+
         postService.deletePost(id, userDetails.getUsername());
-        return "redirect:/";
+
+        // 게시판이 있으면 해당 게시판 목록으로, 없으면 홈으로
+        return boardSlug != null
+                ? "redirect:/boards/" + boardSlug
+                : "redirect:/";
     }
 
+    /** 좋아요 토글 — 처리 후 게시물 상세 페이지로 리다이렉트 */
+    @PostMapping("/posts/{id}/like")
+    public String toggleLike(@PathVariable Long id,
+                             @AuthenticationPrincipal UserDetails userDetails) {
+        postService.toggleLike(id, userDetails.getUsername());
+        return "redirect:/posts/" + id;
+    }
+
+    /* ══════════════════════════════════════════════════════════
+     * 댓글 / 대댓글
+     * ══════════════════════════════════════════════════════════ */
+
+    /** 댓글 작성 */
     @PostMapping("/posts/{postId}/comments")
     public String addComment(@PathVariable Long postId,
                              @ModelAttribute CommentRequest commentRequest,
@@ -118,6 +236,7 @@ public class BoardWebController {
         return "redirect:/posts/" + postId + "#comments";
     }
 
+    /** 대댓글 작성 (댓글에 달리는 1단계 답글) */
     @PostMapping("/posts/{postId}/comments/{id}/replies")
     public String addReply(@PathVariable Long postId,
                            @PathVariable Long id,
@@ -127,6 +246,7 @@ public class BoardWebController {
         return "redirect:/posts/" + postId + "#comment-" + id;
     }
 
+    /** 댓글·대댓글 삭제 */
     @PostMapping("/posts/{postId}/comments/{id}/delete")
     public String deleteComment(@PathVariable Long postId,
                                 @PathVariable Long id,

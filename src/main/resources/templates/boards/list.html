@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org"
+      xmlns:sec="http://www.thymeleaf.org/extras/spring-security">
+<head>
+    <meta charset="UTF-8">
+    <title th:text="${board.name} + ' — BBS'">게시판</title>
+    <link rel="stylesheet" th:href="@{/css/style.css}">
+</head>
+<body>
+<div th:replace="~{fragments/header :: header}"></div>
+
+<main>
+    <div class="container">
+
+        <!-- 빵 부스러기(breadcrumb): 홈 > 게시판이름 -->
+        <div class="breadcrumb">
+            <a th:href="@{/}">홈</a>
+            <span class="breadcrumb-sep">&rsaquo;</span>
+            <span th:text="${board.name}">게시판이름</span>
+        </div>
+
+        <div class="toolbar">
+            <!-- 태그 필터 활성화 중일 때 -->
+            <h2 th:if="${tag != null and !tag.isBlank()}">
+                <span th:text="${board.name}"></span>
+                &mdash; #<span th:text="${tag}"></span> 태그
+                &mdash; <span th:text="${posts.totalElements}">0</span>건
+            </h2>
+            <!-- 키워드 검색 중일 때 -->
+            <h2 th:if="${(tag == null or tag.isBlank()) and !(keyword == null or keyword.isBlank())}">
+                <span th:text="${board.name}"></span>
+                &mdash; &ldquo;<span th:text="${keyword}"></span>&rdquo; 검색결과
+                &mdash; <span th:text="${posts.totalElements}">0</span>건
+            </h2>
+            <!-- 기본 전체 목록 -->
+            <h2 th:if="${(tag == null or tag.isBlank()) and (keyword == null or keyword.isBlank())}">
+                <span th:text="${board.name}"></span>
+                &mdash; 전체 <span th:text="${posts.totalElements}">0</span>개
+            </h2>
+            <!-- 글쓰기 버튼: 로그인한 사용자에게만 표시 -->
+            <sec:authorize access="isAuthenticated()">
+                <a class="btn btn-primary"
+                   th:href="@{/boards/{slug}/posts/new(slug=${board.slug})}">[글쓰기]</a>
+            </sec:authorize>
+        </div>
+
+        <!-- 태그 필터 바 -->
+        <div class="tag-filter-bar" th:if="${!#lists.isEmpty(allTags)}">
+            <span class="tag-filter-label">태그:</span>
+            <!-- "전체" 버튼: 태그 필터 해제 -->
+            <a class="tag"
+               th:classappend="${tag == null or tag.isBlank()} ? ' active' : ''"
+               th:href="@{/boards/{slug}(slug=${board.slug})}">전체</a>
+            <!-- 개별 태그 필터 링크 -->
+            <a th:each="t : ${allTags}" class="tag"
+               th:classappend="${t == tag} ? ' active' : ''"
+               th:href="@{/boards/{slug}(slug=${board.slug}, tag=${t})}"
+               th:text="'#' + ${t}">태그</a>
+        </div>
+
+        <!-- 키워드 검색 폼 -->
+        <form class="search-form"
+              th:action="@{/boards/{slug}(slug=${board.slug})}" method="get">
+            <input type="text" name="keyword" class="search-input"
+                   placeholder="제목 / 내용 / 작성자 검색"
+                   th:value="${keyword}">
+            <button type="submit" class="btn btn-search">검색</button>
+            <!-- 검색 중일 때만 "전체보기" 링크 표시 -->
+            <a th:if="${keyword != null and !keyword.isBlank()}"
+               th:href="@{/boards/{slug}(slug=${board.slug})}"
+               class="btn btn-reset">전체보기</a>
+        </form>
+
+        <!-- 게시물 목록 테이블 -->
+        <table class="board-table">
+            <thead>
+                <tr>
+                    <th class="col-no">번호</th>
+                    <th>제목</th>
+                    <th class="col-author">작성자</th>
+                    <th class="col-date">날짜</th>
+                    <th class="col-views">조회</th>
+                    <th class="col-comments">댓글</th>
+                    <th class="col-likes">♥</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr th:if="${posts.content.empty}">
+                    <td colspan="7" class="empty">게시물이 없습니다. 첫 글을 작성해보세요!</td>
+                </tr>
+                <tr th:each="post, stat : ${posts.content}">
+                    <!-- 번호: 총 게시물 수에서 역순으로 표시 -->
+                    <td class="col-no"
+                        th:text="${posts.totalElements - (posts.number * posts.size) - stat.index}">1</td>
+                    <td>
+                        <a class="title-link"
+                           th:href="@{/posts/{id}(id=${post.id})}"
+                           th:text="${post.title}">제목</a>
+                        <!-- 태그 뱃지: 클릭 시 해당 태그로 필터링 -->
+                        <span th:if="${!#lists.isEmpty(post.tags)}">
+                            <a th:each="t : ${post.tags}" class="tag tag-sm"
+                               th:href="@{/boards/{slug}(slug=${board.slug}, tag=${t})}"
+                               th:text="'#' + ${t}">태그</a>
+                        </span>
+                    </td>
+                    <td class="col-author" th:text="${post.author}">작성자</td>
+                    <td class="col-date"
+                        th:text="${#temporals.format(post.createdAt, 'yy/MM/dd')}">날짜</td>
+                    <td class="col-views"    th:text="${post.viewCount}">0</td>
+                    <td class="col-comments" th:text="${post.commentCount}">0</td>
+                    <td class="col-likes"    th:text="${post.likeCount}">0</td>
+                </tr>
+            </tbody>
+        </table>
+
+        <!-- 페이지네이션: keyword·tag·slug 를 함께 유지 -->
+        <div class="pagination" th:if="${posts.totalPages > 1}">
+            <a th:if="${!posts.first}"
+               th:href="@{/boards/{slug}(slug=${board.slug}, page=${posts.number - 1}, keyword=${keyword}, tag=${tag})}">&laquo; 이전</a>
+            <th:block th:each="i : ${#numbers.sequence(0, posts.totalPages - 1)}">
+                <span th:if="${i == posts.number}" class="current" th:text="${i + 1}">1</span>
+                <a th:unless="${i == posts.number}"
+                   th:href="@{/boards/{slug}(slug=${board.slug}, page=${i}, keyword=${keyword}, tag=${tag})}"
+                   th:text="${i + 1}">1</a>
+            </th:block>
+            <a th:if="${!posts.last}"
+               th:href="@{/boards/{slug}(slug=${board.slug}, page=${posts.number + 1}, keyword=${keyword}, tag=${tag})}">다음 &raquo;</a>
+        </div>
+
+    </div>
+</main>
+</body>
+</html>

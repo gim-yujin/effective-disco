@@ -42,17 +42,31 @@ public class Post {
     @Column(nullable = false, columnDefinition = "integer default 0")
     private int viewCount = 0;
 
+    /**
+     * 이 게시물이 속한 게시판.
+     * nullable = true: 게시판 기능 도입 이전에 작성된 기존 게시물과의 하위 호환을 위해
+     * NULL을 허용한다. NULL인 게시물은 "미분류"로 처리한다.
+     */
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "board_id")
+    private Board board;
+
     @ManyToMany(fetch = FetchType.LAZY)
     @JoinTable(name = "post_tags",
                joinColumns = @JoinColumn(name = "post_id"),
                inverseJoinColumns = @JoinColumn(name = "tag_id"))
     private Set<Tag> tags = new HashSet<>();
 
+    /**
+     * board 파라미터를 포함한 빌더 생성자.
+     * board를 지정하지 않으면 null(미분류)로 처리된다.
+     */
     @Builder
-    public Post(String title, String content, User author) {
-        this.title = title;
-        this.content = content;
-        this.author = author;
+    public Post(String title, String content, User author, Board board) {
+        this.title     = title;
+        this.content   = content;
+        this.author    = author;
+        this.board     = board;
         this.createdAt = LocalDateTime.now();
     }
 

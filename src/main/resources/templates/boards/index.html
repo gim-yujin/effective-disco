@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org"
+      xmlns:sec="http://www.thymeleaf.org/extras/spring-security">
+<head>
+    <meta charset="UTF-8">
+    <title>EFFECTIVE-DISCO BBS</title>
+    <link rel="stylesheet" th:href="@{/css/style.css}">
+</head>
+<body>
+<div th:replace="~{fragments/header :: header}"></div>
+
+<main>
+    <div class="container">
+
+        <div class="toolbar">
+            <h2>게시판 목록</h2>
+        </div>
+
+        <!-- 게시판 목록 테이블 -->
+        <table class="board-table">
+            <thead>
+                <tr>
+                    <th>게시판</th>
+                    <th class="col-board-desc">설명</th>
+                    <th class="col-board-count">게시물</th>
+                </tr>
+            </thead>
+            <tbody>
+                <!-- 게시판이 하나도 없는 경우 -->
+                <tr th:if="${#lists.isEmpty(boards)}">
+                    <td colspan="3" class="empty">등록된 게시판이 없습니다.</td>
+                </tr>
+                <!-- 게시판 행 반복 -->
+                <tr th:each="board : ${boards}">
+                    <td class="board-name-cell">
+                        <!-- 게시판 이름 클릭 → 해당 게시판 게시물 목록 -->
+                        <a class="title-link board-name-link"
+                           th:href="@{/boards/{slug}(slug=${board.slug})}"
+                           th:text="${board.name}">게시판 이름</a>
+                    </td>
+                    <td class="col-board-desc"
+                        th:text="${board.description}">설명</td>
+                    <td class="col-board-count"
+                        th:text="${board.postCount}">0</td>
+                </tr>
+            </tbody>
+        </table>
+
+    </div>
+</main>
+</body>
+</html>

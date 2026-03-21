@@ -20,13 +20,18 @@ public class PostController {
 
     private final PostService postService;
 
+    /**
+     * 게시물 목록 조회.
+     * boardSlug, keyword, tag 파라미터를 조합해 필터링할 수 있다.
+     */
     @GetMapping
     public ResponseEntity<Page<PostResponse>> getPosts(
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "10") int size,
             @RequestParam(required = false) String keyword,
-            @RequestParam(required = false) String tag) {
-        return ResponseEntity.ok(postService.getPosts(page, size, keyword, tag));
+            @RequestParam(required = false) String tag,
+            @RequestParam(required = false) String boardSlug) {
+        return ResponseEntity.ok(postService.getPosts(page, size, keyword, tag, boardSlug));
     }
 
     @GetMapping("/{id}")

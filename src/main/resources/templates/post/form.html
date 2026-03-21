@@ -10,12 +10,32 @@
 
 <main>
     <div class="container">
+
+        <!-- 빵 부스러기: 게시판이 지정된 경우 홈 > 게시판명 > 글쓰기 표시 -->
+        <div class="breadcrumb" th:if="${board != null}">
+            <a th:href="@{/}">홈</a>
+            <span class="breadcrumb-sep">&rsaquo;</span>
+            <a th:href="@{/boards/{slug}(slug=${board.slug})}"
+               th:text="${board.name}">게시판</a>
+            <span class="breadcrumb-sep">&rsaquo;</span>
+            <span th:text="${isEdit} ? '수정' : '글쓰기'">글쓰기</span>
+        </div>
+
         <div class="form-box">
             <h2 th:text="${isEdit} ? '게시물 수정' : '새 게시물 작성'">글쓰기</h2>
 
-            <form th:action="${isEdit} ? @{/posts/{id}/edit(id=${postId})} : @{/posts}"
+            <!--
+                폼 액션:
+                - 수정: POST /posts/{id}/edit
+                - 신규: POST /boards/{slug}/posts  (게시판 slug를 URL에 포함)
+            -->
+            <form th:action="${isEdit}
+                              ? @{/posts/{id}/edit(id=${postId})}
+                              : @{/boards/{slug}/posts(slug=${postRequest.boardSlug})}"
                   th:object="${postRequest}" method="post">
                 <input type="hidden" th:name="${_csrf.parameterName}" th:value="${_csrf.token}">
+                <!-- boardSlug를 hidden 필드로 전송 (서버에서 URL path 값으로 덮어씀) -->
+                <input type="hidden" th:field="*{boardSlug}">
 
                 <div class="form-group">
                     <label for="title">제목</label>
@@ -38,7 +58,12 @@
                     <button class="btn btn-primary" type="submit">
                         <span th:text="${isEdit} ? '[저장]' : '[등록]'">[등록]</span>
                     </button>
-                    <a class="btn" th:href="${isEdit} ? @{/posts/{id}(id=${postId})} : @{/}">[취소]</a>
+                    <!-- 취소: 수정이면 게시물 상세로, 신규면 게시판 목록(또는 홈)으로 -->
+                    <a class="btn" th:href="${isEdit}
+                        ? @{/posts/{id}(id=${postId})}
+                        : (${postRequest.boardSlug != null}
+                            ? '/boards/' + ${postRequest.boardSlug}
+                            : '/')">[취소]</a>
                 </div>
             </form>
         </div>

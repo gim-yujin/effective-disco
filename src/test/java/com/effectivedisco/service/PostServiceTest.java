@@ -4,6 +4,7 @@ import com.effectivedisco.domain.Post;
 import com.effectivedisco.domain.User;
 import com.effectivedisco.dto.request.PostRequest;
 import com.effectivedisco.dto.response.PostResponse;
+import com.effectivedisco.repository.BoardRepository;
 import com.effectivedisco.repository.PostLikeRepository;
 import com.effectivedisco.repository.PostRepository;
 import com.effectivedisco.repository.TagRepository;
@@ -29,10 +30,11 @@ import static org.mockito.Mockito.verify;
 @ExtendWith(MockitoExtension.class)
 class PostServiceTest {
 
-    @Mock PostRepository postRepository;
-    @Mock UserRepository userRepository;
+    @Mock PostRepository     postRepository;
+    @Mock UserRepository     userRepository;
     @Mock PostLikeRepository postLikeRepository;
-    @Mock TagRepository tagRepository;
+    @Mock TagRepository      tagRepository;
+    @Mock BoardRepository    boardRepository; // PostService의 resolveBoard()가 사용
 
     @InjectMocks PostService postService;
 
@@ -53,7 +55,7 @@ class PostServiceTest {
 
         assertThatThrownBy(() -> postService.getPost(99L))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("Post not found");
+                .hasMessageContaining("게시물을 찾을 수 없습니다");
     }
 
     @Test

@@ -4,14 +4,17 @@
 <body>
 <header th:fragment="header">
     <div class="container">
+        <!-- 사이트 로고: 클릭 시 게시판 목록(홈)으로 이동 -->
         <h1><a href="/">[ EFFECTIVE-DISCO BBS ]</a></h1>
         <nav>
             <sec:authorize access="isAuthenticated()">
-                <a th:href="@{/posts/new}">[글쓰기]</a>
+                <!-- 로그인 상태: 사용자명·로그아웃 표시 -->
                 <span sec:authentication="name"></span>
-                <a th:href="@{/logout}" onclick="return confirm('로그아웃 하시겠습니까?')">[로그아웃]</a>
+                <a th:href="@{/logout}"
+                   onclick="return confirm('로그아웃 하시겠습니까?')">[로그아웃]</a>
             </sec:authorize>
             <sec:authorize access="!isAuthenticated()">
+                <!-- 비로그인 상태: 로그인·회원가입 링크 표시 -->
                 <a th:href="@{/login}">[로그인]</a>
                 <a th:href="@{/signup}">[회원가입]</a>
             </sec:authorize>

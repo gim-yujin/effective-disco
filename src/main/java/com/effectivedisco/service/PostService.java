@@ -1,5 +1,6 @@
 package com.effectivedisco.service;
 
+import com.effectivedisco.domain.Board;
 import com.effectivedisco.domain.Post;
 import com.effectivedisco.domain.PostLike;
 import com.effectivedisco.domain.Tag;
@@ -7,6 +8,7 @@ import com.effectivedisco.domain.User;
 import com.effectivedisco.dto.request.PostRequest;
 import com.effectivedisco.dto.response.LikeResponse;
 import com.effectivedisco.dto.response.PostResponse;
+import com.effectivedisco.repository.BoardRepository;
 import com.effectivedisco.repository.PostLikeRepository;
 import com.effectivedisco.repository.PostRepository;
 import com.effectivedisco.repository.TagRepository;
@@ -29,57 +31,115 @@ import java.util.stream.Collectors;
 @RequiredArgsConstructor
 public class PostService {
 
-    private final PostRepository postRepository;
-    private final UserRepository userRepository;
+    private final PostRepository     postRepository;
+    private final UserRepository     userRepository;
     private final PostLikeRepository postLikeRepository;
-    private final TagRepository tagRepository;
+    private final TagRepository      tagRepository;
+    private final BoardRepository    boardRepository;  // 게시판 조회용
 
-    public Page<PostResponse> getPosts(int page, int size, String keyword, String tag) {
+    /**
+     * 게시물 목록 조회.
+     *
+     * 우선순위: 게시판 필터 > 태그 필터 > 키워드 검색 > 전체 목록.
+     * 게시판이 지정된 경우 해당 게시판 내에서만 키워드·태그 검색을 수행한다.
+     *
+     * @param boardSlug null이면 전체 게시판 검색
+     * @param keyword   null이면 키워드 검색 미적용
+     * @param tag       null이면 태그 필터 미적용
+     */
+    public Page<PostResponse> getPosts(int page, int size,
+                                       String keyword, String tag, String boardSlug) {
         PageRequest pageable = PageRequest.of(page, size);
+
+        // 게시판 슬러그가 있으면 해당 Board 엔티티를 로드
+        Board board = null;
+        if (boardSlug != null && !boardSlug.isBlank()) {
+            board = boardRepository.findBySlug(boardSlug)
+                    .orElseThrow(() -> new IllegalArgumentException("존재하지 않는 게시판: " + boardSlug));
+        }
+
         Page<Post> posts;
-        if (tag != null && !tag.isBlank()) {
+
+        if (board != null && tag != null && !tag.isBlank()) {
+            // 게시판 내 태그 필터
+            posts = postRepository.findByBoardAndTagName(board, tag, pageable);
+        } else if (board != null && keyword != null && !keyword.isBlank()) {
+            // 게시판 내 키워드 검색
+            posts = postRepository.searchByKeywordInBoard(board, keyword, pageable);
+        } else if (board != null) {
+            // 게시판 전체 목록
+            posts = postRepository.findByBoardOrderByCreatedAtDesc(board, pageable);
+        } else if (tag != null && !tag.isBlank()) {
+            // 전체 게시판 태그 필터
             posts = postRepository.findByTagName(tag, pageable);
         } else if (keyword != null && !keyword.isBlank()) {
+            // 전체 게시판 키워드 검색
             posts = postRepository.searchByKeyword(keyword, pageable);
         } else {
+            // 전체 최신 목록
             posts = postRepository.findAllByOrderByCreatedAtDesc(pageable);
         }
+
         return posts.map(post -> new PostResponse(post, postLikeRepository.countByPost(post)));
     }
 
+    /** 단일 게시물 조회 */
     public PostResponse getPost(Long id) {
         Post post = findPost(id);
         return new PostResponse(post, postLikeRepository.countByPost(post));
     }
 
+    /** 전체 태그 이름 목록 (태그 필터 바 렌더링용) */
     public List<String> getAllTagNames() {
         return tagRepository.findAllByOrderByNameAsc().stream()
                 .map(Tag::getName)
                 .collect(Collectors.toList());
     }
 
+    /**
+     * 게시물 생성.
+     * request.boardSlug 가 있으면 해당 게시판에 속하도록 지정한다.
+     */
     @Transactional
     public PostResponse createPost(PostRequest request, String username) {
         User user = findUser(username);
+
+        // 게시판 지정 (없으면 null = 미분류)
+        Board board = resolveBoard(request.getBoardSlug());
+
         Post post = Post.builder()
                 .title(request.getTitle())
                 .content(request.getContent())
                 .author(user)
+                .board(board)
                 .build();
+
         post.getTags().addAll(resolveTags(request.getTagsInput()));
         return new PostResponse(postRepository.save(post));
     }
 
+    /**
+     * 게시물 수정.
+     * 작성자 본인만 수정 가능하다.
+     * 태그는 기존 태그를 모두 지우고 새로 지정한다.
+     */
     @Transactional
     public PostResponse updatePost(Long id, PostRequest request, String username) {
         Post post = findPost(id);
         checkOwnership(post.getAuthor().getUsername(), username);
         post.update(request.getTitle(), request.getContent());
+
+        // 태그 교체: 기존 태그를 전부 제거한 뒤 새 태그를 추가
         post.getTags().clear();
         post.getTags().addAll(resolveTags(request.getTagsInput()));
+
         return new PostResponse(post, postLikeRepository.countByPost(post));
     }
 
+    /**
+     * 게시물 삭제.
+     * 작성자 본인만 삭제 가능하다.
+     */
     @Transactional
     public void deletePost(Long id, String username) {
         Post post = findPost(id);
@@ -87,31 +147,51 @@ public class PostService {
         postRepository.delete(post);
     }
 
+    /**
+     * 조회수 증가.
+     * 트랜잭션 내에서 dirty checking으로 자동 저장된다.
+     * 실제 중복 방지 로직은 웹 컨트롤러의 세션에서 처리한다.
+     */
     @Transactional
     public void incrementViewCount(Long id) {
         findPost(id).incrementViewCount();
     }
 
+    /**
+     * 좋아요 토글.
+     * 이미 좋아요 상태이면 취소, 아니면 추가한다.
+     *
+     * @return 토글 후의 좋아요 상태와 총 개수
+     */
     @Transactional
     public LikeResponse toggleLike(Long postId, String username) {
         Post post = findPost(postId);
         User user = findUser(username);
+
         if (postLikeRepository.existsByPostAndUser(post, user)) {
             postLikeRepository.deleteByPostAndUser(post, user);
         } else {
             postLikeRepository.save(new PostLike(post, user));
         }
-        long count = postLikeRepository.countByPost(post);
+
+        long count  = postLikeRepository.countByPost(post);
         boolean liked = postLikeRepository.existsByPostAndUser(post, user);
         return new LikeResponse(liked, count);
     }
 
+    /** 현재 사용자가 특정 게시물에 좋아요를 눌렀는지 확인 */
     public boolean isLikedByUser(Long postId, String username) {
         Post post = findPost(postId);
         User user = findUser(username);
         return postLikeRepository.existsByPostAndUser(post, user);
     }
 
+    /* ── private helpers ──────────────────────────────────────── */
+
+    /**
+     * 태그 이름 문자열(콤마 구분)을 Tag 엔티티 Set으로 변환한다.
+     * DB에 없는 태그는 자동으로 생성한다.
+     */
     private Set<Tag> resolveTags(String tagsInput) {
         if (tagsInput == null || tagsInput.isBlank()) return new HashSet<>();
         return Arrays.stream(tagsInput.split(","))
@@ -122,19 +202,29 @@ public class PostService {
                 .collect(Collectors.toSet());
     }
 
+    /**
+     * 슬러그로 게시판을 조회한다.
+     * null 또는 빈 슬러그이면 null을 반환 (미분류 허용).
+     */
+    private Board resolveBoard(String boardSlug) {
+        if (boardSlug == null || boardSlug.isBlank()) return null;
+        return boardRepository.findBySlug(boardSlug)
+                .orElseThrow(() -> new IllegalArgumentException("존재하지 않는 게시판: " + boardSlug));
+    }
+
     private Post findPost(Long id) {
         return postRepository.findById(id)
-                .orElseThrow(() -> new IllegalArgumentException("Post not found: " + id));
+                .orElseThrow(() -> new IllegalArgumentException("게시물을 찾을 수 없습니다: " + id));
     }
 
     private User findUser(String username) {
         return userRepository.findByUsername(username)
-                .orElseThrow(() -> new UsernameNotFoundException("User not found: " + username));
+                .orElseThrow(() -> new UsernameNotFoundException("사용자를 찾을 수 없습니다: " + username));
     }
 
     private void checkOwnership(String ownerUsername, String requestUsername) {
         if (!ownerUsername.equals(requestUsername)) {
-            throw new AccessDeniedException("No permission to modify this resource");
+            throw new AccessDeniedException("수정/삭제 권한이 없습니다");
         }
     }
 }
