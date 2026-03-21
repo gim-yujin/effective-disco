@@ -6,11 +6,15 @@ import com.effectivedisco.dto.response.PostResponse;
 import com.effectivedisco.service.CommentService;
 import com.effectivedisco.service.PostService;
 import lombok.RequiredArgsConstructor;
+import jakarta.servlet.http.HttpSession;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.stereotype.Controller;
 import org.springframework.ui.Model;
 import org.springframework.web.bind.annotation.*;
+
+import java.util.HashSet;
+import java.util.Set;
 
 @Controller
 @RequiredArgsConstructor
@@ -31,7 +35,17 @@ public class BoardWebController {
 
     @GetMapping("/posts/{id}")
     public String postDetail(@PathVariable Long id, Model model,
-                             @AuthenticationPrincipal UserDetails userDetails) {
+                             @AuthenticationPrincipal UserDetails userDetails,
+                             HttpSession session) {
+        @SuppressWarnings("unchecked")
+        Set<Long> viewed = (Set<Long>) session.getAttribute("viewedPosts");
+        if (viewed == null) {
+            viewed = new HashSet<>();
+            session.setAttribute("viewedPosts", viewed);
+        }
+        if (viewed.add(id)) {
+            postService.incrementViewCount(id);
+        }
         model.addAttribute("post", postService.getPost(id));
         model.addAttribute("comments", commentService.getComments(id));
         model.addAttribute("commentRequest", new CommentRequest());

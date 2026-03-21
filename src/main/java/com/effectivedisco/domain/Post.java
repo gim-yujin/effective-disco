@@ -37,6 +37,9 @@ public class Post {
     @OneToMany(mappedBy = "post", cascade = CascadeType.ALL, orphanRemoval = true)
     private List<Comment> comments = new ArrayList<>();
 
+    @Column(nullable = false, columnDefinition = "integer default 0")
+    private int viewCount = 0;
+
     @Builder
     public Post(String title, String content, User author) {
         this.title = title;
@@ -49,5 +52,9 @@ public class Post {
         this.title = title;
         this.content = content;
         this.updatedAt = LocalDateTime.now();
+    }
+
+    public void incrementViewCount() {
+        this.viewCount++;
     }
 }

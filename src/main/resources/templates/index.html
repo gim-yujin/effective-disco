@@ -40,13 +40,14 @@
                     <th>제목</th>
                     <th class="col-author">작성자</th>
                     <th class="col-date">날짜</th>
+                    <th class="col-views">조회</th>
                     <th class="col-comments">댓글</th>
                     <th class="col-likes">♥</th>
                 </tr>
             </thead>
             <tbody>
                 <tr th:if="${posts.content.empty}">
-                    <td colspan="6" class="empty">검색 결과가 없습니다.</td>
+                    <td colspan="7" class="empty">검색 결과가 없습니다.</td>
                 </tr>
                 <tr th:each="post, stat : ${posts.content}">
                     <td class="col-no"
@@ -59,6 +60,7 @@
                     <td class="col-author" th:text="${post.author}">작성자</td>
                     <td class="col-date"
                         th:text="${#temporals.format(post.createdAt, 'yy/MM/dd')}">날짜</td>
+                    <td class="col-views" th:text="${post.viewCount}">0</td>
                     <td class="col-comments" th:text="${post.commentCount}">0</td>
                     <td class="col-likes" th:text="${post.likeCount}">0</td>
                 </tr>

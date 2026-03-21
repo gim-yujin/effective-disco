@@ -21,6 +21,7 @@
                 <span th:if="${post.updatedAt != null}">
                     수정일: <span th:text="${#temporals.format(post.updatedAt, 'yyyy-MM-dd HH:mm')}">날짜</span>
                 </span>
+                <span>조회: <span th:text="${post.viewCount}">0</span></span>
             </div>
         </div>
         <div class="post-body" th:text="${post.content}">내용</div>

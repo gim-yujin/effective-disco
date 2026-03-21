@@ -65,6 +65,11 @@ public class PostService {
     }
 
     @Transactional
+    public void incrementViewCount(Long id) {
+        findPost(id).incrementViewCount();
+    }
+
+    @Transactional
     public LikeResponse toggleLike(Long postId, String username) {
         Post post = findPost(postId);
         User user = findUser(username);

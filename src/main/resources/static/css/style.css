@@ -76,6 +76,7 @@ main { padding: 20px 0 40px; }
 .board-table .col-no  { width: 60px; text-align: center; color: #666; }
 .board-table .col-author { width: 100px; }
 .board-table .col-date { width: 90px; color: #666; }
+.board-table .col-views { width: 50px; text-align: center; color: #888; }
 .board-table .col-comments { width: 50px; text-align: center; color: #4a90d9; }
 .board-table .col-likes { width: 44px; text-align: center; color: #c44; }
 .board-table .title-link { color: #1a1a2e; text-decoration: none; }
