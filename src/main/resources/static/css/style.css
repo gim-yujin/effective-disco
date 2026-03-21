@@ -77,6 +77,7 @@ main { padding: 20px 0 40px; }
 .board-table .col-author { width: 100px; }
 .board-table .col-date { width: 90px; color: #666; }
 .board-table .col-comments { width: 50px; text-align: center; color: #4a90d9; }
+.board-table .col-likes { width: 44px; text-align: center; color: #c44; }
 .board-table .title-link { color: #1a1a2e; text-decoration: none; }
 .board-table .title-link:hover { text-decoration: underline; color: #4a90d9; }
 
@@ -117,7 +118,13 @@ main { padding: 20px 0 40px; }
     min-height: 120px;
     border-top: 2px solid #4a90d9;
 }
-.post-actions { margin: 10px 0; display: flex; gap: 8px; }
+.post-actions { margin: 6px 0; display: flex; gap: 8px; }
+.like-bar { display: flex; align-items: center; gap: 12px; margin: 10px 0; }
+.like-count { font-size: 14px; color: #c44; font-weight: bold; }
+.btn-like { border-color: #c44; color: #c44; }
+.btn-like.liked { background: #c44; color: #fff; }
+.btn-like:hover { background: #fff0f0; }
+.btn-like.liked:hover { background: #a33; border-color: #a33; }
 
 /* Comments */
 .comments-section { margin-top: 24px; }

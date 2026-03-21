@@ -25,6 +25,18 @@
         </div>
         <div class="post-body" th:text="${post.content}">내용</div>
 
+        <div class="like-bar">
+            <span class="like-count">&#x2665; <span th:text="${post.likeCount}">0</span></span>
+            <sec:authorize access="isAuthenticated()">
+                <form th:action="@{/posts/{id}/like(id=${post.id})}" method="post" style="display:inline">
+                    <input type="hidden" th:name="${_csrf.parameterName}" th:value="${_csrf.token}">
+                    <button type="submit" class="btn btn-like"
+                            th:classappend="${liked} ? ' liked' : ''"
+                            th:text="${liked} ? '♥ 좋아요 취소' : '♡ 좋아요'">♡ 좋아요</button>
+                </form>
+            </sec:authorize>
+        </div>
+
         <div class="post-actions" sec:authorize="isAuthenticated()"
              th:with="username=${#authentication.name}">
             <th:block th:if="${post.author == username}">

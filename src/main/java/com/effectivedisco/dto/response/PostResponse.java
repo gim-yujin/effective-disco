@@ -14,8 +14,9 @@ public class PostResponse {
     private final LocalDateTime createdAt;
     private final LocalDateTime updatedAt;
     private final int commentCount;
+    private final long likeCount;
 
-    public PostResponse(Post post) {
+    public PostResponse(Post post, long likeCount) {
         this.id = post.getId();
         this.title = post.getTitle();
         this.content = post.getContent();
@@ -23,5 +24,10 @@ public class PostResponse {
         this.createdAt = post.getCreatedAt();
         this.updatedAt = post.getUpdatedAt();
         this.commentCount = post.getComments().size();
+        this.likeCount = likeCount;
+    }
+
+    public PostResponse(Post post) {
+        this(post, 0);
     }
 }

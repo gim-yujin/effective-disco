@@ -30,11 +30,21 @@ public class BoardWebController {
     }
 
     @GetMapping("/posts/{id}")
-    public String postDetail(@PathVariable Long id, Model model) {
+    public String postDetail(@PathVariable Long id, Model model,
+                             @AuthenticationPrincipal UserDetails userDetails) {
         model.addAttribute("post", postService.getPost(id));
         model.addAttribute("comments", commentService.getComments(id));
         model.addAttribute("commentRequest", new CommentRequest());
+        boolean liked = userDetails != null && postService.isLikedByUser(id, userDetails.getUsername());
+        model.addAttribute("liked", liked);
         return "post/detail";
+    }
+
+    @PostMapping("/posts/{id}/like")
+    public String toggleLike(@PathVariable Long id,
+                             @AuthenticationPrincipal UserDetails userDetails) {
+        postService.toggleLike(id, userDetails.getUsername());
+        return "redirect:/posts/" + id;
     }
 
     @GetMapping("/posts/new")

@@ -1,9 +1,12 @@
 package com.effectivedisco.service;
 
 import com.effectivedisco.domain.Post;
+import com.effectivedisco.domain.PostLike;
 import com.effectivedisco.domain.User;
 import com.effectivedisco.dto.request.PostRequest;
+import com.effectivedisco.dto.response.LikeResponse;
 import com.effectivedisco.dto.response.PostResponse;
+import com.effectivedisco.repository.PostLikeRepository;
 import com.effectivedisco.repository.PostRepository;
 import com.effectivedisco.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
@@ -20,17 +23,19 @@ public class PostService {
 
     private final PostRepository postRepository;
     private final UserRepository userRepository;
+    private final PostLikeRepository postLikeRepository;
 
     public Page<PostResponse> getPosts(int page, int size, String keyword) {
         PageRequest pageable = PageRequest.of(page, size);
-        if (keyword != null && !keyword.isBlank()) {
-            return postRepository.searchByKeyword(keyword, pageable).map(PostResponse::new);
-        }
-        return postRepository.findAllByOrderByCreatedAtDesc(pageable).map(PostResponse::new);
+        Page<Post> posts = (keyword != null && !keyword.isBlank())
+                ? postRepository.searchByKeyword(keyword, pageable)
+                : postRepository.findAllByOrderByCreatedAtDesc(pageable);
+        return posts.map(post -> new PostResponse(post, postLikeRepository.countByPost(post)));
     }
 
     public PostResponse getPost(Long id) {
-        return new PostResponse(findPost(id));
+        Post post = findPost(id);
+        return new PostResponse(post, postLikeRepository.countByPost(post));
     }
 
     @Transactional
@@ -49,7 +54,7 @@ public class PostService {
         Post post = findPost(id);
         checkOwnership(post.getAuthor().getUsername(), username);
         post.update(request.getTitle(), request.getContent());
-        return new PostResponse(post);
+        return new PostResponse(post, postLikeRepository.countByPost(post));
     }
 
     @Transactional
@@ -57,6 +62,26 @@ public class PostService {
         Post post = findPost(id);
         checkOwnership(post.getAuthor().getUsername(), username);
         postRepository.delete(post);
+    }
+
+    @Transactional
+    public LikeResponse toggleLike(Long postId, String username) {
+        Post post = findPost(postId);
+        User user = findUser(username);
+        if (postLikeRepository.existsByPostAndUser(post, user)) {
+            postLikeRepository.deleteByPostAndUser(post, user);
+        } else {
+            postLikeRepository.save(new PostLike(post, user));
+        }
+        long count = postLikeRepository.countByPost(post);
+        boolean liked = postLikeRepository.existsByPostAndUser(post, user);
+        return new LikeResponse(liked, count);
+    }
+
+    public boolean isLikedByUser(Long postId, String username) {
+        Post post = findPost(postId);
+        User user = findUser(username);
+        return postLikeRepository.existsByPostAndUser(post, user);
     }
 
     private Post findPost(Long id) {

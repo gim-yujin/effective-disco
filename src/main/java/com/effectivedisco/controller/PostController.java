@@ -1,6 +1,7 @@
 package com.effectivedisco.controller;
 
 import com.effectivedisco.dto.request.PostRequest;
+import com.effectivedisco.dto.response.LikeResponse;
 import com.effectivedisco.dto.response.PostResponse;
 import com.effectivedisco.service.PostService;
 import jakarta.validation.Valid;
@@ -54,5 +55,12 @@ public class PostController {
             @AuthenticationPrincipal UserDetails userDetails) {
         postService.deletePost(id, userDetails.getUsername());
         return ResponseEntity.noContent().build();
+    }
+
+    @PostMapping("/{id}/like")
+    public ResponseEntity<LikeResponse> toggleLike(
+            @PathVariable Long id,
+            @AuthenticationPrincipal UserDetails userDetails) {
+        return ResponseEntity.ok(postService.toggleLike(id, userDetails.getUsername()));
     }
 }
