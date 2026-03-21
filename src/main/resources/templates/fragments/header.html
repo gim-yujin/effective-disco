@@ -1,0 +1,22 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org"
+      xmlns:sec="http://www.thymeleaf.org/extras/spring-security">
+<body>
+<header th:fragment="header">
+    <div class="container">
+        <h1><a href="/">[ EFFECTIVE-DISCO BBS ]</a></h1>
+        <nav>
+            <sec:authorize access="isAuthenticated()">
+                <a th:href="@{/posts/new}">[글쓰기]</a>
+                <span sec:authentication="name"></span>
+                <a th:href="@{/logout}" onclick="return confirm('로그아웃 하시겠습니까?')">[로그아웃]</a>
+            </sec:authorize>
+            <sec:authorize access="!isAuthenticated()">
+                <a th:href="@{/login}">[로그인]</a>
+                <a th:href="@{/signup}">[회원가입]</a>
+            </sec:authorize>
+        </nav>
+    </div>
+</header>
+</body>
+</html>

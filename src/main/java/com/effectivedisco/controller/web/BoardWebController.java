@@ -1,0 +1,98 @@
+package com.effectivedisco.controller.web;
+
+import com.effectivedisco.dto.request.CommentRequest;
+import com.effectivedisco.dto.request.PostRequest;
+import com.effectivedisco.dto.response.PostResponse;
+import com.effectivedisco.service.CommentService;
+import com.effectivedisco.service.PostService;
+import lombok.RequiredArgsConstructor;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
+import org.springframework.security.core.userdetails.UserDetails;
+import org.springframework.stereotype.Controller;
+import org.springframework.ui.Model;
+import org.springframework.web.bind.annotation.*;
+
+@Controller
+@RequiredArgsConstructor
+public class BoardWebController {
+
+    private final PostService postService;
+    private final CommentService commentService;
+
+    @GetMapping("/")
+    public String index(@RequestParam(defaultValue = "0") int page,
+                        @RequestParam(defaultValue = "20") int size,
+                        Model model) {
+        model.addAttribute("posts", postService.getPosts(page, size));
+        return "index";
+    }
+
+    @GetMapping("/posts/{id}")
+    public String postDetail(@PathVariable Long id, Model model) {
+        model.addAttribute("post", postService.getPost(id));
+        model.addAttribute("comments", commentService.getComments(id));
+        model.addAttribute("commentRequest", new CommentRequest());
+        return "post/detail";
+    }
+
+    @GetMapping("/posts/new")
+    public String newPostForm(Model model) {
+        model.addAttribute("postRequest", new PostRequest());
+        model.addAttribute("isEdit", false);
+        return "post/form";
+    }
+
+    @PostMapping("/posts")
+    public String createPost(@ModelAttribute PostRequest postRequest,
+                             @AuthenticationPrincipal UserDetails userDetails) {
+        PostResponse post = postService.createPost(postRequest, userDetails.getUsername());
+        return "redirect:/posts/" + post.getId();
+    }
+
+    @GetMapping("/posts/{id}/edit")
+    public String editPostForm(@PathVariable Long id, Model model,
+                               @AuthenticationPrincipal UserDetails userDetails) {
+        PostResponse post = postService.getPost(id);
+        if (!post.getAuthor().equals(userDetails.getUsername())) {
+            return "redirect:/posts/" + id;
+        }
+        PostRequest postRequest = new PostRequest();
+        postRequest.setTitle(post.getTitle());
+        postRequest.setContent(post.getContent());
+        model.addAttribute("postRequest", postRequest);
+        model.addAttribute("postId", id);
+        model.addAttribute("isEdit", true);
+        return "post/form";
+    }
+
+    @PostMapping("/posts/{id}/edit")
+    public String updatePost(@PathVariable Long id,
+                             @ModelAttribute PostRequest postRequest,
+                             @AuthenticationPrincipal UserDetails userDetails) {
+        postService.updatePost(id, postRequest, userDetails.getUsername());
+        return "redirect:/posts/" + id;
+    }
+
+    @PostMapping("/posts/{id}/delete")
+    public String deletePost(@PathVariable Long id,
+                             @AuthenticationPrincipal UserDetails userDetails) {
+        postService.deletePost(id, userDetails.getUsername());
+        return "redirect:/";
+    }
+
+    @PostMapping("/posts/{postId}/comments")
+    public String addComment(@PathVariable Long postId,
+                             @ModelAttribute CommentRequest commentRequest,
+                             @AuthenticationPrincipal UserDetails userDetails) {
+        commentService.createComment(postId, commentRequest, userDetails.getUsername());
+        return "redirect:/posts/" + postId + "#comments";
+    }
+
+    @PostMapping("/posts/{postId}/comments/{id}/delete")
+    public String deleteComment(@PathVariable Long postId,
+                                @PathVariable Long id,
+                                @AuthenticationPrincipal UserDetails userDetails) {
+        commentService.deleteComment(postId, id, userDetails.getUsername());
+        return "redirect:/posts/" + postId + "#comments";
+    }
+}

@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org"
+      xmlns:sec="http://www.thymeleaf.org/extras/spring-security">
+<head>
+    <meta charset="UTF-8">
+    <title>EFFECTIVE-DISCO BBS</title>
+    <link rel="stylesheet" th:href="@{/css/style.css}">
+</head>
+<body>
+<div th:replace="~{fragments/header :: header}"></div>
+
+<main>
+    <div class="container">
+        <div class="toolbar">
+            <h2>게시판 &mdash; 전체 <span th:text="${posts.totalElements}">0</span>개</h2>
+            <sec:authorize access="isAuthenticated()">
+                <a class="btn btn-primary" th:href="@{/posts/new}">[글쓰기]</a>
+            </sec:authorize>
+        </div>
+
+        <table class="board-table">
+            <thead>
+                <tr>
+                    <th class="col-no">번호</th>
+                    <th>제목</th>
+                    <th class="col-author">작성자</th>
+                    <th class="col-date">날짜</th>
+                    <th class="col-comments">댓글</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr th:if="${posts.content.empty}">
+                    <td colspan="5" class="empty">등록된 게시물이 없습니다.</td>
+                </tr>
+                <tr th:each="post, stat : ${posts.content}">
+                    <td class="col-no"
+                        th:text="${posts.totalElements - (posts.number * posts.size) - stat.index}">1</td>
+                    <td>
+                        <a class="title-link"
+                           th:href="@{/posts/{id}(id=${post.id})}"
+                           th:text="${post.title}">제목</a>
+                    </td>
+                    <td class="col-author" th:text="${post.author}">작성자</td>
+                    <td class="col-date"
+                        th:text="${#temporals.format(post.createdAt, 'yy/MM/dd')}">날짜</td>
+                    <td class="col-comments" th:text="${post.commentCount}">0</td>
+                </tr>
+            </tbody>
+        </table>
+
+        <div class="pagination" th:if="${posts.totalPages > 1}">
+            <a th:if="${!posts.first}"
+               th:href="@{/(page=${posts.number - 1})}">&laquo; 이전</a>
+            <th:block th:each="i : ${#numbers.sequence(0, posts.totalPages - 1)}">
+                <span th:if="${i == posts.number}" class="current" th:text="${i + 1}">1</span>
+                <a th:unless="${i == posts.number}"
+                   th:href="@{/(page=${i})}"
+                   th:text="${i + 1}">1</a>
+            </th:block>
+            <a th:if="${!posts.last}"
+               th:href="@{/(page=${posts.number + 1})}">다음 &raquo;</a>
+        </div>
+    </div>
+</main>
+</body>
+</html>

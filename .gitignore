@@ -1,0 +1,40 @@
+# Gradle
+.gradle/
+build/
+!gradle/wrapper/gradle-wrapper.jar
+
+# IDE — IntelliJ IDEA
+.idea/
+*.iml
+*.iws
+out/
+
+# IDE — Eclipse
+.classpath
+.project
+.settings/
+
+# IDE — VS Code
+.vscode/
+
+# Compiled output
+*.class
+*.jar
+*.war
+*.ear
+
+# Logs
+*.log
+logs/
+
+# Spring Boot
+application-local.yml
+application-prod.yml
+
+# Sensitive / environment
+.env
+*.env
+
+# OS
+.DS_Store
+Thumbs.db
