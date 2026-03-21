@@ -21,9 +21,12 @@ public class PostService {
     private final PostRepository postRepository;
     private final UserRepository userRepository;
 
-    public Page<PostResponse> getPosts(int page, int size) {
-        return postRepository.findAllByOrderByCreatedAtDesc(PageRequest.of(page, size))
-                .map(PostResponse::new);
+    public Page<PostResponse> getPosts(int page, int size, String keyword) {
+        PageRequest pageable = PageRequest.of(page, size);
+        if (keyword != null && !keyword.isBlank()) {
+            return postRepository.searchByKeyword(keyword, pageable).map(PostResponse::new);
+        }
+        return postRepository.findAllByOrderByCreatedAtDesc(pageable).map(PostResponse::new);
     }
 
     public PostResponse getPost(Long id) {

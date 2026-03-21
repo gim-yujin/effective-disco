@@ -25,7 +25,7 @@ public class CommentService {
     private final UserRepository userRepository;
 
     public List<CommentResponse> getComments(Long postId) {
-        return commentRepository.findByPostIdOrderByCreatedAtAsc(postId)
+        return commentRepository.findByPostIdAndParentIsNullOrderByCreatedAtAsc(postId)
                 .stream().map(CommentResponse::new).toList();
     }
 
@@ -39,6 +39,27 @@ public class CommentService {
                 .author(user)
                 .build();
         return new CommentResponse(commentRepository.save(comment));
+    }
+
+    @Transactional
+    public CommentResponse createReply(Long postId, Long parentCommentId, CommentRequest request, String username) {
+        Post post = findPost(postId);
+        User user = findUser(username);
+        Comment parent = commentRepository.findById(parentCommentId)
+                .orElseThrow(() -> new IllegalArgumentException("Comment not found: " + parentCommentId));
+        if (!parent.getPost().getId().equals(postId)) {
+            throw new IllegalArgumentException("Comment does not belong to the post");
+        }
+        if (parent.isReply()) {
+            throw new IllegalArgumentException("대댓글에는 답글을 달 수 없습니다");
+        }
+        Comment reply = Comment.builder()
+                .content(request.getContent())
+                .post(post)
+                .author(user)
+                .parent(parent)
+                .build();
+        return new CommentResponse(commentRepository.save(reply));
     }
 
     @Transactional

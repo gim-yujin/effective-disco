@@ -45,23 +45,69 @@
                 <span style="color:#aaa;">첫 댓글을 남겨보세요.</span>
             </div>
 
-            <div class="comment-item" th:each="c : ${comments}">
-                <span class="comment-author" th:text="'[' + ${c.author} + ']'">작성자</span>
-                <span class="comment-content" th:text="${c.content}">내용</span>
-                <span class="comment-meta">
-                    <span th:text="${#temporals.format(c.createdAt, 'MM/dd HH:mm')}">날짜</span>
-                    <sec:authorize access="isAuthenticated()">
-                        <th:block th:if="${c.author == #authentication.name}">
-                            &nbsp;
-                            <form th:action="@{/posts/{postId}/comments/{id}/delete(postId=${post.id}, id=${c.id})}"
-                                  method="post" style="display:inline">
-                                <input type="hidden" th:name="${_csrf.parameterName}" th:value="${_csrf.token}">
-                                <button class="btn btn-sm btn-danger" type="submit">[삭제]</button>
-                            </form>
-                        </th:block>
-                    </sec:authorize>
-                </span>
-            </div>
+            <th:block th:each="c : ${comments}">
+                <!-- 댓글 -->
+                <div class="comment-item" th:id="'comment-' + ${c.id}">
+                    <span class="comment-author" th:text="'[' + ${c.author} + ']'">작성자</span>
+                    <span class="comment-content" th:text="${c.content}">내용</span>
+                    <span class="comment-meta">
+                        <span th:text="${#temporals.format(c.createdAt, 'MM/dd HH:mm')}">날짜</span>
+                        &nbsp;
+                        <sec:authorize access="isAuthenticated()">
+                            <button class="reply-toggle-btn"
+                                    th:onclick="'toggleReply(' + ${c.id} + ')'">↩ 답글</button>
+                            <th:block th:if="${c.author == #authentication.name}">
+                                &nbsp;
+                                <form th:action="@{/posts/{postId}/comments/{id}/delete(postId=${post.id}, id=${c.id})}"
+                                      method="post" style="display:inline">
+                                    <input type="hidden" th:name="${_csrf.parameterName}" th:value="${_csrf.token}">
+                                    <button class="btn btn-sm btn-danger" type="submit">[삭제]</button>
+                                </form>
+                            </th:block>
+                        </sec:authorize>
+                    </span>
+                </div>
+
+                <!-- 대댓글 목록 -->
+                <div class="replies-wrap" th:if="${!#lists.isEmpty(c.replies)}">
+                    <div class="reply-item" th:each="r : ${c.replies}">
+                        <span class="reply-author">
+                            <span class="reply-arrow">↳</span>
+                            <span th:text="'[' + ${r.author} + ']'">작성자</span>
+                        </span>
+                        <span class="comment-content" th:text="${r.content}">내용</span>
+                        <span class="comment-meta">
+                            <span th:text="${#temporals.format(r.createdAt, 'MM/dd HH:mm')}">날짜</span>
+                            <sec:authorize access="isAuthenticated()">
+                                <th:block th:if="${r.author == #authentication.name}">
+                                    &nbsp;
+                                    <form th:action="@{/posts/{postId}/comments/{id}/delete(postId=${post.id}, id=${r.id})}"
+                                          method="post" style="display:inline">
+                                        <input type="hidden" th:name="${_csrf.parameterName}" th:value="${_csrf.token}">
+                                        <button class="btn btn-sm btn-danger" type="submit">[삭제]</button>
+                                    </form>
+                                </th:block>
+                            </sec:authorize>
+                        </span>
+                    </div>
+                </div>
+
+                <!-- 대댓글 작성 폼 (토글) -->
+                <sec:authorize access="isAuthenticated()">
+                    <div class="reply-form-box" th:id="'reply-form-' + ${c.id}">
+                        <form th:action="@{/posts/{postId}/comments/{id}/replies(postId=${post.id}, id=${c.id})}"
+                              method="post">
+                            <input type="hidden" th:name="${_csrf.parameterName}" th:value="${_csrf.token}">
+                            <textarea name="content" placeholder="답글을 입력하세요"></textarea>
+                            <div>
+                                <button class="btn btn-primary btn-sm" type="submit">[답글 등록]</button>
+                                <button class="btn btn-sm" type="button"
+                                        th:onclick="'toggleReply(' + ${c.id} + ')'">취소</button>
+                            </div>
+                        </form>
+                    </div>
+                </sec:authorize>
+            </th:block>
 
             <!-- 댓글 작성 -->
             <sec:authorize access="isAuthenticated()">
@@ -85,5 +131,17 @@
         </div>
     </div>
 </main>
+
+<script>
+function toggleReply(commentId) {
+    const box = document.getElementById('reply-form-' + commentId);
+    if (box) {
+        box.classList.toggle('open');
+        if (box.classList.contains('open')) {
+            box.querySelector('textarea').focus();
+        }
+    }
+}
+</script>
 </body>
 </html>

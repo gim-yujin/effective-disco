@@ -34,6 +34,16 @@ public class CommentController {
                 .body(commentService.createComment(postId, request, userDetails.getUsername()));
     }
 
+    @PostMapping("/{id}/replies")
+    public ResponseEntity<CommentResponse> createReply(
+            @PathVariable Long postId,
+            @PathVariable Long id,
+            @Valid @RequestBody CommentRequest request,
+            @AuthenticationPrincipal UserDetails userDetails) {
+        return ResponseEntity.status(HttpStatus.CREATED)
+                .body(commentService.createReply(postId, id, request, userDetails.getUsername()));
+    }
+
     @PutMapping("/{id}")
     public ResponseEntity<CommentResponse> updateComment(
             @PathVariable Long postId,

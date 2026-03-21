@@ -6,6 +6,8 @@ import lombok.Getter;
 import lombok.NoArgsConstructor;
 
 import java.time.LocalDateTime;
+import java.util.ArrayList;
+import java.util.List;
 
 @Entity
 @Table(name = "comments")
@@ -28,21 +30,34 @@ public class Comment {
     @JoinColumn(name = "user_id", nullable = false)
     private User author;
 
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "parent_id")
+    private Comment parent;
+
+    @OneToMany(mappedBy = "parent", cascade = CascadeType.ALL, orphanRemoval = true)
+    @OrderBy("createdAt ASC")
+    private List<Comment> replies = new ArrayList<>();
+
     @Column(nullable = false)
     private LocalDateTime createdAt;
 
     private LocalDateTime updatedAt;
 
     @Builder
-    public Comment(String content, Post post, User author) {
+    public Comment(String content, Post post, User author, Comment parent) {
         this.content = content;
         this.post = post;
         this.author = author;
+        this.parent = parent;
         this.createdAt = LocalDateTime.now();
     }
 
     public void update(String content) {
         this.content = content;
         this.updatedAt = LocalDateTime.now();
+    }
+
+    public boolean isReply() {
+        return this.parent != null;
     }
 }

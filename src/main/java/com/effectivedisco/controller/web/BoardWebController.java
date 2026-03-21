@@ -22,8 +22,10 @@ public class BoardWebController {
     @GetMapping("/")
     public String index(@RequestParam(defaultValue = "0") int page,
                         @RequestParam(defaultValue = "20") int size,
+                        @RequestParam(required = false) String keyword,
                         Model model) {
-        model.addAttribute("posts", postService.getPosts(page, size));
+        model.addAttribute("posts", postService.getPosts(page, size, keyword));
+        model.addAttribute("keyword", keyword != null ? keyword : "");
         return "index";
     }
 
@@ -86,6 +88,15 @@ public class BoardWebController {
                              @AuthenticationPrincipal UserDetails userDetails) {
         commentService.createComment(postId, commentRequest, userDetails.getUsername());
         return "redirect:/posts/" + postId + "#comments";
+    }
+
+    @PostMapping("/posts/{postId}/comments/{id}/replies")
+    public String addReply(@PathVariable Long postId,
+                           @PathVariable Long id,
+                           @ModelAttribute CommentRequest commentRequest,
+                           @AuthenticationPrincipal UserDetails userDetails) {
+        commentService.createReply(postId, id, commentRequest, userDetails.getUsername());
+        return "redirect:/posts/" + postId + "#comment-" + id;
     }
 
     @PostMapping("/posts/{postId}/comments/{id}/delete")

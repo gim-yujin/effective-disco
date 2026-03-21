@@ -12,11 +12,26 @@
 <main>
     <div class="container">
         <div class="toolbar">
-            <h2>게시판 &mdash; 전체 <span th:text="${posts.totalElements}">0</span>개</h2>
+            <h2 th:if="${keyword == null or keyword.isBlank()}">
+                게시판 &mdash; 전체 <span th:text="${posts.totalElements}">0</span>개
+            </h2>
+            <h2 th:unless="${keyword == null or keyword.isBlank()}">
+                &ldquo;<span th:text="${keyword}"></span>&rdquo; 검색결과
+                &mdash; <span th:text="${posts.totalElements}">0</span>건
+            </h2>
             <sec:authorize access="isAuthenticated()">
                 <a class="btn btn-primary" th:href="@{/posts/new}">[글쓰기]</a>
             </sec:authorize>
         </div>
+
+        <form class="search-form" th:action="@{/}" method="get">
+            <input type="text" name="keyword" class="search-input"
+                   placeholder="제목 / 내용 / 작성자 검색"
+                   th:value="${keyword}">
+            <button type="submit" class="btn btn-search">검색</button>
+            <a th:if="${keyword != null and !keyword.isBlank()}"
+               th:href="@{/}" class="btn btn-reset">전체보기</a>
+        </form>
 
         <table class="board-table">
             <thead>
@@ -30,7 +45,7 @@
             </thead>
             <tbody>
                 <tr th:if="${posts.content.empty}">
-                    <td colspan="5" class="empty">등록된 게시물이 없습니다.</td>
+                    <td colspan="5" class="empty">검색 결과가 없습니다.</td>
                 </tr>
                 <tr th:each="post, stat : ${posts.content}">
                     <td class="col-no"
@@ -50,15 +65,15 @@
 
         <div class="pagination" th:if="${posts.totalPages > 1}">
             <a th:if="${!posts.first}"
-               th:href="@{/(page=${posts.number - 1})}">&laquo; 이전</a>
+               th:href="@{/(page=${posts.number - 1}, keyword=${keyword})}">&laquo; 이전</a>
             <th:block th:each="i : ${#numbers.sequence(0, posts.totalPages - 1)}">
                 <span th:if="${i == posts.number}" class="current" th:text="${i + 1}">1</span>
                 <a th:unless="${i == posts.number}"
-                   th:href="@{/(page=${i})}"
+                   th:href="@{/(page=${i}, keyword=${keyword})}"
                    th:text="${i + 1}">1</a>
             </th:block>
             <a th:if="${!posts.last}"
-               th:href="@{/(page=${posts.number + 1})}">다음 &raquo;</a>
+               th:href="@{/(page=${posts.number + 1}, keyword=${keyword})}">다음 &raquo;</a>
         </div>
     </div>
 </main>
