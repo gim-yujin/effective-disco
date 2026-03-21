@@ -1,7 +1,6 @@
 # Gradle
 .gradle/
 build/
-!gradle/wrapper/gradle-wrapper.jar
 
 # IDE — IntelliJ IDEA
 .idea/
@@ -22,6 +21,8 @@ out/
 *.jar
 *.war
 *.ear
+# Gradle wrapper JAR은 저장소에 포함 (예외 규칙은 *.jar 이후에 위치해야 효력 발생)
+!gradle/wrapper/gradle-wrapper.jar
 
 # Logs
 *.log
