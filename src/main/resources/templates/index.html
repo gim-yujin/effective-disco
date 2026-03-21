@@ -12,16 +12,29 @@
 <main>
     <div class="container">
         <div class="toolbar">
-            <h2 th:if="${keyword == null or keyword.isBlank()}">
-                게시판 &mdash; 전체 <span th:text="${posts.totalElements}">0</span>개
+            <h2 th:if="${tag != null and !tag.isBlank()}">
+                #<span th:text="${tag}"></span> 태그
+                &mdash; <span th:text="${posts.totalElements}">0</span>건
             </h2>
-            <h2 th:unless="${keyword == null or keyword.isBlank()}">
+            <h2 th:if="${(tag == null or tag.isBlank()) and !(keyword == null or keyword.isBlank())}">
                 &ldquo;<span th:text="${keyword}"></span>&rdquo; 검색결과
                 &mdash; <span th:text="${posts.totalElements}">0</span>건
+            </h2>
+            <h2 th:if="${(tag == null or tag.isBlank()) and (keyword == null or keyword.isBlank())}">
+                게시판 &mdash; 전체 <span th:text="${posts.totalElements}">0</span>개
             </h2>
             <sec:authorize access="isAuthenticated()">
                 <a class="btn btn-primary" th:href="@{/posts/new}">[글쓰기]</a>
             </sec:authorize>
+        </div>
+
+        <div class="tag-filter-bar" th:if="${!#lists.isEmpty(allTags)}">
+            <span class="tag-filter-label">태그:</span>
+            <a class="tag" th:classappend="${tag == null or tag.isBlank()} ? ' active' : ''"
+               th:href="@{/}">전체</a>
+            <a th:each="t : ${allTags}" class="tag"
+               th:classappend="${t == tag} ? ' active' : ''"
+               th:href="@{/(tag=${t})}" th:text="'#' + ${t}">태그</a>
         </div>
 
         <form class="search-form" th:action="@{/}" method="get">
@@ -56,6 +69,10 @@
                         <a class="title-link"
                            th:href="@{/posts/{id}(id=${post.id})}"
                            th:text="${post.title}">제목</a>
+                        <span th:if="${!#lists.isEmpty(post.tags)}">
+                            <a th:each="t : ${post.tags}" class="tag tag-sm"
+                               th:href="@{/(tag=${t})}" th:text="'#' + ${t}">태그</a>
+                        </span>
                     </td>
                     <td class="col-author" th:text="${post.author}">작성자</td>
                     <td class="col-date"
@@ -69,15 +86,15 @@
 
         <div class="pagination" th:if="${posts.totalPages > 1}">
             <a th:if="${!posts.first}"
-               th:href="@{/(page=${posts.number - 1}, keyword=${keyword})}">&laquo; 이전</a>
+               th:href="@{/(page=${posts.number - 1}, keyword=${keyword}, tag=${tag})}">&laquo; 이전</a>
             <th:block th:each="i : ${#numbers.sequence(0, posts.totalPages - 1)}">
                 <span th:if="${i == posts.number}" class="current" th:text="${i + 1}">1</span>
                 <a th:unless="${i == posts.number}"
-                   th:href="@{/(page=${i}, keyword=${keyword})}"
+                   th:href="@{/(page=${i}, keyword=${keyword}, tag=${tag})}"
                    th:text="${i + 1}">1</a>
             </th:block>
             <a th:if="${!posts.last}"
-               th:href="@{/(page=${posts.number + 1}, keyword=${keyword})}">다음 &raquo;</a>
+               th:href="@{/(page=${posts.number + 1}, keyword=${keyword}, tag=${tag})}">다음 &raquo;</a>
         </div>
     </div>
 </main>

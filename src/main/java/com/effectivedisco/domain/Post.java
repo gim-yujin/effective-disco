@@ -7,7 +7,9 @@ import lombok.NoArgsConstructor;
 
 import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 
 @Entity
 @Table(name = "posts")
@@ -39,6 +41,12 @@ public class Post {
 
     @Column(nullable = false, columnDefinition = "integer default 0")
     private int viewCount = 0;
+
+    @ManyToMany(fetch = FetchType.LAZY)
+    @JoinTable(name = "post_tags",
+               joinColumns = @JoinColumn(name = "post_id"),
+               inverseJoinColumns = @JoinColumn(name = "tag_id"))
+    private Set<Tag> tags = new HashSet<>();
 
     @Builder
     public Post(String title, String content, User author) {

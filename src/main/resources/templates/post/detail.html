@@ -26,6 +26,11 @@
         </div>
         <div class="post-body" th:text="${post.content}">내용</div>
 
+        <div class="tag-list" th:if="${!#lists.isEmpty(post.tags)}">
+            <a th:each="t : ${post.tags}" class="tag"
+               th:href="@{/(tag=${t})}" th:text="'#' + ${t}">태그</a>
+        </div>
+
         <div class="like-bar">
             <span class="like-count">&#x2665; <span th:text="${post.likeCount}">0</span></span>
             <sec:authorize access="isAuthenticated()">

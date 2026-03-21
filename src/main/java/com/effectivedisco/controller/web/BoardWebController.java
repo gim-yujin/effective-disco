@@ -27,9 +27,12 @@ public class BoardWebController {
     public String index(@RequestParam(defaultValue = "0") int page,
                         @RequestParam(defaultValue = "20") int size,
                         @RequestParam(required = false) String keyword,
+                        @RequestParam(required = false) String tag,
                         Model model) {
-        model.addAttribute("posts", postService.getPosts(page, size, keyword));
+        model.addAttribute("posts", postService.getPosts(page, size, keyword, tag));
         model.addAttribute("keyword", keyword != null ? keyword : "");
+        model.addAttribute("tag", tag != null ? tag : "");
+        model.addAttribute("allTags", postService.getAllTagNames());
         return "index";
     }
 
@@ -85,6 +88,7 @@ public class BoardWebController {
         PostRequest postRequest = new PostRequest();
         postRequest.setTitle(post.getTitle());
         postRequest.setContent(post.getContent());
+        postRequest.setTagsInput(String.join(", ", post.getTags()));
         model.addAttribute("postRequest", postRequest);
         model.addAttribute("postId", id);
         model.addAttribute("isEdit", true);

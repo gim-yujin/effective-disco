@@ -6,6 +6,7 @@ import com.effectivedisco.dto.request.PostRequest;
 import com.effectivedisco.dto.response.PostResponse;
 import com.effectivedisco.repository.PostLikeRepository;
 import com.effectivedisco.repository.PostRepository;
+import com.effectivedisco.repository.TagRepository;
 import com.effectivedisco.repository.UserRepository;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -31,6 +32,7 @@ class PostServiceTest {
     @Mock PostRepository postRepository;
     @Mock UserRepository userRepository;
     @Mock PostLikeRepository postLikeRepository;
+    @Mock TagRepository tagRepository;
 
     @InjectMocks PostService postService;
 

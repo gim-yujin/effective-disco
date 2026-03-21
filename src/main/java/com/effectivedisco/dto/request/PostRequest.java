@@ -15,4 +15,6 @@ public class PostRequest {
 
     @NotBlank
     private String content;
+
+    private String tagsInput = "";
 }

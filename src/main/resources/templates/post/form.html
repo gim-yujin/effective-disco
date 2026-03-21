@@ -27,6 +27,13 @@
                     <textarea id="content" th:field="*{content}"
                               placeholder="내용을 입력하세요" required></textarea>
                 </div>
+                <div class="form-group">
+                    <label for="tagsInput">태그
+                        <span style="color:#888; font-size:12px;">(쉼표로 구분, 예: spring, java)</span>
+                    </label>
+                    <input type="text" id="tagsInput" th:field="*{tagsInput}"
+                           placeholder="spring, java, ...">
+                </div>
                 <div style="display:flex; gap:8px;">
                     <button class="btn btn-primary" type="submit">
                         <span th:text="${isEdit} ? '[저장]' : '[등록]'">[등록]</span>

@@ -24,8 +24,9 @@ public class PostController {
     public ResponseEntity<Page<PostResponse>> getPosts(
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "10") int size,
-            @RequestParam(required = false) String keyword) {
-        return ResponseEntity.ok(postService.getPosts(page, size, keyword));
+            @RequestParam(required = false) String keyword,
+            @RequestParam(required = false) String tag) {
+        return ResponseEntity.ok(postService.getPosts(page, size, keyword, tag));
     }
 
     @GetMapping("/{id}")

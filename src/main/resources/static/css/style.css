@@ -200,6 +200,33 @@ main { padding: 20px 0 40px; }
 /* No content */
 .empty { text-align: center; padding: 30px; color: #888; }
 
+/* Tags */
+.tag {
+    display: inline-block;
+    padding: 1px 7px;
+    background: #e8f0fb;
+    border: 1px solid #b0cce8;
+    color: #2a6eaa;
+    font-size: 11px;
+    text-decoration: none;
+    margin: 0 2px 2px 0;
+}
+.tag:hover { background: #d0e4f8; }
+.tag.active { background: #4a90d9; color: #fff; border-color: #4a90d9; }
+.tag-sm { font-size: 10px; padding: 0 5px; }
+.tag-filter-bar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 4px;
+    margin-bottom: 8px;
+    padding: 6px 10px;
+    background: #fff;
+    border: 1px solid #ddd;
+}
+.tag-filter-label { font-size: 12px; color: #888; margin-right: 4px; white-space: nowrap; }
+.tag-list { padding: 6px 14px 4px; background: #f8f8f4; border: 1px solid #999; border-top: none; }
+
 /* 대댓글 */
 .replies-wrap { border-left: 3px solid #4a90d9; margin-left: 20px; }
 .reply-item {

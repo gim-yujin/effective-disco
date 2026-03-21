@@ -16,4 +16,7 @@ public interface PostRepository extends JpaRepository<Post, Long> {
            "LOWER(p.author.username) LIKE LOWER(CONCAT('%', :keyword, '%')) " +
            "ORDER BY p.createdAt DESC")
     Page<Post> searchByKeyword(@Param("keyword") String keyword, Pageable pageable);
+
+    @Query("SELECT p FROM Post p JOIN p.tags t WHERE t.name = :tagName ORDER BY p.createdAt DESC")
+    Page<Post> findByTagName(@Param("tagName") String tagName, Pageable pageable);
 }
