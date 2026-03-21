@@ -7,8 +7,10 @@ on:
     branches: ["**"]
 
 jobs:
-  build-and-test:
-    name: Build & Test
+
+  # ── Job 1: 빌드 & 테스트 ──────────────────────────────────
+  test:
+    name: Test
     runs-on: ubuntu-latest
 
     steps:
@@ -20,29 +22,63 @@ jobs:
         with:
           java-version: '21'
           distribution: 'temurin'
-
-      - name: Cache Gradle packages
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.gradle/caches
-            ~/.gradle/wrapper
-          key: gradle-${{ hashFiles('**/*.gradle.kts', '**/gradle-wrapper.properties') }}
-          restore-keys: gradle-
+          # setup-java 내장 Gradle 캐시 — 별도 cache 스텝 불필요
+          cache: 'gradle'
 
       - name: Grant execute permission for gradlew
         run: chmod +x gradlew
 
-      - name: Build
-        run: ./gradlew build -x test
-
+      # build -x test → test 두 번 실행하던 방식 제거.
+      # ./gradlew test 는 컴파일 + 테스트를 한 번에 수행한다.
       - name: Test
-        run: ./gradlew test
+        run: ./gradlew test --no-daemon
 
+      # 성공·실패 모두 리포트 업로드 (기존: failure()만 업로드)
       - name: Upload test report
-        if: failure()
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: test-report
           path: build/reports/tests/test/
-          retention-days: 7
+          retention-days: 14
+
+  # ── Job 2: Docker 이미지 빌드 & GHCR 푸시 ────────────────
+  # main 브랜치에 push 될 때만 실행되며, test job 통과 후 시작된다.
+  docker:
+    name: Docker Build & Push
+    runs-on: ubuntu-latest
+    needs: test
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+
+    permissions:
+      contents: read
+      packages: write   # GHCR(ghcr.io) 푸시에 필요
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # 멀티 플랫폼 빌드와 BuildKit 고급 기능(캐시 등)을 활성화
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # GITHUB_TOKEN 은 Actions 가 자동 제공 — 별도 Secret 설정 불필요
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          # latest 태그 + 커밋 SHA 태그로 이전 버전 롤백 가능하게 유지
+          tags: |
+            ghcr.io/${{ github.repository }}:latest
+            ghcr.io/${{ github.repository }}:${{ github.sha }}
+          # GitHub Actions 캐시로 Docker 레이어를 재사용해 빌드 시간 단축
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
