@@ -26,6 +26,8 @@ public class PostResponse {
      */
     private final String boardName;
     private final String boardSlug;
+    private final boolean pinned;
+    private final String imageUrl;
 
     public PostResponse(Post post, long likeCount) {
         this.id = post.getId();
@@ -41,9 +43,10 @@ public class PostResponse {
                 .map(t -> t.getName())
                 .sorted()
                 .collect(Collectors.toList());
-        // 게시판이 null(미분류)인 경우 boardName/boardSlug도 null
         this.boardName = post.getBoard() != null ? post.getBoard().getName() : null;
         this.boardSlug = post.getBoard() != null ? post.getBoard().getSlug() : null;
+        this.pinned    = post.isPinned();
+        this.imageUrl  = post.getImageUrl();
     }
 
     public PostResponse(Post post) {

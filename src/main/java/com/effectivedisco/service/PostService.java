@@ -132,6 +132,9 @@ public class PostService {
                 .build();
 
         post.getTags().addAll(resolveTags(request.getTagsInput()));
+        if (request.getImageUrl() != null) {
+            post.setImageUrl(request.getImageUrl());
+        }
         return new PostResponse(postRepository.save(post));
     }
 
@@ -146,9 +149,12 @@ public class PostService {
         checkOwnership(post.getAuthor().getUsername(), username);
         post.update(request.getTitle(), request.getContent());
 
-        // 태그 교체: 기존 태그를 전부 제거한 뒤 새 태그를 추가
         post.getTags().clear();
         post.getTags().addAll(resolveTags(request.getTagsInput()));
+
+        if (request.getImageUrl() != null) {
+            post.setImageUrl(request.getImageUrl());
+        }
 
         return new PostResponse(post, postLikeRepository.countByPost(post));
     }
@@ -166,11 +172,36 @@ public class PostService {
 
     /**
      * 관리자 전용 강제 삭제.
-     * 소유자 검사 없이 게시물을 삭제한다.
      */
     @Transactional
     public void adminDeletePost(Long id) {
         postRepository.delete(findPost(id));
+    }
+
+    /**
+     * 관리자 전용 고정 핀 토글.
+     * 이미 고정된 게시물이면 해제하고, 아니면 고정한다.
+     */
+    @Transactional
+    public boolean adminPinToggle(Long id) {
+        Post post = findPost(id);
+        if (post.isPinned()) {
+            post.unpin();
+            return false;
+        } else {
+            post.pin();
+            return true;
+        }
+    }
+
+    /** 특정 게시판의 고정 게시물 목록 (관리자 고정, 최신순) */
+    public List<PostResponse> getPinnedPosts(String boardSlug) {
+        if (boardSlug == null || boardSlug.isBlank()) return List.of();
+        Board board = boardRepository.findBySlug(boardSlug).orElse(null);
+        if (board == null) return List.of();
+        return postRepository.findByBoardAndPinnedTrueOrderByCreatedAtDesc(board).stream()
+                .map(p -> new PostResponse(p, postLikeRepository.countByPost(p)))
+                .toList();
     }
 
     /**

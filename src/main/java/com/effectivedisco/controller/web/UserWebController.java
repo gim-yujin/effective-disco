@@ -2,6 +2,7 @@ package com.effectivedisco.controller.web;
 
 import com.effectivedisco.dto.request.PasswordChangeRequest;
 import com.effectivedisco.dto.request.ProfileEditRequest;
+import com.effectivedisco.service.BookmarkService;
 import com.effectivedisco.service.PostService;
 import com.effectivedisco.service.UserService;
 import jakarta.servlet.http.HttpServletRequest;
@@ -27,10 +28,17 @@ import org.springframework.web.servlet.mvc.support.RedirectAttributes;
 @RequiredArgsConstructor
 public class UserWebController {
 
-    private final UserService userService;
-    private final PostService postService;
+    private final UserService     userService;
+    private final PostService     postService;
+    private final BookmarkService bookmarkService;
 
     /* ── 공개 프로필 ──────────────────────────────────────────── */
+
+    @GetMapping("/bookmarks")
+    public String bookmarks(@AuthenticationPrincipal UserDetails userDetails, Model model) {
+        model.addAttribute("bookmarks", bookmarkService.getBookmarks(userDetails.getUsername()));
+        return "users/bookmarks";
+    }
 
     @GetMapping("/users/{username}")
     public String profile(@PathVariable String username,

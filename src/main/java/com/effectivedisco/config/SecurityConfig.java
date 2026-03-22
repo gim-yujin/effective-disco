@@ -36,6 +36,7 @@ public class SecurityConfig {
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers("/api/auth/**").permitAll()
                         .requestMatchers(HttpMethod.GET, "/api/posts/**", "/api/boards/**").permitAll()
+                        .requestMatchers("/v3/api-docs/**", "/swagger-ui/**", "/swagger-ui.html").permitAll()
                         .anyRequest().authenticated())
                 .addFilterBefore(jwtAuthenticationFilter, UsernamePasswordAuthenticationFilter.class)
                 .exceptionHandling(e -> e
@@ -50,12 +51,13 @@ public class SecurityConfig {
     public SecurityFilterChain webFilterChain(HttpSecurity http) throws Exception {
         return http
                 .authorizeHttpRequests(auth -> auth
-                        .requestMatchers("/login", "/signup", "/css/**").permitAll()
+                        .requestMatchers("/login", "/signup", "/css/**", "/uploads/**").permitAll()
                         .requestMatchers(HttpMethod.GET, "/", "/boards/**", "/posts/**", "/users/**", "/search").permitAll()
                         // /admin/** 은 ROLE_ADMIN 만 접근 가능
                         .requestMatchers("/admin/**").hasAuthority("ROLE_ADMIN")
-                        // /notifications, /messages, /reports, /settings 는 로그인 필요
-                        .requestMatchers("/notifications/**", "/messages/**", "/reports/**", "/settings/**").authenticated()
+                        // /notifications, /messages, /reports, /settings, /bookmarks 는 로그인 필요
+                        .requestMatchers("/notifications/**", "/messages/**", "/reports/**",
+                                         "/settings/**", "/bookmarks").authenticated()
                         .anyRequest().authenticated())
                 .formLogin(form -> form
                         .loginPage("/login")

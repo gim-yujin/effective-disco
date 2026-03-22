@@ -32,7 +32,10 @@
            th:href="${post.boardSlug != null} ? '/boards/' + ${post.boardSlug} : '/'">&larr; 목록으로</a>
 
         <div class="post-header">
-            <h2 th:text="${post.title}">제목</h2>
+            <h2>
+                <span th:if="${post.pinned}" class="pin-badge" title="공지 고정">📌</span>
+                <span th:text="${post.title}">제목</span>
+            </h2>
             <div class="post-meta">
                 <span>작성자:
                     <!-- 작성자 이름 클릭 → 해당 사용자 프로필 페이지 -->
@@ -47,6 +50,12 @@
                 <span>조회: <span th:text="${post.viewCount}">0</span></span>
             </div>
         </div>
+        <!-- 첨부 이미지 -->
+        <div th:if="${post.imageUrl != null}" style="margin:12px 0;">
+            <img th:src="${post.imageUrl}" alt="첨부 이미지"
+                 style="max-width:100%;border-radius:6px;border:1px solid #e0e0e0;">
+        </div>
+
         <div class="post-body" th:text="${post.content}">내용</div>
 
         <div class="tag-list" th:if="${!#lists.isEmpty(post.tags)}">
@@ -62,6 +71,12 @@
                     <button type="submit" class="btn btn-like"
                             th:classappend="${liked} ? ' liked' : ''"
                             th:text="${liked} ? '♥ 좋아요 취소' : '♡ 좋아요'">♡ 좋아요</button>
+                </form>
+                <!-- 북마크 버튼 -->
+                <form th:action="@{/posts/{id}/bookmark(id=${post.id})}" method="post" style="display:inline">
+                    <input type="hidden" th:name="${_csrf.parameterName}" th:value="${_csrf.token}">
+                    <button type="submit" class="btn btn-sm"
+                            th:text="${bookmarked} ? '★ 북마크 해제' : '☆ 북마크'">☆ 북마크</button>
                 </form>
             </sec:authorize>
         </div>
@@ -85,8 +100,14 @@
                 <button class="btn btn-sm" type="button"
                         onclick="document.getElementById('report-post-form').classList.toggle('open')">[신고]</button>
             </th:block>
-            <!-- 관리자는 타인의 게시물도 강제 삭제 가능 -->
+            <!-- 관리자: 고정 핀 토글 + 강제 삭제 -->
             <sec:authorize access="hasAuthority('ROLE_ADMIN')">
+                <form th:action="@{/admin/posts/{id}/pin(id=${post.id})}" method="post" style="display:inline">
+                    <input type="hidden" th:name="${_csrf.parameterName}" th:value="${_csrf.token}">
+                    <input type="hidden" name="returnTo" th:value="'/posts/' + ${post.id}">
+                    <button class="btn btn-sm" type="submit"
+                            th:text="${post.pinned} ? '[📌 고정 해제]' : '[📌 고정]'">고정</button>
+                </form>
                 <th:block th:if="${post.author != username}">
                     <form th:action="@{/admin/posts/{id}/delete(id=${post.id})}" method="post" style="display:inline">
                         <input type="hidden" th:name="${_csrf.parameterName}" th:value="${_csrf.token}">

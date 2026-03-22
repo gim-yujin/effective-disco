@@ -36,6 +36,9 @@ public interface PostRepository extends JpaRepository<Post, Long> {
     /** 특정 게시판의 게시물을 최신순으로 페이징 조회 */
     Page<Post> findByBoardOrderByCreatedAtDesc(Board board, Pageable pageable);
 
+    /** 특정 게시판의 고정 게시물 목록 (공지사항 핀) */
+    List<Post> findByBoardAndPinnedTrueOrderByCreatedAtDesc(Board board);
+
     /**
      * 특정 게시판 안에서 키워드 검색.
      * 제목, 내용, 작성자명에 대해 OR 검색을 수행한다.

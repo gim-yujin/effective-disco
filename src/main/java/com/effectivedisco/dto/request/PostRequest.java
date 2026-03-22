@@ -25,4 +25,11 @@ public class PostRequest {
      * null이면 미분류(게시판 미지정) 게시물로 처리한다.
      */
     private String boardSlug;
+
+    /**
+     * 첨부 이미지 서빙 URL.
+     * 웹 컨트롤러에서 ImageService로 파일을 저장한 후 이 필드에 URL을 설정한다.
+     * REST API에서는 사용하지 않는다.
+     */
+    private String imageUrl;
 }

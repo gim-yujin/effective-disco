@@ -63,12 +63,19 @@ public class AdminWebController {
 
     /* ── 게시물 관리 ─────────────────────────────────────────── */
 
-    /** 관리자 강제 삭제: 작성자와 무관하게 게시물을 삭제한다. */
+    /** 관리자 강제 삭제 */
     @PostMapping("/posts/{id}/delete")
     public String deletePost(@PathVariable Long id) {
-        // 관리자는 소유자 검사 없이 삭제할 수 있도록 admin용 메서드 사용
         postService.adminDeletePost(id);
         return "redirect:/admin";
+    }
+
+    /** 고정 핀 토글 */
+    @PostMapping("/posts/{id}/pin")
+    public String pinPost(@PathVariable Long id,
+                          @RequestParam(required = false) String returnTo) {
+        postService.adminPinToggle(id);
+        return returnTo != null ? "redirect:" + returnTo : "redirect:/posts/" + id;
     }
 
     /* ── 댓글 관리 ───────────────────────────────────────────── */

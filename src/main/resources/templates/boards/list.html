@@ -71,6 +71,28 @@
                class="btn btn-reset">전체보기</a>
         </form>
 
+        <!-- 고정 게시물 (공지사항) -->
+        <div th:if="${!#lists.isEmpty(pinnedPosts)}" class="pinned-section">
+            <table class="board-table">
+                <tbody>
+                    <tr th:each="pin : ${pinnedPosts}" class="pinned-row">
+                        <td class="col-no" style="width:36px;">📌</td>
+                        <td>
+                            <a class="title-link"
+                               th:href="@{/posts/{id}(id=${pin.id})}"
+                               th:text="${pin.title}">제목</a>
+                        </td>
+                        <td class="col-author" th:text="${pin.author}">작성자</td>
+                        <td class="col-date"
+                            th:text="${#temporals.format(pin.createdAt, 'yy/MM/dd')}">날짜</td>
+                        <td class="col-views"    th:text="${pin.viewCount}">0</td>
+                        <td class="col-comments" th:text="${pin.commentCount}">0</td>
+                        <td class="col-likes"    th:text="${pin.likeCount}">0</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+
         <!-- 게시물 목록 테이블: data-* 속성으로 무한 스크롤 JS에 초기값 전달 -->
         <table class="board-table" id="post-table"
                th:data-board-slug="${board.slug}"

@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org">
+<head>
+    <meta charset="UTF-8">
+    <title>북마크 — BBS</title>
+    <link rel="stylesheet" th:href="@{/css/style.css}">
+</head>
+<body>
+<div th:replace="~{fragments/header :: header}"></div>
+<main>
+    <div class="container">
+
+        <div class="breadcrumb">
+            <a th:href="@{/}">홈</a>
+            <span class="breadcrumb-sep">&rsaquo;</span>
+            <span>북마크</span>
+        </div>
+
+        <div class="toolbar">
+            <h2>북마크한 게시물</h2>
+        </div>
+
+        <div th:if="${#lists.isEmpty(bookmarks)}" class="empty" style="padding:30px;">
+            북마크한 게시물이 없습니다.
+        </div>
+
+        <table class="board-table" th:unless="${#lists.isEmpty(bookmarks)}">
+            <thead>
+                <tr>
+                    <th class="col-no">번호</th>
+                    <th>제목</th>
+                    <th class="col-board-name">게시판</th>
+                    <th class="col-date">날짜</th>
+                    <th class="col-views">조회</th>
+                    <th class="col-comments">댓글</th>
+                    <th class="col-likes">♥</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr th:each="post, stat : ${bookmarks}">
+                    <td class="col-no" th:text="${stat.count}">1</td>
+                    <td>
+                        <a class="title-link"
+                           th:href="@{/posts/{id}(id=${post.id})}"
+                           th:text="${post.title}">제목</a>
+                        <span th:if="${post.pinned}" class="pin-badge" title="공지">📌</span>
+                        <span th:if="${!#lists.isEmpty(post.tags)}">
+                            <a th:each="t : ${post.tags}" class="tag tag-sm"
+                               th:href="${post.boardSlug != null}
+                                        ? '/boards/' + ${post.boardSlug} + '?tag=' + ${t}
+                                        : '/?tag=' + ${t}"
+                               th:text="'#' + ${t}">태그</a>
+                        </span>
+                    </td>
+                    <td class="col-board-name">
+                        <a th:if="${post.boardSlug != null}" class="board-name-link"
+                           th:href="@{/boards/{slug}(slug=${post.boardSlug})}"
+                           th:text="${post.boardName}">게시판</a>
+                        <span th:unless="${post.boardSlug != null}" style="color:#bbb;">—</span>
+                    </td>
+                    <td class="col-date"
+                        th:text="${#temporals.format(post.createdAt, 'yy/MM/dd')}">날짜</td>
+                    <td class="col-views"    th:text="${post.viewCount}">0</td>
+                    <td class="col-comments" th:text="${post.commentCount}">0</td>
+                    <td class="col-likes"    th:text="${post.likeCount}">0</td>
+                </tr>
+            </tbody>
+        </table>
+
+    </div>
+</main>
+</body>
+</html>

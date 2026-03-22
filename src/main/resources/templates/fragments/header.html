@@ -13,6 +13,9 @@
                    th:href="@{/users/{u}(u=${#authentication.name})}"
                    sec:authentication="name"></a>
 
+                <!-- 북마크 -->
+                <a th:href="@{/bookmarks}" title="북마크">☆</a>
+
                 <!-- 쪽지 봉투: 미읽음 수 뱃지 포함 -->
                 <span class="notif-wrap">
                     <a th:href="@{/messages}">&#9993;</a>

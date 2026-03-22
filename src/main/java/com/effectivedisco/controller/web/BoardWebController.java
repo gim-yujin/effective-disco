@@ -5,7 +5,9 @@ import com.effectivedisco.dto.request.PostRequest;
 import com.effectivedisco.dto.response.BoardResponse;
 import com.effectivedisco.dto.response.PostResponse;
 import com.effectivedisco.service.BoardService;
+import com.effectivedisco.service.BookmarkService;
 import com.effectivedisco.service.CommentService;
+import com.effectivedisco.service.ImageService;
 import com.effectivedisco.service.PostService;
 import jakarta.servlet.http.HttpSession;
 import lombok.RequiredArgsConstructor;
@@ -14,6 +16,8 @@ import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.stereotype.Controller;
 import org.springframework.ui.Model;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.multipart.MultipartFile;
+import org.springframework.web.servlet.mvc.support.RedirectAttributes;
 
 import java.util.HashSet;
 import java.util.List;
@@ -37,9 +41,11 @@ import java.util.Set;
 @RequiredArgsConstructor
 public class BoardWebController {
 
-    private final PostService    postService;
-    private final BoardService   boardService;
-    private final CommentService commentService;
+    private final PostService     postService;
+    private final BoardService    boardService;
+    private final CommentService  commentService;
+    private final BookmarkService bookmarkService;
+    private final ImageService    imageService;
 
     /* ══════════════════════════════════════════════════════════
      * 홈 / 게시판 목록
@@ -74,10 +80,9 @@ public class BoardWebController {
                                 @RequestParam(required = false) String keyword,
                                 @RequestParam(required = false) String tag,
                                 Model model) {
-        // 게시물 목록 (게시판 내 검색/필터 포함)
-        model.addAttribute("posts",   postService.getPosts(page, size, keyword, tag, slug));
-        // 현재 게시판 정보 (헤더·빵 부스러기 표시용)
-        model.addAttribute("board",   boardService.getBoard(slug));
+        model.addAttribute("posts",       postService.getPosts(page, size, keyword, tag, slug));
+        model.addAttribute("pinnedPosts", postService.getPinnedPosts(slug));
+        model.addAttribute("board",       boardService.getBoard(slug));
         model.addAttribute("keyword", keyword != null ? keyword : "");
         model.addAttribute("tag",     tag     != null ? tag     : "");
         // 이 게시판 안에서 사용된 태그 목록 (태그 필터 바)
@@ -111,9 +116,18 @@ public class BoardWebController {
     @PostMapping("/boards/{slug}/posts")
     public String createPost(@PathVariable String slug,
                              @ModelAttribute PostRequest postRequest,
-                             @AuthenticationPrincipal UserDetails userDetails) {
-        // URL 경로의 slug를 우선 적용 (폼 조작 방지)
+                             @RequestParam(value = "image", required = false) MultipartFile image,
+                             @AuthenticationPrincipal UserDetails userDetails,
+                             RedirectAttributes redirectAttributes) {
         postRequest.setBoardSlug(slug);
+        try {
+            if (image != null && !image.isEmpty()) {
+                postRequest.setImageUrl(imageService.store(image));
+            }
+        } catch (IllegalArgumentException e) {
+            redirectAttributes.addFlashAttribute("errorMsg", e.getMessage());
+            return "redirect:/boards/" + slug + "/posts/new";
+        }
         PostResponse post = postService.createPost(postRequest, userDetails.getUsername());
         return "redirect:/posts/" + post.getId();
     }
@@ -151,10 +165,10 @@ public class BoardWebController {
         model.addAttribute("comments",       commentService.getComments(id));
         model.addAttribute("commentRequest", new CommentRequest());
 
-        // 현재 사용자의 좋아요 여부 (비로그인이면 false)
-        boolean liked = userDetails != null
-                && postService.isLikedByUser(id, userDetails.getUsername());
-        model.addAttribute("liked", liked);
+        boolean liked      = userDetails != null && postService.isLikedByUser(id, userDetails.getUsername());
+        boolean bookmarked = userDetails != null && bookmarkService.isBookmarked(userDetails.getUsername(), id);
+        model.addAttribute("liked",      liked);
+        model.addAttribute("bookmarked", bookmarked);
 
         return "post/detail";
     }
@@ -191,7 +205,17 @@ public class BoardWebController {
     @PostMapping("/posts/{id}/edit")
     public String updatePost(@PathVariable Long id,
                              @ModelAttribute PostRequest postRequest,
-                             @AuthenticationPrincipal UserDetails userDetails) {
+                             @RequestParam(value = "image", required = false) MultipartFile image,
+                             @AuthenticationPrincipal UserDetails userDetails,
+                             RedirectAttributes redirectAttributes) {
+        try {
+            if (image != null && !image.isEmpty()) {
+                postRequest.setImageUrl(imageService.store(image));
+            }
+        } catch (IllegalArgumentException e) {
+            redirectAttributes.addFlashAttribute("errorMsg", e.getMessage());
+            return "redirect:/posts/" + id + "/edit";
+        }
         postService.updatePost(id, postRequest, userDetails.getUsername());
         return "redirect:/posts/" + id;
     }
@@ -216,11 +240,19 @@ public class BoardWebController {
                 : "redirect:/";
     }
 
-    /** 좋아요 토글 — 처리 후 게시물 상세 페이지로 리다이렉트 */
+    /** 좋아요 토글 */
     @PostMapping("/posts/{id}/like")
     public String toggleLike(@PathVariable Long id,
                              @AuthenticationPrincipal UserDetails userDetails) {
         postService.toggleLike(id, userDetails.getUsername());
+        return "redirect:/posts/" + id;
+    }
+
+    /** 북마크 토글 */
+    @PostMapping("/posts/{id}/bookmark")
+    public String toggleBookmark(@PathVariable Long id,
+                                 @AuthenticationPrincipal UserDetails userDetails) {
+        bookmarkService.toggle(userDetails.getUsername(), id);
         return "redirect:/posts/" + id;
     }
 

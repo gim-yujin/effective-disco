@@ -42,6 +42,14 @@ public class Post {
     @Column(nullable = false, columnDefinition = "integer default 0")
     private int viewCount = 0;
 
+    /** 관리자가 게시판 상단에 고정한 공지 게시물 여부 */
+    @Column(nullable = false)
+    private boolean pinned = false;
+
+    /** 첨부 이미지 URL (없으면 null) */
+    @Column
+    private String imageUrl;
+
     /**
      * 이 게시물이 속한 게시판.
      * nullable = true: 게시판 기능 도입 이전에 작성된 기존 게시물과의 하위 호환을 위해
@@ -76,7 +84,10 @@ public class Post {
         this.updatedAt = LocalDateTime.now();
     }
 
-    public void incrementViewCount() {
-        this.viewCount++;
-    }
+    public void incrementViewCount() { this.viewCount++; }
+
+    public void pin()   { this.pinned = true;  }
+    public void unpin() { this.pinned = false; }
+
+    public void setImageUrl(String imageUrl) { this.imageUrl = imageUrl; }
 }
