@@ -7,5 +7,7 @@ public enum NotificationType {
     /** 내 댓글에 대댓글이 달렸을 때 */
     REPLY,
     /** 내 게시물에 좋아요가 눌렸을 때 */
-    LIKE
+    LIKE,
+    /** 새 쪽지(DM)가 도착했을 때 */
+    MESSAGE
 }

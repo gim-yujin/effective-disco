@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org"
+      xmlns:sec="http://www.thymeleaf.org/extras/spring-security">
+<head>
+    <meta charset="UTF-8">
+    <title th:text="${box == 'inbox'} ? '받은 편지함' : '보낸 편지함'">편지함</title>
+    <link rel="stylesheet" th:href="@{/css/style.css}">
+</head>
+<body>
+<div th:replace="~{fragments/header :: header}"></div>
+<main>
+    <div class="container">
+
+        <div class="breadcrumb">
+            <a th:href="@{/}">홈</a>
+            <span class="breadcrumb-sep">&rsaquo;</span>
+            <span>쪽지함</span>
+        </div>
+
+        <!-- 쪽지 쓰기 버튼 -->
+        <div class="toolbar">
+            <h2 th:text="${box == 'inbox'} ? '받은 편지함' : '보낸 편지함'">편지함</h2>
+            <a class="btn btn-primary" th:href="@{/messages/compose}">[쪽지 쓰기]</a>
+        </div>
+
+        <!-- 받은/보낸 탭 -->
+        <div class="tab-bar">
+            <a th:href="@{/messages}"
+               th:classappend="${box == 'inbox'} ? ' active' : ''">받은 편지함</a>
+            <a th:href="@{/messages/sent}"
+               th:classappend="${box == 'sent'} ? ' active' : ''">보낸 편지함</a>
+        </div>
+
+        <!-- 편지 목록 -->
+        <div th:if="${#lists.isEmpty(messages)}" class="empty" style="padding:30px;">
+            쪽지가 없습니다.
+        </div>
+
+        <th:block th:each="m : ${messages}">
+            <a th:href="@{/messages/{id}(id=${m.id})}"
+               class="message-item"
+               th:classappend="${box == 'inbox' and !m.read} ? ' unread' : ''">
+                <!-- 미읽음 닷 (받은 편지함만) -->
+                <span class="message-unread-dot"
+                      th:if="${box == 'inbox' and !m.read}"></span>
+                <span style="width:7px;" th:if="${box == 'sent' or m.read}"></span>
+
+                <!-- 발신자 / 수신자 -->
+                <span class="message-from"
+                      th:text="${box == 'inbox'} ? ${m.senderUsername} : ${m.recipientUsername}">user</span>
+                <span class="message-title" th:text="${m.title}">제목</span>
+                <span class="message-date"
+                      th:text="${#temporals.format(m.createdAt, 'MM/dd HH:mm')}">날짜</span>
+
+                <!-- 삭제 버튼 -->
+                <form th:action="@{/messages/{id}/delete(id=${m.id})}"
+                      method="post" style="display:inline;"
+                      onclick="event.stopPropagation();">
+                    <input type="hidden" th:name="${_csrf.parameterName}" th:value="${_csrf.token}">
+                    <input type="hidden" name="box" th:value="${box}">
+                    <button class="btn btn-sm btn-danger" type="submit"
+                            onclick="return confirm('삭제하시겠습니까?')">[삭제]</button>
+                </form>
+            </a>
+        </th:block>
+
+    </div>
+</main>
+</body>
+</html>

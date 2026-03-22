@@ -31,6 +31,13 @@
                     가입일:
                     <span th:text="${#temporals.format(profile.createdAt, 'yyyy년 MM월 dd일')}">날짜</span>
                 </p>
+                <!-- 본인 프로필이 아닌 경우 쪽지 보내기 버튼 표시 -->
+                <sec:authorize access="isAuthenticated()">
+                    <a th:if="${profile.username != #authentication.name}"
+                       class="btn btn-sm"
+                       th:href="@{/messages/compose(to=${profile.username})}"
+                       style="margin-top:8px;display:inline-block;">&#9993; 쪽지 보내기</a>
+                </sec:authorize>
             </div>
         </div>
 

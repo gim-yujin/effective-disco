@@ -411,3 +411,57 @@ mark { background: #fff3b0; color: inherit; padding: 0 1px; }
 
 /* ── 무한 스크롤 로딩 표시 ───────────────────────────────── */
 #scroll-sentinel { text-align: center; padding: 16px; color: #aaa; font-size: 13px; }
+
+/* ── 쪽지 목록 ───────────────────────────────────────────── */
+.message-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 14px;
+    background: #fff;
+    border: 1px solid #ddd;
+    border-top: none;
+    text-decoration: none;
+    color: #222;
+}
+.message-item:first-of-type { border-top: 1px solid #ddd; }
+.message-item.unread { background: #f0f5ff; font-weight: bold; }
+.message-item:hover { background: #e8f0fb; }
+.message-from  { min-width: 90px; color: #4a90d9; font-size: 13px; }
+.message-title { flex: 1; font-size: 13px; }
+.message-date  { font-size: 11px; color: #999; white-space: nowrap; }
+.message-unread-dot {
+    width: 7px; height: 7px;
+    background: #c44; border-radius: 50%;
+    flex-shrink: 0;
+}
+.tab-bar { display: flex; gap: 0; margin-bottom: 0; }
+.tab-bar a, .tab-bar span {
+    display: inline-block;
+    padding: 5px 16px;
+    border: 1px solid #999;
+    font-size: 13px;
+    text-decoration: none;
+    color: #555;
+    background: #f5f5ee;
+}
+.tab-bar .active { background: #1a1a2e; color: #fff; border-color: #1a1a2e; }
+.tab-bar a:hover { background: #e8e8e0; }
+
+/* 쪽지 상세 */
+.message-header {
+    background: #fff;
+    border: 1px solid #999;
+    border-bottom: none;
+    padding: 12px 14px;
+}
+.message-header h2 { font-size: 16px; margin-bottom: 8px; }
+.message-body {
+    background: #fff;
+    border: 1px solid #999;
+    padding: 16px 14px;
+    white-space: pre-wrap;
+    line-height: 1.7;
+    min-height: 100px;
+    border-top: 2px solid #4a90d9;
+}
