@@ -21,6 +21,35 @@
             <span th:text="${isEdit} ? '수정' : '글쓰기'">글쓰기</span>
         </div>
 
+        <!--
+            신규 작성 모드이고 저장된 초안이 있을 때만 표시.
+            각 항목의 [불러오기]를 클릭하면 해당 초안의 수정 폼(/posts/{id}/edit)으로 이동한다.
+            초안을 이어서 편집한 뒤 [발행] 또는 [초안으로 저장]으로 마무리할 수 있다.
+        -->
+        <div th:if="${!isEdit and recentDrafts != null and !#lists.isEmpty(recentDrafts)}"
+             style="margin-bottom:16px;padding:12px 16px;background:#f8f9fa;
+                    border:1px solid #dde;border-radius:6px;">
+            <p style="font-size:13px;font-weight:bold;color:#555;margin:0 0 8px;">
+                💾 저장된 초안 불러오기
+            </p>
+            <div th:each="draft : ${recentDrafts}"
+                 style="display:flex;align-items:center;justify-content:space-between;
+                        padding:4px 0;border-top:1px solid #eee;">
+                <!-- 초안 제목 (길면 말줄임) -->
+                <span style="font-size:13px;color:#333;overflow:hidden;
+                             text-overflow:ellipsis;white-space:nowrap;max-width:65%;"
+                      th:text="${draft.title}">초안 제목</span>
+                <span style="display:flex;align-items:center;gap:8px;flex-shrink:0;">
+                    <!-- 작성일 -->
+                    <span style="font-size:12px;color:#aaa;"
+                          th:text="${#temporals.format(draft.createdAt, 'MM/dd HH:mm')}">날짜</span>
+                    <!-- 불러오기: 초안 수정 폼으로 이동 -->
+                    <a class="btn btn-sm btn-primary"
+                       th:href="@{/posts/{id}/edit(id=${draft.id})}">[불러오기]</a>
+                </span>
+            </div>
+        </div>
+
         <div class="form-box">
             <h2 th:text="${isEdit} ? '게시물 수정' : '새 게시물 작성'">글쓰기</h2>
 

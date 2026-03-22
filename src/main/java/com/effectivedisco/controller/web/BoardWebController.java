@@ -111,12 +111,20 @@ public class BoardWebController {
      * boardSlug 가 hidden 필드로 PostRequest에 미리 채워진다.
      */
     @GetMapping("/boards/{slug}/posts/new")
-    public String newPostForm(@PathVariable String slug, Model model) {
+    public String newPostForm(@PathVariable String slug,
+                              @AuthenticationPrincipal UserDetails userDetails,
+                              Model model) {
         PostRequest postRequest = new PostRequest();
         postRequest.setBoardSlug(slug); // 게시판 슬러그를 폼에 미리 설정
         model.addAttribute("postRequest", postRequest);
         model.addAttribute("board",  boardService.getBoard(slug));
         model.addAttribute("isEdit", false);
+
+        // 로그인한 사용자의 최근 초안 목록 (최대 5개) — 폼 상단에서 바로 불러올 수 있도록 전달
+        if (userDetails != null) {
+            model.addAttribute("recentDrafts",
+                    postService.getDrafts(userDetails.getUsername(), 0, 5).getContent());
+        }
         return "post/form";
     }
 
