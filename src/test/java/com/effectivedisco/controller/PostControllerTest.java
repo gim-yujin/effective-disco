@@ -164,6 +164,40 @@ class PostControllerTest {
                 .andExpect(status().isUnauthorized());
     }
 
+    // ── 초안 가시성 ───────────────────────────────────────────
+
+    /**
+     * 초안(draft=true) 게시물은 공개 목록 API(GET /api/posts)에 노출되지 않아야 한다.
+     * PostRepository의 모든 공개 조회 메서드에 draft=false 조건이 포함되어 있음을 검증한다.
+     */
+    @Test
+    void getDraftPost_notVisibleInPublicList() throws Exception {
+        // 초안 게시물 저장 (draft=true)
+        Post draft = Post.builder().title("비공개 초안").content("내용").author(testUser).build();
+        draft.saveDraft();
+        postRepository.save(draft);
+
+        // 공개 목록에서 초안이 집계되지 않아야 한다 — totalElements == 0
+        mockMvc.perform(get("/api/posts"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.totalElements").value(0));
+    }
+
+    /**
+     * 초안 게시물은 REST API에서도 draft 플래그가 true로 반환되어야 한다.
+     * 직접 ID 조회(GET /api/posts/{id})는 접근 제어 없이 허용된다.
+     */
+    @Test
+    void getPost_draftPost_returnsDraftFlagTrue() throws Exception {
+        Post draft = Post.builder().title("초안").content("내용").author(testUser).build();
+        draft.saveDraft();
+        draft = postRepository.save(draft);
+
+        mockMvc.perform(get("/api/posts/{id}", draft.getId()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.draft").value(true));
+    }
+
     private String postJson(String title, String content) throws Exception {
         return objectMapper.writeValueAsString(Map.of("title", title, "content", content));
     }
