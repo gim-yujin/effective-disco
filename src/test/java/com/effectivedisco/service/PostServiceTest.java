@@ -20,6 +20,9 @@ import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.core.userdetails.UsernameNotFoundException;
 import org.springframework.test.util.ReflectionTestUtils;
 
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageImpl;
+
 import java.util.List;
 import java.util.Optional;
 
@@ -181,6 +184,92 @@ class PostServiceTest {
         given(boardRepository.findBySlug("unknown")).willReturn(Optional.empty());
 
         assertThat(postService.getPinnedPosts("unknown")).isEmpty();
+    }
+
+    // ── draft 생성 ────────────────────────────────────────
+
+    @Test
+    void createPost_draftFlagTrue_savesPostAsDraft() {
+        User user = makeUser("author");
+        PostRequest request = makePostRequest("Draft Title", "Draft Content");
+        request.setDraft(true); // 초안 플래그 설정
+
+        given(userRepository.findByUsername("author")).willReturn(Optional.of(user));
+        // save()에 전달된 Post 객체를 그대로 반환해 draft 플래그를 검증한다
+        given(postRepository.save(any(Post.class))).willAnswer(inv -> inv.getArgument(0));
+
+        PostResponse response = postService.createPost(request, "author");
+
+        // 초안 플래그가 true여야 한다
+        assertThat(response.isDraft()).isTrue();
+    }
+
+    // ── draft → 발행 전환 ─────────────────────────────────
+
+    @Test
+    void updatePost_draftFlagFalse_publishesPost() {
+        User author = makeUser("author");
+        Post post   = makePost(1L, "Old Title", "Old Content", author);
+        // 게시물을 초안 상태로 설정
+        ReflectionTestUtils.setField(post, "draft", true);
+
+        given(postRepository.findById(1L)).willReturn(Optional.of(post));
+        given(postLikeRepository.countByPost(post)).willReturn(0L);
+
+        PostRequest request = makePostRequest("New Title", "New Content");
+        request.setDraft(false); // 공개 저장 → publish() 호출
+
+        PostResponse response = postService.updatePost(1L, request, "author");
+
+        // 발행 후 draft가 false여야 한다
+        assertThat(response.isDraft()).isFalse();
+        assertThat(response.getTitle()).isEqualTo("New Title");
+    }
+
+    // ── getDrafts ─────────────────────────────────────────
+
+    @Test
+    void getDrafts_returnsDraftPostsForUser() {
+        User author = makeUser("author");
+        Post draft  = makePost(1L, "My Draft", "Content", author);
+        ReflectionTestUtils.setField(draft, "draft", true);
+
+        given(userRepository.findByUsername("author")).willReturn(Optional.of(author));
+        given(postRepository.findByAuthorAndDraftTrueOrderByCreatedAtDesc(
+                any(User.class), any())).willReturn(new PageImpl<>(List.of(draft)));
+        given(postLikeRepository.countByPost(draft)).willReturn(0L);
+
+        Page<PostResponse> result = postService.getDrafts("author", 0, 20);
+
+        assertThat(result.getContent()).hasSize(1);
+        assertThat(result.getContent().get(0).getTitle()).isEqualTo("My Draft");
+        assertThat(result.getContent().get(0).isDraft()).isTrue();
+    }
+
+    // ── publishDraft ──────────────────────────────────────
+
+    @Test
+    void publishDraft_success_publishesPost() {
+        User author = makeUser("author");
+        Post post   = makePost(1L, "Title", "Content", author);
+        // 발행 전 초안 상태
+        ReflectionTestUtils.setField(post, "draft", true);
+
+        given(postRepository.findById(1L)).willReturn(Optional.of(post));
+
+        postService.publishDraft(1L, "author");
+
+        // publish() 호출로 draft가 false로 전환되어야 한다
+        assertThat(post.isDraft()).isFalse();
+    }
+
+    @Test
+    void publishDraft_notOwner_throwsAccessDeniedException() {
+        Post post = makePost(1L, "Title", "Content", makeUser("author"));
+        given(postRepository.findById(1L)).willReturn(Optional.of(post));
+
+        assertThatThrownBy(() -> postService.publishDraft(1L, "other"))
+                .isInstanceOf(AccessDeniedException.class);
     }
 
     // --- helpers ---
