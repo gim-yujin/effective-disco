@@ -1,19 +1,27 @@
 package com.effectivedisco.controller.web;
 
+import com.effectivedisco.dto.request.PasswordChangeRequest;
+import com.effectivedisco.dto.request.ProfileEditRequest;
 import com.effectivedisco.service.PostService;
 import com.effectivedisco.service.UserService;
+import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpSession;
 import lombok.RequiredArgsConstructor;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
+import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.stereotype.Controller;
 import org.springframework.ui.Model;
-import org.springframework.web.bind.annotation.GetMapping;
-import org.springframework.web.bind.annotation.PathVariable;
-import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.*;
+import org.springframework.web.servlet.mvc.support.RedirectAttributes;
 
 /**
- * 사용자 프로필 웹 컨트롤러.
+ * 사용자 프로필·설정 웹 컨트롤러.
  *
- * GET /users/{username}  → 사용자 프로필 페이지
- * 인증 없이도 접근 가능한 공개 페이지다.
+ * GET  /users/{username}   → 공개 프로필 페이지
+ * GET  /settings           → 내 설정 페이지 (로그인 필요)
+ * POST /settings/profile   → bio·이메일 변경
+ * POST /settings/password  → 비밀번호 변경
+ * POST /settings/withdraw  → 회원 탈퇴
  */
 @Controller
 @RequiredArgsConstructor
@@ -22,25 +30,72 @@ public class UserWebController {
     private final UserService userService;
     private final PostService postService;
 
-    /**
-     * 사용자 프로필 페이지.
-     *
-     * 표시 내용:
-     * - 기본 정보: 사용자명, 가입일
-     * - 활동 통계: 게시물 수, 댓글 수, 받은 좋아요 수
-     * - 작성한 게시물 목록 (최신순, 페이징)
-     *
-     * @param username URL 경로 변수 — 조회할 사용자명
-     * @param page     게시물 목록 페이지 번호 (0부터 시작, 기본값 0)
-     */
+    /* ── 공개 프로필 ──────────────────────────────────────────── */
+
     @GetMapping("/users/{username}")
     public String profile(@PathVariable String username,
                           @RequestParam(defaultValue = "0") int page,
                           Model model) {
-        // 프로필 정보 (통계 포함)
         model.addAttribute("profile", userService.getProfile(username));
-        // 이 사용자가 작성한 게시물 목록 (페이지당 10개)
         model.addAttribute("posts", postService.getPostsByAuthor(username, page, 10));
-        return "users/profile"; // templates/users/profile.html
+        return "users/profile";
+    }
+
+    /* ── 설정 페이지 ──────────────────────────────────────────── */
+
+    @GetMapping("/settings")
+    public String settings(@AuthenticationPrincipal UserDetails userDetails,
+                           Model model) {
+        model.addAttribute("profile", userService.getProfile(userDetails.getUsername()));
+        return "users/settings";
+    }
+
+    /* ── 프로필(bio·이메일) 변경 ─────────────────────────────── */
+
+    @PostMapping("/settings/profile")
+    public String updateProfile(@AuthenticationPrincipal UserDetails userDetails,
+                                @ModelAttribute ProfileEditRequest req,
+                                RedirectAttributes redirectAttributes) {
+        try {
+            userService.updateProfile(userDetails.getUsername(), req);
+            redirectAttributes.addFlashAttribute("profileMsg", "프로필이 수정되었습니다.");
+        } catch (IllegalArgumentException e) {
+            redirectAttributes.addFlashAttribute("profileError", e.getMessage());
+        }
+        return "redirect:/settings";
+    }
+
+    /* ── 비밀번호 변경 ─────────────────────────────────────────── */
+
+    @PostMapping("/settings/password")
+    public String changePassword(@AuthenticationPrincipal UserDetails userDetails,
+                                 @ModelAttribute PasswordChangeRequest req,
+                                 RedirectAttributes redirectAttributes) {
+        try {
+            userService.changePassword(userDetails.getUsername(), req);
+            redirectAttributes.addFlashAttribute("passwordMsg", "비밀번호가 변경되었습니다.");
+        } catch (IllegalArgumentException e) {
+            redirectAttributes.addFlashAttribute("passwordError", e.getMessage());
+        }
+        return "redirect:/settings";
+    }
+
+    /* ── 회원 탈퇴 ─────────────────────────────────────────────── */
+
+    @PostMapping("/settings/withdraw")
+    public String withdraw(@AuthenticationPrincipal UserDetails userDetails,
+                           @RequestParam String password,
+                           HttpServletRequest request,
+                           RedirectAttributes redirectAttributes) {
+        try {
+            userService.withdraw(userDetails.getUsername(), password);
+            // 세션 무효화 → 로그아웃 처리
+            HttpSession session = request.getSession(false);
+            if (session != null) session.invalidate();
+            return "redirect:/login?withdrawn";
+        } catch (IllegalArgumentException e) {
+            redirectAttributes.addFlashAttribute("withdrawError", e.getMessage());
+            return "redirect:/settings";
+        }
     }
 }

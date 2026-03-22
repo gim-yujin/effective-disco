@@ -4,6 +4,7 @@ import com.effectivedisco.domain.Post;
 import com.effectivedisco.domain.PostLike;
 import com.effectivedisco.domain.User;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
@@ -21,4 +22,12 @@ public interface PostLikeRepository extends JpaRepository<PostLike, Long> {
      */
     @Query("SELECT COUNT(l) FROM PostLike l WHERE l.post.author = :user")
     long countLikesReceivedByUser(@Param("user") User user);
+
+    /** 회원 탈퇴: 이 사용자가 누른 좋아요 전체 삭제 */
+    void deleteByUser(User user);
+
+    /** 회원 탈퇴: 이 사용자의 게시물에 달린 좋아요 전체 삭제 (cascade 전 선행 삭제 필요) */
+    @Modifying
+    @Query("DELETE FROM PostLike l WHERE l.post.author = :user")
+    void deleteByPostAuthor(@Param("user") User user);
 }

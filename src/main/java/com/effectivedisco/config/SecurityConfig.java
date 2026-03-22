@@ -54,8 +54,8 @@ public class SecurityConfig {
                         .requestMatchers(HttpMethod.GET, "/", "/boards/**", "/posts/**", "/users/**", "/search").permitAll()
                         // /admin/** 은 ROLE_ADMIN 만 접근 가능
                         .requestMatchers("/admin/**").hasAuthority("ROLE_ADMIN")
-                        // /notifications, /messages, /reports 는 로그인 필요
-                        .requestMatchers("/notifications/**", "/messages/**", "/reports/**").authenticated()
+                        // /notifications, /messages, /reports, /settings 는 로그인 필요
+                        .requestMatchers("/notifications/**", "/messages/**", "/reports/**", "/settings/**").authenticated()
                         .anyRequest().authenticated())
                 .formLogin(form -> form
                         .loginPage("/login")

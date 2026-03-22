@@ -19,4 +19,7 @@ public interface ReportRepository extends JpaRepository<Report, Long> {
 
     /** 헤더 배지: 미처리(PENDING) 신고 건수 */
     long countByStatus(ReportStatus status);
+
+    /** 회원 탈퇴: 이 사용자가 제출한 신고 전체 삭제 */
+    void deleteByReporter(User reporter);
 }

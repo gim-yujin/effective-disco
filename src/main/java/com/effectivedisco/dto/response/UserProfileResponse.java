@@ -13,6 +13,8 @@ import java.time.LocalDateTime;
 public class UserProfileResponse {
 
     private final String        username;
+    private final String        email;
+    private final String        bio;
     /** 가입 시각 (프로필 페이지에 "가입일" 로 표시) */
     private final LocalDateTime createdAt;
 
@@ -26,6 +28,8 @@ public class UserProfileResponse {
     public UserProfileResponse(User user, long postCount,
                                long commentCount, long likesReceived) {
         this.username      = user.getUsername();
+        this.email         = user.getEmail();
+        this.bio           = user.getBio();
         this.createdAt     = user.getCreatedAt();
         this.postCount     = postCount;
         this.commentCount  = commentCount;

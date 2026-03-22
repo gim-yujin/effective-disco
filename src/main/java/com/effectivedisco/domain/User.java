@@ -44,6 +44,10 @@ public class User {
     @Column(nullable = false)
     private String role = "ROLE_USER";
 
+    /** 자기 소개 (선택 입력, 최대 300자) */
+    @Column(columnDefinition = "TEXT")
+    private String bio;
+
     @Builder
     public User(String username, String email, String password) {
         this.username = username;
@@ -57,4 +61,9 @@ public class User {
     public void promoteToAdmin()  { this.role = "ROLE_ADMIN"; }
     public void demoteToUser()    { this.role = "ROLE_USER";  }
     public boolean isAdmin()      { return "ROLE_ADMIN".equals(this.role); }
+
+    /** 프로필 편집 */
+    public void updateBio(String bio)             { this.bio = bio; }
+    public void updateEmail(String email)         { this.email = email; }
+    public void updatePassword(String encoded)    { this.password = encoded; }
 }
