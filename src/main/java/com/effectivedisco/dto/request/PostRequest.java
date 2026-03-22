@@ -5,6 +5,9 @@ import jakarta.validation.constraints.Size;
 import lombok.Getter;
 import lombok.Setter;
 
+import java.util.ArrayList;
+import java.util.List;
+
 @Getter
 @Setter
 public class PostRequest {
@@ -27,9 +30,9 @@ public class PostRequest {
     private String boardSlug;
 
     /**
-     * 첨부 이미지 서빙 URL.
-     * 웹 컨트롤러에서 ImageService로 파일을 저장한 후 이 필드에 URL을 설정한다.
+     * 첨부 이미지 서빙 URL 목록.
+     * 웹 컨트롤러에서 ImageService.storeAll()로 파일들을 저장한 후 URL 목록을 설정한다.
      * REST API에서는 사용하지 않는다.
      */
-    private String imageUrl;
+    private List<String> imageUrls = new ArrayList<>();
 }

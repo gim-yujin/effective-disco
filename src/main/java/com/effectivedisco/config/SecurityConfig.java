@@ -57,9 +57,9 @@ public class SecurityConfig {
                         .requestMatchers(HttpMethod.GET, "/", "/boards/**", "/posts/**", "/users/**", "/search").permitAll()
                         // /admin/** 은 ROLE_ADMIN 만 접근 가능
                         .requestMatchers("/admin/**").hasAuthority("ROLE_ADMIN")
-                        // /notifications, /messages, /reports, /settings, /bookmarks 는 로그인 필요
+                        // /notifications, /messages, /reports, /settings, /bookmarks, /sse, /feed 는 로그인 필요
                         .requestMatchers("/notifications/**", "/messages/**", "/reports/**",
-                                         "/settings/**", "/bookmarks").authenticated()
+                                         "/settings/**", "/bookmarks", "/sse/**", "/feed").authenticated()
                         .anyRequest().authenticated())
                 .formLogin(form -> form
                         .loginPage("/login")

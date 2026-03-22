@@ -3,6 +3,7 @@ package com.effectivedisco.controller.web;
 import com.effectivedisco.dto.request.PasswordChangeRequest;
 import com.effectivedisco.dto.request.ProfileEditRequest;
 import com.effectivedisco.service.BookmarkService;
+import com.effectivedisco.service.FollowService;
 import com.effectivedisco.service.PostService;
 import com.effectivedisco.service.UserService;
 import jakarta.servlet.http.HttpServletRequest;
@@ -31,6 +32,7 @@ public class UserWebController {
     private final UserService     userService;
     private final PostService     postService;
     private final BookmarkService bookmarkService;
+    private final FollowService   followService;
 
     /* ── 공개 프로필 ──────────────────────────────────────────── */
 
@@ -43,10 +45,42 @@ public class UserWebController {
     @GetMapping("/users/{username}")
     public String profile(@PathVariable String username,
                           @RequestParam(defaultValue = "0") int page,
+                          @AuthenticationPrincipal UserDetails userDetails,
                           Model model) {
         model.addAttribute("profile", userService.getProfile(username));
         model.addAttribute("posts", postService.getPostsByAuthor(username, page, 10));
+
+        // 현재 로그인 사용자가 이 프로필 사용자를 팔로우 중인지 여부 (팔로우 버튼 표시용)
+        boolean isFollowing = userDetails != null
+                && !userDetails.getUsername().equals(username)
+                && followService.isFollowing(userDetails.getUsername(), username);
+        model.addAttribute("isFollowing", isFollowing);
+
         return "users/profile";
+    }
+
+    /**
+     * 팔로우 토글 — 팔로우/언팔로우 처리 후 프로필 페이지로 리다이렉트.
+     * 자기 자신에 대한 요청은 FollowService에서 예외로 처리한다.
+     */
+    @PostMapping("/users/{username}/follow")
+    public String toggleFollow(@PathVariable String username,
+                               @AuthenticationPrincipal UserDetails userDetails) {
+        followService.toggle(userDetails.getUsername(), username);
+        return "redirect:/users/" + username;
+    }
+
+    /**
+     * 팔로우 피드 — 팔로우한 사용자들의 최신 게시물 목록.
+     * 팔로잉이 없으면 빈 목록을 표시한다.
+     */
+    @GetMapping("/feed")
+    public String feed(@AuthenticationPrincipal UserDetails userDetails,
+                       @RequestParam(defaultValue = "0") int page,
+                       Model model) {
+        model.addAttribute("posts",
+                followService.getFeed(userDetails.getUsername(), page, 20));
+        return "users/feed";
     }
 
     /* ── 설정 페이지 ──────────────────────────────────────────── */

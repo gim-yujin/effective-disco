@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org"
+      xmlns:sec="http://www.thymeleaf.org/extras/spring-security">
+<head>
+    <meta charset="UTF-8">
+    <title>팔로우 피드 — BBS</title>
+    <link rel="stylesheet" th:href="@{/css/style.css}">
+</head>
+<body>
+<div th:replace="~{fragments/header :: header}"></div>
+
+<main>
+    <div class="container">
+
+        <div class="breadcrumb">
+            <a th:href="@{/}">홈</a>
+            <span class="breadcrumb-sep">&rsaquo;</span>
+            <span>팔로우 피드</span>
+        </div>
+
+        <div class="toolbar">
+            <h2>팔로우 피드 — <span th:text="${posts.totalElements}">0</span>개</h2>
+        </div>
+
+        <!-- 팔로잉이 없거나 게시물이 없을 때 안내 메시지 -->
+        <div th:if="${posts.content.empty}" style="padding:32px 0; text-align:center; color:#aaa;">
+            <p>팔로우한 사용자의 게시물이 없습니다.</p>
+            <p style="font-size:13px;">
+                관심 있는 사용자의 프로필에서 <strong>[+ 팔로우]</strong> 버튼을 클릭해보세요.
+            </p>
+        </div>
+
+        <!-- 게시물 목록 테이블 -->
+        <table class="board-table" th:unless="${posts.content.empty}">
+            <thead>
+                <tr>
+                    <th>제목</th>
+                    <th class="col-author">작성자</th>
+                    <th class="col-board-name">게시판</th>
+                    <th class="col-date">날짜</th>
+                    <th class="col-views">조회</th>
+                    <th class="col-comments">댓글</th>
+                    <th class="col-likes">♥</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr th:each="post : ${posts.content}">
+                    <td>
+                        <a class="title-link"
+                           th:href="@{/posts/{id}(id=${post.id})}"
+                           th:text="${post.title}">제목</a>
+                        <!-- 태그 뱃지 -->
+                        <span th:if="${!#lists.isEmpty(post.tags)}">
+                            <a th:each="t : ${post.tags}" class="tag tag-sm"
+                               th:href="${post.boardSlug != null}
+                                        ? '/boards/' + ${post.boardSlug} + '?tag=' + ${t}
+                                        : '/?tag=' + ${t}"
+                               th:text="'#' + ${t}">태그</a>
+                        </span>
+                    </td>
+                    <td class="col-author">
+                        <a class="author-link"
+                           th:href="@{/users/{u}(u=${post.author})}"
+                           th:text="${post.author}">작성자</a>
+                    </td>
+                    <td class="col-board-name">
+                        <a th:if="${post.boardSlug != null}"
+                           class="board-name-link"
+                           th:href="@{/boards/{slug}(slug=${post.boardSlug})}"
+                           th:text="${post.boardName}">게시판</a>
+                        <span th:unless="${post.boardSlug != null}" style="color:#bbb;">—</span>
+                    </td>
+                    <td class="col-date"
+                        th:text="${#temporals.format(post.createdAt, 'yy/MM/dd')}">날짜</td>
+                    <td class="col-views"    th:text="${post.viewCount}">0</td>
+                    <td class="col-comments" th:text="${post.commentCount}">0</td>
+                    <td class="col-likes"    th:text="${post.likeCount}">0</td>
+                </tr>
+            </tbody>
+        </table>
+
+        <!-- 페이지네이션 -->
+        <div class="pagination" th:if="${posts.totalPages > 1}">
+            <a th:if="${!posts.first}"
+               th:href="@{/feed(page=${posts.number - 1})}">&laquo; 이전</a>
+            <th:block th:each="i : ${#numbers.sequence(0, posts.totalPages - 1)}">
+                <span th:if="${i == posts.number}" class="current" th:text="${i + 1}">1</span>
+                <a th:unless="${i == posts.number}"
+                   th:href="@{/feed(page=${i})}" th:text="${i + 1}">1</a>
+            </th:block>
+            <a th:if="${!posts.last}"
+               th:href="@{/feed(page=${posts.number + 1})}">다음 &raquo;</a>
+        </div>
+
+    </div>
+</main>
+</body>
+</html>

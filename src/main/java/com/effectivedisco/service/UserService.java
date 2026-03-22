@@ -7,6 +7,7 @@ import com.effectivedisco.dto.response.UserProfileResponse;
 
 import java.time.LocalDateTime;
 import com.effectivedisco.repository.CommentRepository;
+import com.effectivedisco.repository.FollowRepository;
 import com.effectivedisco.repository.MessageRepository;
 import com.effectivedisco.repository.NotificationRepository;
 import com.effectivedisco.repository.PostLikeRepository;
@@ -33,6 +34,7 @@ public class UserService {
     private final NotificationRepository notificationRepository;
     private final MessageRepository      messageRepository;
     private final ReportRepository       reportRepository;
+    private final FollowRepository       followRepository;
     private final PasswordEncoder        passwordEncoder;
 
     /**
@@ -54,8 +56,12 @@ public class UserService {
         long commentCount  = commentRepository.countByAuthor(user);
         // 내가 작성한 게시물 전체에 달린 좋아요 합산
         long likesReceived = postLikeRepository.countLikesReceivedByUser(user);
+        // 팔로우 통계
+        long followerCount  = followRepository.countByFollowing(user);
+        long followingCount = followRepository.countByFollower(user);
 
-        return new UserProfileResponse(user, postCount, commentCount, likesReceived);
+        return new UserProfileResponse(user, postCount, commentCount,
+                                       likesReceived, followerCount, followingCount);
     }
 
     /* ── 프로필 편집 ──────────────────────────────────────────── */

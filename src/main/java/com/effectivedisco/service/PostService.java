@@ -2,6 +2,7 @@ package com.effectivedisco.service;
 
 import com.effectivedisco.domain.Board;
 import com.effectivedisco.domain.Post;
+import com.effectivedisco.domain.PostImage;
 import com.effectivedisco.domain.PostLike;
 import com.effectivedisco.domain.Tag;
 import com.effectivedisco.domain.User;
@@ -154,10 +155,15 @@ public class PostService {
                 .build();
 
         post.getTags().addAll(resolveTags(request.getTagsInput()));
-        if (request.getImageUrl() != null) {
-            post.setImageUrl(request.getImageUrl());
+
+        // 다중 이미지 첨부 — PostImage 엔티티를 생성해 컬렉션에 추가
+        // CascadeType.ALL에 의해 Post와 함께 자동 저장된다
+        Post saved = postRepository.save(post);
+        List<String> imageUrls = request.getImageUrls();
+        for (int i = 0; i < imageUrls.size(); i++) {
+            saved.addImage(new PostImage(saved, imageUrls.get(i), i));
         }
-        return new PostResponse(postRepository.save(post));
+        return new PostResponse(saved, 0);
     }
 
     /**
@@ -174,8 +180,14 @@ public class PostService {
         post.getTags().clear();
         post.getTags().addAll(resolveTags(request.getTagsInput()));
 
-        if (request.getImageUrl() != null) {
-            post.setImageUrl(request.getImageUrl());
+        // 새 이미지가 업로드된 경우 기존 이미지를 모두 교체
+        // post.clearImages() → orphanRemoval로 기존 PostImage 행 자동 삭제
+        List<String> newImageUrls = request.getImageUrls();
+        if (!newImageUrls.isEmpty()) {
+            post.clearImages();
+            for (int i = 0; i < newImageUrls.size(); i++) {
+                post.addImage(new PostImage(post, newImageUrls.get(i), i));
+            }
         }
 
         return new PostResponse(post, postLikeRepository.countByPost(post));

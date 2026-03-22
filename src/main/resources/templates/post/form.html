@@ -56,17 +56,19 @@
                            placeholder="spring, java, ...">
                 </div>
                 <div class="form-group">
-                    <label for="image">이미지 첨부
-                        <span style="color:#888; font-size:12px;">(JPEG·PNG·GIF·WebP, 5MB 이하)</span>
+                    <label for="images">이미지 첨부
+                        <span style="color:#888; font-size:12px;">(JPEG·PNG·GIF·WebP, 5MB 이하, 여러 장 선택 가능)</span>
                     </label>
-                    <!-- 수정 시 기존 이미지 미리보기 -->
-                    <div th:if="${isEdit and postRequest.imageUrl != null}" style="margin-bottom:6px;">
-                        <img th:src="${postRequest.imageUrl}" alt="현재 이미지"
-                             style="max-height:120px;border-radius:4px;border:1px solid #ddd;">
-                        <span style="font-size:12px;color:#888;margin-left:6px;">새 파일을 선택하면 교체됩니다.</span>
+                    <!-- 수정 시 기존 이미지 미리보기 — 새 파일을 선택하면 교체됨 -->
+                    <div th:if="${isEdit and !#lists.isEmpty(existingImages)}"
+                         style="margin-bottom:8px;display:flex;flex-wrap:wrap;gap:6px;align-items:flex-end;">
+                        <img th:each="url : ${existingImages}" th:src="${url}" alt="현재 이미지"
+                             style="max-height:100px;border-radius:4px;border:1px solid #ddd;">
+                        <span style="font-size:12px;color:#888;">새 파일을 선택하면 기존 이미지가 교체됩니다.</span>
                     </div>
                     <div class="alert alert-danger" th:if="${errorMsg}" th:text="${errorMsg}"></div>
-                    <input type="file" id="image" name="image" accept="image/*">
+                    <!-- multiple 속성으로 여러 파일 동시 선택 가능 -->
+                    <input type="file" id="images" name="images" accept="image/*" multiple>
                 </div>
                 <div style="display:flex; gap:8px;">
                     <button class="btn btn-primary" type="submit">

@@ -24,12 +24,13 @@
                           th:text="${unreadMessageCount}"></span>
                 </span>
 
-                <!-- 알림 벨: 미읽음 수 뱃지 포함 -->
+                <!-- 알림 벨: 미읽음 수 뱃지 포함. SSE가 연결되면 JS가 실시간으로 업데이트한다. -->
                 <span class="notif-wrap">
                     <a th:href="@{/notifications}">&#9651;</a>
-                    <span class="notif-badge"
-                          th:if="${unreadCount != null and unreadCount > 0}"
-                          th:text="${unreadCount}"></span>
+                    <span id="notif-badge-count"
+                          class="notif-badge"
+                          th:style="${unreadCount != null and unreadCount > 0} ? '' : 'display:none'"
+                          th:text="${unreadCount != null} ? ${unreadCount} : 0">0</span>
                 </span>
 
                 <!-- 관리자에게만 관리 패널 링크 표시 (미처리 신고 배지 포함) -->
@@ -53,5 +54,36 @@
         </nav>
     </div>
 </header>
+
+<!--
+    SSE(Server-Sent Events) 실시간 알림 뱃지 업데이트.
+    로그인한 사용자에게만 EventSource 를 연결한다.
+    브라우저가 탭을 닫거나 연결이 끊어지면 EventSource 가 자동으로 재연결을 시도한다.
+    알림 목록 페이지로 이동해 읽음 처리가 완료되면 서버가 count=0 을 push해 뱃지가 사라진다.
+-->
+<script sec:authorize="isAuthenticated()">
+(function () {
+    const badge = document.getElementById('notif-badge-count');
+    if (!badge) return;
+
+    const es = new EventSource('/sse/notifications');
+
+    // "unread-count" 이벤트 수신 시 뱃지 숫자 갱신
+    es.addEventListener('unread-count', function (e) {
+        const count = parseInt(e.data, 10);
+        if (count > 0) {
+            badge.textContent = count;
+            badge.style.display = 'inline';
+        } else {
+            badge.style.display = 'none';
+        }
+    });
+
+    // 오류 시 재연결은 브라우저 EventSource 가 자동 처리하므로 별도 로직 불필요
+    es.onerror = function () {
+        // 페이지 이탈 또는 네트워크 오류 — EventSource 자체 재연결 로직에 위임
+    };
+})();
+</script>
 </body>
 </html>

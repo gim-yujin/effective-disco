@@ -119,14 +119,14 @@ public class BoardWebController {
     @PostMapping("/boards/{slug}/posts")
     public String createPost(@PathVariable String slug,
                              @ModelAttribute PostRequest postRequest,
-                             @RequestParam(value = "image", required = false) MultipartFile image,
+                             // multiple 속성 덕분에 브라우저가 여러 파일을 리스트로 전송
+                             @RequestParam(value = "images", required = false) List<MultipartFile> images,
                              @AuthenticationPrincipal UserDetails userDetails,
                              RedirectAttributes redirectAttributes) {
         postRequest.setBoardSlug(slug);
         try {
-            if (image != null && !image.isEmpty()) {
-                postRequest.setImageUrl(imageService.store(image));
-            }
+            // 유효 파일만 필터링하여 저장 후 URL 목록을 PostRequest에 설정
+            postRequest.setImageUrls(imageService.storeAll(images));
         } catch (IllegalArgumentException e) {
             redirectAttributes.addFlashAttribute("errorMsg", e.getMessage());
             return "redirect:/boards/" + slug + "/posts/new";
@@ -196,11 +196,13 @@ public class BoardWebController {
         postRequest.setTagsInput(String.join(", ", post.getTags()));
         postRequest.setBoardSlug(post.getBoardSlug()); // 게시판 정보 유지
 
-        model.addAttribute("postRequest", postRequest);
-        model.addAttribute("postId",      id);
-        model.addAttribute("board",       post.getBoardSlug() != null
-                                          ? boardService.getBoard(post.getBoardSlug()) : null);
-        model.addAttribute("isEdit",      true);
+        model.addAttribute("postRequest",    postRequest);
+        model.addAttribute("postId",         id);
+        model.addAttribute("board",          post.getBoardSlug() != null
+                                             ? boardService.getBoard(post.getBoardSlug()) : null);
+        model.addAttribute("isEdit",         true);
+        // 수정 폼에서 기존 이미지 미리보기 표시용 — 새 파일 업로드 시 교체됨
+        model.addAttribute("existingImages", post.getImageUrls());
         return "post/form";
     }
 
@@ -208,13 +210,14 @@ public class BoardWebController {
     @PostMapping("/posts/{id}/edit")
     public String updatePost(@PathVariable Long id,
                              @ModelAttribute PostRequest postRequest,
-                             @RequestParam(value = "image", required = false) MultipartFile image,
+                             // multiple 속성 덕분에 브라우저가 여러 파일을 리스트로 전송
+                             @RequestParam(value = "images", required = false) List<MultipartFile> images,
                              @AuthenticationPrincipal UserDetails userDetails,
                              RedirectAttributes redirectAttributes) {
         try {
-            if (image != null && !image.isEmpty()) {
-                postRequest.setImageUrl(imageService.store(image));
-            }
+            // 새 파일이 있으면 저장 후 PostRequest에 URL 목록 설정
+            // 빈 목록이면 PostService에서 기존 이미지를 유지함
+            postRequest.setImageUrls(imageService.storeAll(images));
         } catch (IllegalArgumentException e) {
             redirectAttributes.addFlashAttribute("errorMsg", e.getMessage());
             return "redirect:/posts/" + id + "/edit";

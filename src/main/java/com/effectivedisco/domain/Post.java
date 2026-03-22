@@ -66,6 +66,15 @@ public class Post {
     private Set<Tag> tags = new HashSet<>();
 
     /**
+     * 첨부 이미지 목록. sortOrder 오름차순으로 정렬된다.
+     * CascadeType.ALL + orphanRemoval=true: 이미지를 컬렉션에서 제거하면 DB에서도 자동 삭제.
+     * DB 레벨 CASCADE(@OnDelete)와 JPA 레벨 cascade 를 모두 설정해 어느 쪽에서 삭제하든 일관성을 보장한다.
+     */
+    @OneToMany(mappedBy = "post", cascade = CascadeType.ALL, orphanRemoval = true)
+    @OrderBy("sortOrder ASC")
+    private List<PostImage> images = new ArrayList<>();
+
+    /**
      * board 파라미터를 포함한 빌더 생성자.
      * board를 지정하지 않으면 null(미분류)로 처리된다.
      */
@@ -90,4 +99,17 @@ public class Post {
     public void unpin() { this.pinned = false; }
 
     public void setImageUrl(String imageUrl) { this.imageUrl = imageUrl; }
+
+    /**
+     * 기존 이미지 목록을 모두 제거한다.
+     * 수정 시 기존 이미지를 전부 삭제하고 새 이미지로 교체할 때 사용한다.
+     * orphanRemoval = true 이므로 컬렉션에서 제거하면 DB 행도 삭제된다.
+     */
+    public void clearImages() { this.images.clear(); }
+
+    /**
+     * 이미지를 목록에 추가한다.
+     * 양방향 연관관계의 owner(PostImage.post)와 일관성을 유지하기 위해 이 메서드를 통해 추가한다.
+     */
+    public void addImage(PostImage image) { this.images.add(image); }
 }

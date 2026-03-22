@@ -9,6 +9,8 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.nio.file.StandardCopyOption;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.UUID;
 
 /**
@@ -63,6 +65,24 @@ public class ImageService {
         }
 
         return "/uploads/images/" + filename;
+    }
+
+    /**
+     * 여러 이미지를 저장하고 서빙 URL 목록을 반환한다.
+     * 비어 있는 파일은 자동으로 건너뛴다.
+     *
+     * @param files 업로드된 MultipartFile 목록 (null 또는 빈 파일 포함 가능)
+     * @return 저장된 이미지의 서빙 URL 목록 (비어 있는 파일 제외)
+     */
+    public List<String> storeAll(List<MultipartFile> files) {
+        if (files == null || files.isEmpty()) return List.of();
+        List<String> urls = new ArrayList<>();
+        for (MultipartFile file : files) {
+            if (file != null && !file.isEmpty()) {
+                urls.add(store(file)); // 개별 유효성 검사(크기·형식)는 store()에서 수행
+            }
+        }
+        return urls;
     }
 
     private String getExtension(String filename) {

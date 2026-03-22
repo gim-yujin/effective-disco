@@ -1,9 +1,11 @@
 package com.effectivedisco.dto.response;
 
 import com.effectivedisco.domain.Post;
+import com.effectivedisco.domain.PostImage;
 import lombok.Getter;
 
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.stream.Collectors;
 
@@ -27,7 +29,13 @@ public class PostResponse {
     private final String boardName;
     private final String boardSlug;
     private final boolean pinned;
-    private final String imageUrl;
+
+    /**
+     * 첨부 이미지 URL 목록 (sortOrder 오름차순).
+     * PostImage 엔티티 목록을 우선 사용하고,
+     * 기존 단일 imageUrl 필드(하위 호환)는 images가 비어 있을 때 폴백으로 포함한다.
+     */
+    private final List<String> imageUrls;
 
     public PostResponse(Post post, long likeCount) {
         this.id = post.getId();
@@ -46,7 +54,16 @@ public class PostResponse {
         this.boardName = post.getBoard() != null ? post.getBoard().getName() : null;
         this.boardSlug = post.getBoard() != null ? post.getBoard().getSlug() : null;
         this.pinned    = post.isPinned();
-        this.imageUrl  = post.getImageUrl();
+
+        // PostImage 컬렉션에서 URL 목록 구성 (sortOrder 기준 @OrderBy 적용됨)
+        List<String> urls = post.getImages().stream()
+                .map(PostImage::getImageUrl)
+                .collect(Collectors.toCollection(ArrayList::new));
+        // 기존 단일 imageUrl 필드 — PostImage가 없는 레거시 데이터 하위 호환
+        if (urls.isEmpty() && post.getImageUrl() != null) {
+            urls.add(post.getImageUrl());
+        }
+        this.imageUrls = List.copyOf(urls);
     }
 
     public PostResponse(Post post) {

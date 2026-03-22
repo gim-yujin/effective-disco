@@ -50,10 +50,10 @@
                 <span>조회: <span th:text="${post.viewCount}">0</span></span>
             </div>
         </div>
-        <!-- 첨부 이미지 -->
-        <div th:if="${post.imageUrl != null}" style="margin:12px 0;">
-            <img th:src="${post.imageUrl}" alt="첨부 이미지"
-                 style="max-width:100%;border-radius:6px;border:1px solid #e0e0e0;">
+        <!-- 첨부 이미지 갤러리 (sortOrder 오름차순으로 표시) -->
+        <div th:if="${!#lists.isEmpty(post.imageUrls)}" style="margin:12px 0;">
+            <img th:each="url : ${post.imageUrls}" th:src="${url}" alt="첨부 이미지"
+                 style="max-width:100%;display:block;margin-bottom:8px;border-radius:6px;border:1px solid #e0e0e0;">
         </div>
 
         <div class="post-body" th:text="${post.content}">내용</div>

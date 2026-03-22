@@ -83,6 +83,14 @@ public interface PostRepository extends JpaRepository<Post, Long> {
     void detachFromBoard(@Param("board") Board board);
 
     /**
+     * 팔로우 피드: 지정한 사용자 목록이 작성한 게시물을 최신순으로 페이징 조회.
+     * 팔로잉 목록이 비어있으면 호출하지 않아야 한다 (JPQL IN 절에 빈 컬렉션은 오류 발생).
+     */
+    @Query("SELECT p FROM Post p WHERE p.author IN :authors ORDER BY p.createdAt DESC")
+    Page<Post> findByAuthorInOrderByCreatedAtDesc(
+            @Param("authors") List<com.effectivedisco.domain.User> authors, Pageable pageable);
+
+    /**
      * 인기 태그: 게시물에 가장 많이 사용된 태그 이름을 빈도 내림차순으로 반환.
      * 홈 화면 및 검색 페이지에 표시한다.
      */
