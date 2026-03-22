@@ -43,7 +43,7 @@ public class Post {
     private int viewCount = 0;
 
     /** 관리자가 게시판 상단에 고정한 공지 게시물 여부 */
-    @Column(nullable = false)
+    @Column(nullable = false, columnDefinition = "boolean default false")
     private boolean pinned = false;
 
     /** 첨부 이미지 URL (없으면 null) */
