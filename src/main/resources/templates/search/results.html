@@ -18,14 +18,25 @@
         </div>
 
         <!-- 검색 폼 -->
-        <form class="search-form" action="/search" method="get" style="margin-bottom:14px;">
+        <form class="search-form" action="/search" method="get" style="margin-bottom:8px;">
             <input type="text" name="q" class="search-input"
-                   placeholder="전체 게시판 검색 (제목 / 내용 / 작성자)"
+                   placeholder="검색 (제목/내용, #태그명, @작성자명)"
                    th:value="${q}" autofocus>
             <button type="submit" class="btn btn-search">검색</button>
             <a th:if="${q != null and !q.isBlank()}"
                href="/search" class="btn btn-reset">초기화</a>
         </form>
+
+        <!-- 검색 힌트 -->
+        <div style="font-size:12px; color:#999; margin-bottom:14px;">
+            <span class="tag tag-sm" style="cursor:pointer;"
+                  onclick="document.querySelector('[name=q]').value='#'; document.querySelector('[name=q]').focus()">#태그</span>
+            <span style="margin:0 4px; color:#ccc;">·</span>
+            <span class="tag tag-sm" style="cursor:pointer;"
+                  onclick="document.querySelector('[name=q]').value='@'; document.querySelector('[name=q]').focus()">@작성자</span>
+            <span style="margin:0 4px; color:#ccc;">·</span>
+            <span style="color:#bbb;">접두사 없이 입력하면 제목/내용에서 검색</span>
+        </div>
 
         <!-- 인기 태그 -->
         <div class="tag-filter-bar" th:if="${!#lists.isEmpty(popularTags)}">
@@ -39,30 +50,51 @@
         <th:block th:if="${posts != null}">
             <div class="toolbar">
                 <h2>
-                    &ldquo;<span th:text="${q}"></span>&rdquo; 검색결과
-                    &mdash; <span th:text="${posts.totalElements}">0</span>건
+                    <!-- 태그 검색 -->
+                    <th:block th:if="${type == 'tag'}">
+                        <span style="color:#888;">#</span><span th:text="${searchTarget}"></span>
+                        태그 검색결과 &mdash; <span th:text="${posts.totalElements}">0</span>건
+                    </th:block>
+                    <!-- 작성자 검색 -->
+                    <th:block th:if="${type == 'author'}">
+                        <span style="color:#888;">@</span><a th:href="@{/users/{u}(u=${searchTarget})}"
+                           th:text="${searchTarget}" style="color:inherit;"></a>
+                        작성자 검색결과 &mdash; <span th:text="${posts.totalElements}">0</span>건
+                    </th:block>
+                    <!-- 키워드 검색 -->
+                    <th:block th:if="${type == 'keyword'}">
+                        &ldquo;<span th:text="${q}"></span>&rdquo; 검색결과
+                        &mdash; <span th:text="${posts.totalElements}">0</span>건
+                    </th:block>
                 </h2>
             </div>
 
+            <!-- 사용자를 찾을 수 없음 -->
+            <div th:if="${userNotFound}" class="empty" style="padding:20px 0;">
+                <strong th:text="'@' + ${searchTarget}"></strong> 사용자를 찾을 수 없습니다.
+            </div>
+
             <table class="board-table" id="search-table"
+                   th:unless="${userNotFound}"
                    th:data-q="${q}"
+                   th:data-type="${type}"
                    th:data-total-pages="${posts.totalPages}"
                    th:data-current-page="${posts.number}">
                 <thead>
                     <tr>
-                        <th>게시판</th>
+                        <th th:unless="${type == 'author'}">게시판</th>
                         <th>제목</th>
-                        <th class="col-author">작성자</th>
+                        <th class="col-author" th:unless="${type == 'author'}">작성자</th>
                         <th class="col-date">날짜</th>
                         <th class="col-views">조회</th>
                     </tr>
                 </thead>
                 <tbody id="search-body">
                     <tr th:if="${posts.content.empty}">
-                        <td colspan="5" class="empty">검색 결과가 없습니다.</td>
+                        <td th:colspan="${type == 'author'} ? 3 : 5" class="empty">검색 결과가 없습니다.</td>
                     </tr>
                     <tr th:each="post : ${posts.content}">
-                        <td class="col-board-name">
+                        <td class="col-board-name" th:unless="${type == 'author'}">
                             <a th:if="${post.boardSlug != null}"
                                th:href="@{/boards/{s}(s=${post.boardSlug})}"
                                th:text="${post.boardName}" class="tag tag-sm">게시판</a>
@@ -72,7 +104,7 @@
                             <a class="title-link" th:href="@{/posts/{id}(id=${post.id})}"
                                th:text="${post.title}">제목</a>
                         </td>
-                        <td class="col-author">
+                        <td class="col-author" th:unless="${type == 'author'}">
                             <a class="author-link"
                                th:href="@{/users/{u}(u=${post.author})}"
                                th:text="${post.author}">작성자</a>
@@ -85,7 +117,7 @@
             </table>
 
             <!-- 페이지네이션 -->
-            <div class="pagination" th:if="${posts.totalPages > 1}" id="pagination">
+            <div class="pagination" th:if="${posts.totalPages > 1 and !userNotFound}" id="pagination">
                 <a th:if="${!posts.first}"
                    th:href="@{/search(q=${q}, page=${posts.number - 1})}">&laquo; 이전</a>
                 <th:block th:each="i : ${#numbers.sequence(0, posts.totalPages - 1)}">
@@ -108,9 +140,12 @@
 </main>
 
 <script>
-// 검색 결과 키워드 하이라이트: 일치하는 텍스트를 <mark>로 감싼다
+// 키워드 검색일 때만 제목 하이라이트
 (function() {
-    const q = document.querySelector('#search-table')?.dataset.q?.trim();
+    const table = document.querySelector('#search-table');
+    if (!table || table.dataset.type !== 'keyword') return;
+
+    const q = table.dataset.q?.trim();
     if (!q) return;
 
     const escaped = q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
