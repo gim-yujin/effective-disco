@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org"
+      xmlns:sec="http://www.thymeleaf.org/extras/spring-security">
+<head>
+    <meta charset="UTF-8">
+    <title>검색 — BBS</title>
+    <link rel="stylesheet" th:href="@{/css/style.css}">
+</head>
+<body>
+<div th:replace="~{fragments/header :: header}"></div>
+<main>
+    <div class="container">
+
+        <div class="breadcrumb">
+            <a th:href="@{/}">홈</a>
+            <span class="breadcrumb-sep">&rsaquo;</span>
+            <span>통합 검색</span>
+        </div>
+
+        <!-- 검색 폼 -->
+        <form class="search-form" action="/search" method="get" style="margin-bottom:14px;">
+            <input type="text" name="q" class="search-input"
+                   placeholder="전체 게시판 검색 (제목 / 내용 / 작성자)"
+                   th:value="${q}" autofocus>
+            <button type="submit" class="btn btn-search">검색</button>
+            <a th:if="${q != null and !q.isBlank()}"
+               href="/search" class="btn btn-reset">초기화</a>
+        </form>
+
+        <!-- 인기 태그 -->
+        <div class="tag-filter-bar" th:if="${!#lists.isEmpty(popularTags)}">
+            <span class="tag-filter-label">인기 태그:</span>
+            <a th:each="t : ${popularTags}" class="tag tag-sm"
+               th:href="@{/search(q='#' + ${t})}"
+               th:text="'#' + ${t}">태그</a>
+        </div>
+
+        <!-- 검색 결과 -->
+        <th:block th:if="${posts != null}">
+            <div class="toolbar">
+                <h2>
+                    &ldquo;<span th:text="${q}"></span>&rdquo; 검색결과
+                    &mdash; <span th:text="${posts.totalElements}">0</span>건
+                </h2>
+            </div>
+
+            <table class="board-table" id="search-table"
+                   th:data-q="${q}"
+                   th:data-total-pages="${posts.totalPages}"
+                   th:data-current-page="${posts.number}">
+                <thead>
+                    <tr>
+                        <th>게시판</th>
+                        <th>제목</th>
+                        <th class="col-author">작성자</th>
+                        <th class="col-date">날짜</th>
+                        <th class="col-views">조회</th>
+                    </tr>
+                </thead>
+                <tbody id="search-body">
+                    <tr th:if="${posts.content.empty}">
+                        <td colspan="5" class="empty">검색 결과가 없습니다.</td>
+                    </tr>
+                    <tr th:each="post : ${posts.content}">
+                        <td class="col-board-name">
+                            <a th:if="${post.boardSlug != null}"
+                               th:href="@{/boards/{s}(s=${post.boardSlug})}"
+                               th:text="${post.boardName}" class="tag tag-sm">게시판</a>
+                            <span th:if="${post.boardSlug == null}" style="color:#aaa">미분류</span>
+                        </td>
+                        <td>
+                            <a class="title-link" th:href="@{/posts/{id}(id=${post.id})}"
+                               th:text="${post.title}">제목</a>
+                        </td>
+                        <td class="col-author">
+                            <a class="author-link"
+                               th:href="@{/users/{u}(u=${post.author})}"
+                               th:text="${post.author}">작성자</a>
+                        </td>
+                        <td class="col-date"
+                            th:text="${#temporals.format(post.createdAt, 'yy/MM/dd')}">날짜</td>
+                        <td class="col-views" th:text="${post.viewCount}">0</td>
+                    </tr>
+                </tbody>
+            </table>
+
+            <!-- 페이지네이션 -->
+            <div class="pagination" th:if="${posts.totalPages > 1}" id="pagination">
+                <a th:if="${!posts.first}"
+                   th:href="@{/search(q=${q}, page=${posts.number - 1})}">&laquo; 이전</a>
+                <th:block th:each="i : ${#numbers.sequence(0, posts.totalPages - 1)}">
+                    <span th:if="${i == posts.number}" class="current" th:text="${i + 1}">1</span>
+                    <a th:unless="${i == posts.number}"
+                       th:href="@{/search(q=${q}, page=${i})}"
+                       th:text="${i + 1}">1</a>
+                </th:block>
+                <a th:if="${!posts.last}"
+                   th:href="@{/search(q=${q}, page=${posts.number + 1})}">다음 &raquo;</a>
+            </div>
+        </th:block>
+
+        <!-- 검색어 없음 -->
+        <div th:if="${posts == null}" class="empty" style="padding:40px;">
+            검색어를 입력하세요.
+        </div>
+
+    </div>
+</main>
+
+<script>
+// 검색 결과 키워드 하이라이트: 일치하는 텍스트를 <mark>로 감싼다
+(function() {
+    const q = document.querySelector('#search-table')?.dataset.q?.trim();
+    if (!q) return;
+
+    const escaped = q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const re = new RegExp('(' + escaped + ')', 'gi');
+
+    document.querySelectorAll('#search-body .title-link').forEach(el => {
+        el.innerHTML = el.textContent.replace(re, '<mark>$1</mark>');
+    });
+})();
+</script>
+</body>
+</html>

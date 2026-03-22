@@ -57,4 +57,10 @@ public class Board {
         this.description = description;
         this.createdAt   = LocalDateTime.now();
     }
+
+    /** 이름과 설명을 수정한다. 슬러그는 URL 경로이므로 변경 불가. */
+    public void update(String name, String description) {
+        this.name        = name;
+        this.description = description;
+    }
 }

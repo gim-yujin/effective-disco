@@ -51,9 +51,10 @@ public class BoardWebController {
      */
     @GetMapping("/")
     public String boardList(Model model) {
-        List<BoardResponse> boards = boardService.getAllBoards();
-        model.addAttribute("boards", boards);
-        return "boards/index"; // templates/boards/index.html
+        model.addAttribute("boards", boardService.getAllBoards());
+        // 홈 화면 인기 태그 (최대 15개)
+        model.addAttribute("popularTags", postService.getPopularTagNames(15));
+        return "boards/index";
     }
 
     /* ══════════════════════════════════════════════════════════

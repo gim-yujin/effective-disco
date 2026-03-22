@@ -31,11 +31,12 @@ import java.util.stream.Collectors;
 @RequiredArgsConstructor
 public class PostService {
 
-    private final PostRepository     postRepository;
-    private final UserRepository     userRepository;
-    private final PostLikeRepository postLikeRepository;
-    private final TagRepository      tagRepository;
-    private final BoardRepository    boardRepository;  // 게시판 조회용
+    private final PostRepository      postRepository;
+    private final UserRepository      userRepository;
+    private final PostLikeRepository  postLikeRepository;
+    private final TagRepository       tagRepository;
+    private final BoardRepository     boardRepository;
+    private final NotificationService notificationService;
 
     /**
      * 게시물 목록 조회.
@@ -107,6 +108,11 @@ public class PostService {
                 .collect(Collectors.toList());
     }
 
+    /** 인기 태그 이름 목록 (사용 빈도 내림차순, 최대 15개) */
+    public List<String> getPopularTagNames(int limit) {
+        return postRepository.findPopularTagNames(PageRequest.of(0, limit));
+    }
+
     /**
      * 게시물 생성.
      * request.boardSlug 가 있으면 해당 게시판에 속하도록 지정한다.
@@ -159,6 +165,15 @@ public class PostService {
     }
 
     /**
+     * 관리자 전용 강제 삭제.
+     * 소유자 검사 없이 게시물을 삭제한다.
+     */
+    @Transactional
+    public void adminDeletePost(Long id) {
+        postRepository.delete(findPost(id));
+    }
+
+    /**
      * 조회수 증가.
      * 트랜잭션 내에서 dirty checking으로 자동 저장된다.
      * 실제 중복 방지 로직은 웹 컨트롤러의 세션에서 처리한다.
@@ -179,10 +194,13 @@ public class PostService {
         Post post = findPost(postId);
         User user = findUser(username);
 
-        if (postLikeRepository.existsByPostAndUser(post, user)) {
+        boolean wasLiked = postLikeRepository.existsByPostAndUser(post, user);
+        if (wasLiked) {
             postLikeRepository.deleteByPostAndUser(post, user);
         } else {
             postLikeRepository.save(new PostLike(post, user));
+            // 좋아요 추가 시에만 알림 생성 (취소 시에는 알림 없음)
+            notificationService.notifyLike(post, username);
         }
 
         long count  = postLikeRepository.countByPost(post);

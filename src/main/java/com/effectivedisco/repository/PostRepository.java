@@ -5,8 +5,11 @@ import com.effectivedisco.domain.Post;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
+
+import java.util.List;
 
 public interface PostRepository extends JpaRepository<Post, Long> {
 
@@ -67,4 +70,19 @@ public interface PostRepository extends JpaRepository<Post, Long> {
 
     /** 특정 사용자의 총 게시물 수 (프로필 통계 표시용) */
     long countByAuthor(com.effectivedisco.domain.User author);
+
+    /**
+     * 게시판 삭제 시 해당 게시판 소속 게시물을 미분류(board = null)로 일괄 전환.
+     * 게시물 자체는 삭제하지 않아 데이터 손실을 방지한다.
+     */
+    @Modifying
+    @Query("UPDATE Post p SET p.board = null WHERE p.board = :board")
+    void detachFromBoard(@Param("board") Board board);
+
+    /**
+     * 인기 태그: 게시물에 가장 많이 사용된 태그 이름을 빈도 내림차순으로 반환.
+     * 홈 화면 및 검색 페이지에 표시한다.
+     */
+    @Query("SELECT t.name FROM Post p JOIN p.tags t GROUP BY t.name ORDER BY COUNT(p) DESC")
+    List<String> findPopularTagNames(Pageable pageable);
 }

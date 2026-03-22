@@ -48,7 +48,6 @@ public class BoardService {
      */
     @Transactional
     public BoardResponse createBoard(BoardCreateRequest request) {
-        // 슬러그 중복 검사: 슬러그는 URL 경로로 사용되므로 유일해야 한다
         if (boardRepository.existsBySlug(request.getSlug())) {
             throw new IllegalArgumentException("이미 사용 중인 슬러그입니다: " + request.getSlug());
         }
@@ -58,5 +57,30 @@ public class BoardService {
                 .description(request.getDescription())
                 .build();
         return new BoardResponse(boardRepository.save(board), 0);
+    }
+
+    /**
+     * 게시판 정보를 수정한다 (이름·설명만 변경 가능, 슬러그는 변경 불가).
+     * 슬러그는 URL 경로로 사용되므로 변경하면 외부 링크가 깨진다.
+     */
+    @Transactional
+    public BoardResponse updateBoard(String slug, BoardCreateRequest request) {
+        Board board = boardRepository.findBySlug(slug)
+                .orElseThrow(() -> new IllegalArgumentException("존재하지 않는 게시판입니다: " + slug));
+        board.update(request.getName(), request.getDescription());
+        return new BoardResponse(board, postRepository.countByBoard(board));
+    }
+
+    /**
+     * 게시판을 삭제한다.
+     * 해당 게시판에 속한 게시물은 미분류(board = null)로 전환되어 보존된다.
+     */
+    @Transactional
+    public void deleteBoard(String slug) {
+        Board board = boardRepository.findBySlug(slug)
+                .orElseThrow(() -> new IllegalArgumentException("존재하지 않는 게시판입니다: " + slug));
+        // 게시물을 미분류로 전환한 뒤 게시판 삭제
+        postRepository.detachFromBoard(board);
+        boardRepository.delete(board);
     }
 }

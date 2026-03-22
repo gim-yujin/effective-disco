@@ -20,9 +20,10 @@ import java.util.List;
 @RequiredArgsConstructor
 public class CommentService {
 
-    private final CommentRepository commentRepository;
-    private final PostRepository postRepository;
-    private final UserRepository userRepository;
+    private final CommentRepository   commentRepository;
+    private final PostRepository      postRepository;
+    private final UserRepository      userRepository;
+    private final NotificationService notificationService;
 
     public List<CommentResponse> getComments(Long postId) {
         return commentRepository.findByPostIdAndParentIsNullOrderByCreatedAtAsc(postId)
@@ -38,7 +39,10 @@ public class CommentService {
                 .post(post)
                 .author(user)
                 .build();
-        return new CommentResponse(commentRepository.save(comment));
+        CommentResponse response = new CommentResponse(commentRepository.save(comment));
+        // 게시물 작성자에게 댓글 알림 (본인 댓글은 제외)
+        notificationService.notifyComment(post, username);
+        return response;
     }
 
     @Transactional
@@ -59,7 +63,10 @@ public class CommentService {
                 .author(user)
                 .parent(parent)
                 .build();
-        return new CommentResponse(commentRepository.save(reply));
+        CommentResponse response = new CommentResponse(commentRepository.save(reply));
+        // 부모 댓글 작성자에게 대댓글 알림 (본인 댓글은 제외)
+        notificationService.notifyReply(parent, username);
+        return response;
     }
 
     @Transactional
@@ -74,6 +81,17 @@ public class CommentService {
     public void deleteComment(Long postId, Long commentId, String username) {
         Comment comment = findComment(commentId, postId);
         checkOwnership(comment.getAuthor().getUsername(), username);
+        commentRepository.delete(comment);
+    }
+
+    /**
+     * 관리자 전용 강제 삭제.
+     * 소유자 검사 없이 댓글을 삭제한다.
+     */
+    @Transactional
+    public void adminDeleteComment(Long commentId) {
+        Comment comment = commentRepository.findById(commentId)
+                .orElseThrow(() -> new IllegalArgumentException("Comment not found: " + commentId));
         commentRepository.delete(comment);
     }
 

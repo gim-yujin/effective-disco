@@ -345,3 +345,69 @@ header nav .author-link:hover { color: #fff; text-decoration: none; }
     resize: vertical;
 }
 .reply-form-box .btn { margin-top: 4px; }
+
+/* ── 알림 뱃지 ──────────────────────────────────────────── */
+.notif-wrap { position: relative; display: inline-block; margin-left: 16px; }
+.notif-wrap a { color: #ccc; text-decoration: none; font-size: 13px; }
+.notif-wrap a:hover { color: #fff; }
+.notif-badge {
+    position: absolute;
+    top: -6px; right: -10px;
+    background: #c44;
+    color: #fff;
+    font-size: 10px;
+    min-width: 16px;
+    height: 16px;
+    border-radius: 8px;
+    text-align: center;
+    line-height: 16px;
+    padding: 0 3px;
+}
+
+/* ── 알림 목록 ───────────────────────────────────────────── */
+.notif-item {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    padding: 10px 14px;
+    background: #fff;
+    border: 1px solid #ddd;
+    border-top: none;
+    text-decoration: none;
+    color: #222;
+}
+.notif-item:first-of-type { border-top: 1px solid #ddd; }
+.notif-item.unread { background: #f0f5ff; }
+.notif-item:hover { background: #e8f0fb; }
+.notif-icon { font-size: 16px; width: 20px; text-align: center; flex-shrink: 0; }
+.notif-body { flex: 1; }
+.notif-msg  { font-size: 13px; }
+.notif-time { font-size: 11px; color: #999; margin-top: 2px; }
+
+/* ── 검색 결과 하이라이트 ────────────────────────────────── */
+mark { background: #fff3b0; color: inherit; padding: 0 1px; }
+
+/* ── 관리자 패널 ─────────────────────────────────────────── */
+.admin-section { margin-bottom: 32px; }
+.admin-section h2 { font-size: 15px; border-bottom: 2px solid #1a1a2e; padding-bottom: 6px; margin-bottom: 12px; }
+.role-badge {
+    display: inline-block;
+    padding: 1px 7px;
+    font-size: 11px;
+    border: 1px solid;
+}
+.role-badge.admin { background: #fff0f0; color: #c00; border-color: #c00; }
+.role-badge.user  { background: #f0f0ff; color: #44a; border-color: #99c; }
+.admin-form-row { display: flex; gap: 6px; margin-bottom: 8px; align-items: flex-end; flex-wrap: wrap; }
+.admin-form-row input[type="text"] {
+    padding: 5px 8px;
+    border: 1px solid #ccc;
+    font-family: inherit;
+    font-size: 13px;
+}
+.admin-form-row input[name="name"] { width: 140px; }
+.admin-form-row input[name="slug"] { width: 100px; }
+.admin-form-row input[name="description"] { flex: 1; min-width: 180px; }
+
+/* ── 무한 스크롤 로딩 표시 ───────────────────────────────── */
+#scroll-sentinel { text-align: center; padding: 16px; color: #aaa; font-size: 13px; }

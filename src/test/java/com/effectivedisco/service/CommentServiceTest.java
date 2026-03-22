@@ -8,6 +8,7 @@ import com.effectivedisco.dto.response.CommentResponse;
 import com.effectivedisco.repository.CommentRepository;
 import com.effectivedisco.repository.PostRepository;
 import com.effectivedisco.repository.UserRepository;
+import com.effectivedisco.service.NotificationService;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
@@ -27,9 +28,10 @@ import static org.mockito.Mockito.verify;
 @ExtendWith(MockitoExtension.class)
 class CommentServiceTest {
 
-    @Mock CommentRepository commentRepository;
-    @Mock PostRepository postRepository;
-    @Mock UserRepository userRepository;
+    @Mock CommentRepository   commentRepository;
+    @Mock PostRepository      postRepository;
+    @Mock UserRepository      userRepository;
+    @Mock NotificationService notificationService;
 
     @InjectMocks CommentService commentService;
 

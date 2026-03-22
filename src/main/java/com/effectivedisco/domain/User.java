@@ -37,11 +37,24 @@ public class User {
     @OneToMany(mappedBy = "author", cascade = CascadeType.ALL)
     private List<Comment> comments = new ArrayList<>();
 
+    /**
+     * 권한 역할. "ROLE_USER" 또는 "ROLE_ADMIN".
+     * Spring Security의 hasRole("ADMIN") 검사와 일치시키기 위해 ROLE_ 접두사를 포함한다.
+     */
+    @Column(nullable = false)
+    private String role = "ROLE_USER";
+
     @Builder
     public User(String username, String email, String password) {
         this.username = username;
         this.email = email;
         this.password = password;
+        this.role = "ROLE_USER";
         this.createdAt = LocalDateTime.now();
     }
+
+    /** 관리자 권한 부여/회수 */
+    public void promoteToAdmin()  { this.role = "ROLE_ADMIN"; }
+    public void demoteToUser()    { this.role = "ROLE_USER";  }
+    public boolean isAdmin()      { return "ROLE_ADMIN".equals(this.role); }
 }

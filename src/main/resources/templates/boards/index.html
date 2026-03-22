@@ -12,6 +12,21 @@
 <main>
     <div class="container">
 
+        <!-- 통합 검색 폼 -->
+        <form class="search-form" action="/search" method="get" style="margin-bottom:10px;">
+            <input type="text" name="q" class="search-input"
+                   placeholder="전체 게시판 통합 검색 (제목 / 내용 / 작성자)">
+            <button type="submit" class="btn btn-search">검색</button>
+        </form>
+
+        <!-- 인기 태그 -->
+        <div class="tag-filter-bar" th:if="${!#lists.isEmpty(popularTags)}">
+            <span class="tag-filter-label">인기 태그:</span>
+            <a th:each="t : ${popularTags}" class="tag tag-sm"
+               th:href="@{/search(q=${t})}"
+               th:text="'#' + ${t}">태그</a>
+        </div>
+
         <div class="toolbar">
             <h2>게시판 목록</h2>
         </div>

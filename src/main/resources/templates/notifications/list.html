@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org"
+      xmlns:sec="http://www.thymeleaf.org/extras/spring-security">
+<head>
+    <meta charset="UTF-8">
+    <title>알림 — BBS</title>
+    <link rel="stylesheet" th:href="@{/css/style.css}">
+</head>
+<body>
+<div th:replace="~{fragments/header :: header}"></div>
+<main>
+    <div class="container">
+
+        <div class="breadcrumb">
+            <a th:href="@{/}">홈</a>
+            <span class="breadcrumb-sep">&rsaquo;</span>
+            <span>알림</span>
+        </div>
+
+        <div class="toolbar">
+            <h2>알림</h2>
+        </div>
+
+        <!-- 알림 없음 -->
+        <div th:if="${#lists.isEmpty(notifications)}" class="empty">
+            알림이 없습니다.
+        </div>
+
+        <!-- 알림 목록: 각 항목은 해당 게시물/댓글로 이동하는 링크 -->
+        <th:block th:each="n : ${notifications}">
+            <a th:href="${n.link}" class="notif-item" th:classappend="${!n.read} ? ' unread' : ''">
+                <!-- 알림 종류별 아이콘 -->
+                <span class="notif-icon"
+                      th:text="${n.type.name() == 'LIKE'} ? '♥' : (${n.type.name() == 'REPLY'} ? '↩' : '&#128172;')">&#128172;</span>
+                <span class="notif-body">
+                    <span class="notif-msg"  th:text="${n.message}"></span>
+                    <span class="notif-time" th:text="${#temporals.format(n.createdAt, 'MM/dd HH:mm')}"></span>
+                </span>
+            </a>
+        </th:block>
+
+    </div>
+</main>
+</body>
+</html>

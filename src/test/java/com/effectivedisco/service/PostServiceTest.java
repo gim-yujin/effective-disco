@@ -9,6 +9,7 @@ import com.effectivedisco.repository.PostLikeRepository;
 import com.effectivedisco.repository.PostRepository;
 import com.effectivedisco.repository.TagRepository;
 import com.effectivedisco.repository.UserRepository;
+import com.effectivedisco.service.NotificationService;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
@@ -30,11 +31,12 @@ import static org.mockito.Mockito.verify;
 @ExtendWith(MockitoExtension.class)
 class PostServiceTest {
 
-    @Mock PostRepository     postRepository;
-    @Mock UserRepository     userRepository;
-    @Mock PostLikeRepository postLikeRepository;
-    @Mock TagRepository      tagRepository;
-    @Mock BoardRepository    boardRepository; // PostService의 resolveBoard()가 사용
+    @Mock PostRepository      postRepository;
+    @Mock UserRepository      userRepository;
+    @Mock PostLikeRepository  postLikeRepository;
+    @Mock TagRepository       tagRepository;
+    @Mock BoardRepository     boardRepository;
+    @Mock NotificationService notificationService;
 
     @InjectMocks PostService postService;
 
