@@ -29,4 +29,18 @@ public interface FollowRepository extends JpaRepository<Follow, Long> {
      */
     @Query("SELECT f.following FROM Follow f WHERE f.follower = :user")
     List<User> findFollowingUsers(@Param("user") User user);
+
+    /**
+     * 특정 사용자를 팔로우하는 사람(팔로워) 목록을 최신 팔로우 순으로 반환한다.
+     * 팔로워 목록 페이지(/users/{username}/followers) 표시에 사용한다.
+     */
+    @Query("SELECT f.follower FROM Follow f WHERE f.following = :user ORDER BY f.id DESC")
+    List<User> findFollowers(@Param("user") User user);
+
+    /**
+     * 특정 사용자가 팔로우하는 사람(팔로잉) 목록을 최신 팔로우 순으로 반환한다.
+     * 팔로잉 목록 페이지(/users/{username}/following) 표시에 사용한다.
+     */
+    @Query("SELECT f.following FROM Follow f WHERE f.follower = :user ORDER BY f.id DESC")
+    List<User> findFollowings(@Param("user") User user);
 }

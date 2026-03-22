@@ -12,6 +12,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
+import java.util.Arrays;
 
 @Service
 @RequiredArgsConstructor
@@ -73,6 +74,16 @@ public class ReportService {
     @Transactional
     public void dismiss(Long reportId) {
         findReport(reportId).dismiss();
+    }
+
+    /**
+     * 처리 완료된 신고 이력 반환 (RESOLVED + DISMISSED).
+     * 최신 처리 순으로 정렬한다.
+     * 관리자 패널 "처리 이력" 탭에서 사용한다.
+     */
+    public List<Report> getResolvedReports() {
+        return reportRepository.findByStatusInOrderByResolvedAtDesc(
+                Arrays.asList(ReportStatus.RESOLVED, ReportStatus.DISMISSED));
     }
 
     /** 헤더/대시보드 배지용 미처리 신고 건수 */

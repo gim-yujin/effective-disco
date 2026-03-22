@@ -85,6 +85,20 @@ public class CommentService {
     }
 
     /**
+     * 댓글 ID로 해당 댓글이 속한 게시물 ID를 반환한다.
+     * 관리자 신고 패널에서 댓글 신고의 "보기" 링크가 올바른 게시물로 이동하도록 사용한다.
+     *
+     * @param commentId 댓글 ID
+     * @return 해당 댓글이 속한 게시물 ID
+     * @throws IllegalArgumentException 댓글을 찾을 수 없을 때
+     */
+    public Long getPostIdByCommentId(Long commentId) {
+        Comment comment = commentRepository.findById(commentId)
+                .orElseThrow(() -> new IllegalArgumentException("Comment not found: " + commentId));
+        return comment.getPost().getId();
+    }
+
+    /**
      * 관리자 전용 강제 삭제.
      * 소유자 검사 없이 댓글을 삭제한다.
      */

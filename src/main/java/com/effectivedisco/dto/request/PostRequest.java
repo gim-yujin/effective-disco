@@ -1,5 +1,6 @@
 package com.effectivedisco.dto.request;
 
+import io.swagger.v3.oas.annotations.media.Schema;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Size;
 import lombok.Getter;
@@ -10,15 +11,19 @@ import java.util.List;
 
 @Getter
 @Setter
+@Schema(description = "게시물 작성/수정 요청")
 public class PostRequest {
 
+    @Schema(description = "게시물 제목 (최대 200자)", example = "Spring Boot 4 사용기")
     @NotBlank
     @Size(max = 200)
     private String title;
 
+    @Schema(description = "게시물 본문", example = "Spring Boot 4를 사용해보니...")
     @NotBlank
     private String content;
 
+    @Schema(description = "태그 목록 (쉼표 구분)", example = "spring, java, backend")
     private String tagsInput = "";
 
     /**
@@ -27,6 +32,7 @@ public class PostRequest {
      * REST API에서는 JSON 바디에 포함된다.
      * null이면 미분류(게시판 미지정) 게시물로 처리한다.
      */
+    @Schema(description = "게시판 슬러그 (null이면 미분류)", example = "dev", nullable = true)
     private String boardSlug;
 
     /**
@@ -34,6 +40,7 @@ public class PostRequest {
      * 웹 컨트롤러에서 ImageService.storeAll()로 파일들을 저장한 후 URL 목록을 설정한다.
      * REST API에서는 사용하지 않는다.
      */
+    @Schema(description = "첨부 이미지 URL 목록 (REST API 미사용)", hidden = true)
     private List<String> imageUrls = new ArrayList<>();
 
     /**
@@ -41,5 +48,6 @@ public class PostRequest {
      * true이면 비공개 임시저장, false(기본값)이면 즉시 공개.
      * 웹 폼의 hidden 필드를 통해 "초안으로 저장" / "등록" 버튼으로 구분하여 전달된다.
      */
+    @Schema(description = "초안 여부 (true: 임시저장, false: 공개)", example = "false")
     private boolean draft = false;
 }

@@ -343,6 +343,25 @@ public class BoardWebController {
         return "redirect:/posts/" + postId + "#comments";
     }
 
+    /**
+     * 댓글 ID로 해당 댓글이 속한 게시물 상세 페이지로 리다이렉트한다.
+     * 관리자 신고 패널에서 "댓글 신고"의 [보기] 링크가 이 엔드포인트를 사용한다.
+     * 댓글이 존재하지 않으면 홈으로 리다이렉트한다.
+     *
+     * @param commentId 조회할 댓글 ID
+     */
+    @GetMapping("/posts/search-comment/{commentId}")
+    public String findCommentPost(@PathVariable Long commentId) {
+        try {
+            Long postId = commentService.getPostIdByCommentId(commentId);
+            // 해당 댓글 앵커(#comment-{id})로 바로 스크롤
+            return "redirect:/posts/" + postId + "#comment-" + commentId;
+        } catch (IllegalArgumentException e) {
+            // 댓글이 삭제됐거나 존재하지 않으면 홈으로
+            return "redirect:/";
+        }
+    }
+
     /* ══════════════════════════════════════════════════════════
      * 초안(Draft) 관리
      * ══════════════════════════════════════════════════════════ */

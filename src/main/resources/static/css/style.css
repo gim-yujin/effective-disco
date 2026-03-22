@@ -538,3 +538,102 @@ mark { background: #fff3b0; color: inherit; padding: 0 1px; }
     text-decoration: none;
 }
 .btn-link:hover { text-decoration: underline; }
+
+
+/* ── 팔로워/팔로잉 목록 ────────────────────────────────────── */
+/* 사용자 카드 목록 컨테이너 */
+.user-list {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    margin-top: 12px;
+}
+
+/* 개별 사용자 카드: 아바타 + 이름/bio */
+.user-card {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    padding: 12px 16px;
+    background: #fff;
+    border: 1px solid #d0d0c8;
+    border-radius: 3px;
+}
+
+/* 아바타 원형 박스 (32×32) */
+.user-card-avatar {
+    width: 36px;
+    height: 36px;
+    border-radius: 50%;
+    background: #4a90d9;
+    color: #fff;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 15px;
+    font-weight: bold;
+    flex-shrink: 0;
+    overflow: hidden;
+}
+.user-card-avatar img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+}
+
+/* 사용자명 링크 */
+.user-card-name {
+    font-weight: bold;
+    color: #1a1a2e;
+    text-decoration: none;
+    font-size: 14px;
+}
+.user-card-name:hover { text-decoration: underline; }
+
+/* bio 텍스트 */
+.user-card-bio {
+    color: #666;
+    font-size: 12px;
+    margin-top: 2px;
+}
+
+/* 팔로워/팔로잉 숫자를 클릭 가능한 링크로 만들기 */
+.stat-link {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    text-decoration: none;
+    color: inherit;
+}
+.stat-link:hover .stat-num { text-decoration: underline; color: #4a90d9; }
+
+/* ── 탭 네비게이션 (신고 관리 등) ──────────────────────────── */
+.tab-link {
+    display: inline-block;
+    padding: 6px 16px;
+    text-decoration: none;
+    color: #555;
+    border: 1px solid transparent;
+    border-bottom: none;
+    margin-bottom: -2px;
+    font-size: 13px;
+}
+.tab-link:hover { color: #1a1a2e; }
+.tab-link.active {
+    color: #1a1a2e;
+    border-color: #d0d0c8;
+    background: #f0f0e8;
+    font-weight: bold;
+}
+
+/* 미처리 건수 배지 */
+.badge-count {
+    display: inline-block;
+    background: #c33;
+    color: #fff;
+    border-radius: 10px;
+    padding: 0 6px;
+    font-size: 11px;
+    margin-left: 4px;
+    vertical-align: middle;
+}

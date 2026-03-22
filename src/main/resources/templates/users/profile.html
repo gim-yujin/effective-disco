@@ -89,14 +89,18 @@
                 <span class="stat-num likes" th:text="${profile.likesReceived}">0</span>
                 <span class="stat-label">받은 좋아요</span>
             </div>
-            <!-- 팔로우 통계 -->
+            <!-- 팔로우 통계: 클릭하면 팔로워/팔로잉 목록 페이지로 이동 -->
             <div class="stat-box">
-                <span class="stat-num" th:text="${profile.followerCount}">0</span>
-                <span class="stat-label">팔로워</span>
+                <a th:href="@{/users/{u}/followers(u=${profile.username})}" class="stat-link">
+                    <span class="stat-num" th:text="${profile.followerCount}">0</span>
+                    <span class="stat-label">팔로워</span>
+                </a>
             </div>
             <div class="stat-box">
-                <span class="stat-num" th:text="${profile.followingCount}">0</span>
-                <span class="stat-label">팔로잉</span>
+                <a th:href="@{/users/{u}/following(u=${profile.username})}" class="stat-link">
+                    <span class="stat-num" th:text="${profile.followingCount}">0</span>
+                    <span class="stat-label">팔로잉</span>
+                </a>
             </div>
         </div>
 

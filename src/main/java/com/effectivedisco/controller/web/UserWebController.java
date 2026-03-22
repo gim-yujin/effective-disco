@@ -101,6 +101,28 @@ public class UserWebController {
     }
 
     /**
+     * 팔로워 목록 페이지.
+     * 해당 사용자를 팔로우하는 사람들을 최신 팔로우 순으로 표시한다.
+     */
+    @GetMapping("/users/{username}/followers")
+    public String followers(@PathVariable String username, Model model) {
+        model.addAttribute("profile",   userService.getProfile(username));
+        model.addAttribute("followers", followService.getFollowers(username));
+        return "users/followers";
+    }
+
+    /**
+     * 팔로잉 목록 페이지.
+     * 해당 사용자가 팔로우하는 사람들을 최신 팔로우 순으로 표시한다.
+     */
+    @GetMapping("/users/{username}/following")
+    public String following(@PathVariable String username, Model model) {
+        model.addAttribute("profile",   userService.getProfile(username));
+        model.addAttribute("followings", followService.getFollowings(username));
+        return "users/following";
+    }
+
+    /**
      * 팔로우 피드 — 팔로우한 사용자들의 최신 게시물 목록.
      * 팔로잉이 없으면 빈 목록을 표시한다.
      */

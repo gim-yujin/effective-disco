@@ -4,6 +4,7 @@ import com.effectivedisco.domain.Follow;
 import com.effectivedisco.domain.Post;
 import com.effectivedisco.domain.User;
 import com.effectivedisco.dto.response.PostResponse;
+import com.effectivedisco.dto.response.UserSummaryResponse;
 import com.effectivedisco.repository.FollowRepository;
 import com.effectivedisco.repository.PostLikeRepository;
 import com.effectivedisco.repository.PostRepository;
@@ -89,6 +90,36 @@ public class FollowService {
         User user = userRepository.findByUsername(username).orElse(null);
         if (user == null) return 0;
         return followRepository.countByFollower(user);
+    }
+
+    /**
+     * 특정 사용자를 팔로우하는 사람(팔로워) 목록을 반환한다.
+     * 팔로워 목록 페이지에서 사용한다.
+     *
+     * @param username 팔로워 목록을 조회할 대상 사용자명
+     * @return 팔로워 목록 (최신 팔로우 순)
+     */
+    public List<UserSummaryResponse> getFollowers(String username) {
+        User user = findUser(username);
+        return followRepository.findFollowers(user)
+                .stream()
+                .map(UserSummaryResponse::new)
+                .toList();
+    }
+
+    /**
+     * 특정 사용자가 팔로우하는 사람(팔로잉) 목록을 반환한다.
+     * 팔로잉 목록 페이지에서 사용한다.
+     *
+     * @param username 팔로잉 목록을 조회할 사용자명
+     * @return 팔로잉 목록 (최신 팔로우 순)
+     */
+    public List<UserSummaryResponse> getFollowings(String username) {
+        User user = findUser(username);
+        return followRepository.findFollowings(user)
+                .stream()
+                .map(UserSummaryResponse::new)
+                .toList();
     }
 
     /**

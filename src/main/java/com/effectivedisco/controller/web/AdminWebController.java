@@ -141,10 +141,22 @@ public class AdminWebController {
 
     /* ── 신고 관리 ───────────────────────────────────────────── */
 
-    /** 미처리 신고 목록 */
+    /**
+     * 신고 관리 페이지.
+     * tab=pending(기본): 미처리 신고 목록.
+     * tab=resolved: 처리 완료(RESOLVED + DISMISSED) 신고 이력.
+     * pendingCount를 모델에 추가해 탭 배지에 표시한다.
+     */
     @GetMapping("/reports")
-    public String reports(Model model) {
-        model.addAttribute("reports", reportService.getPendingReports());
+    public String reports(@RequestParam(defaultValue = "pending") String tab,
+                          Model model) {
+        model.addAttribute("tab",          tab);
+        model.addAttribute("pendingCount", reportService.getPendingCount());
+        if ("resolved".equals(tab)) {
+            model.addAttribute("reports", reportService.getResolvedReports());
+        } else {
+            model.addAttribute("reports", reportService.getPendingReports());
+        }
         return "admin/reports";
     }
 

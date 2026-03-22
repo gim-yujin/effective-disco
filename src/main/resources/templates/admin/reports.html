@@ -20,76 +20,173 @@
         </div>
 
         <div class="toolbar">
-            <h2>미처리 신고 목록</h2>
+            <h2>신고 관리</h2>
             <a class="btn" th:href="@{/admin}">[← 패널로]</a>
         </div>
 
-        <div th:if="${#lists.isEmpty(reports)}" class="empty" style="padding:30px;">
-            미처리 신고가 없습니다.
+        <!--
+            탭 네비게이션.
+            현재 탭(tab)에 따라 active 스타일을 적용하고,
+            미처리 건수(pendingCount)를 배지로 표시한다.
+        -->
+        <div class="tab-nav" style="margin-bottom:16px; border-bottom:2px solid #d0d0c8; display:flex; gap:4px;">
+            <a th:href="@{/admin/reports(tab='pending')}"
+               class="tab-link"
+               th:classappend="${tab == 'pending'} ? ' active' : ''">
+                미처리
+                <span th:if="${pendingCount > 0}"
+                      class="badge-count"
+                      th:text="${pendingCount}">0</span>
+            </a>
+            <a th:href="@{/admin/reports(tab='resolved')}"
+               class="tab-link"
+               th:classappend="${tab == 'resolved'} ? ' active' : ''">처리 이력</a>
         </div>
 
-        <table class="board-table" th:unless="${#lists.isEmpty(reports)}">
-            <thead>
-                <tr>
-                    <th class="col-no">#</th>
-                    <th style="width:60px;">유형</th>
-                    <th style="width:80px;">신고자</th>
-                    <th>사유</th>
-                    <th style="width:80px;">대상 보기</th>
-                    <th class="col-date">접수일</th>
-                    <th style="width:160px;">처리</th>
-                </tr>
-            </thead>
-            <tbody>
-                <tr th:each="r, stat : ${reports}">
-                    <td class="col-no" th:text="${stat.count}">1</td>
+        <!-- ── 미처리 탭 ──────────────────────────────────────── -->
+        <div th:if="${tab == 'pending'}">
+            <div th:if="${#lists.isEmpty(reports)}" class="empty" style="padding:30px;">
+                미처리 신고가 없습니다.
+            </div>
 
-                    <!-- 유형 뱃지 -->
-                    <td>
-                        <span class="role-badge"
-                              th:classappend="${r.targetType.name() == 'POST'} ? ' admin' : ' user'"
-                              th:text="${r.targetType.name() == 'POST'} ? '게시물' : '댓글'">유형</span>
-                    </td>
+            <table class="board-table" th:unless="${#lists.isEmpty(reports)}">
+                <thead>
+                    <tr>
+                        <th class="col-no">#</th>
+                        <th style="width:60px;">유형</th>
+                        <th style="width:80px;">신고자</th>
+                        <th>사유</th>
+                        <th style="width:80px;">대상 보기</th>
+                        <th class="col-date">접수일</th>
+                        <th style="width:160px;">처리</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr th:each="r, stat : ${reports}">
+                        <td class="col-no" th:text="${stat.count}">1</td>
 
-                    <!-- 신고자 -->
-                    <td>
-                        <a class="author-link"
-                           th:href="@{/users/{u}(u=${r.reporter.username})}"
-                           th:text="${r.reporter.username}">user</a>
-                    </td>
+                        <!-- 유형 뱃지 -->
+                        <td>
+                            <span class="role-badge"
+                                  th:classappend="${r.targetType.name() == 'POST'} ? ' admin' : ' user'"
+                                  th:text="${r.targetType.name() == 'POST'} ? '게시물' : '댓글'">유형</span>
+                        </td>
 
-                    <!-- 사유 -->
-                    <td th:text="${r.reason}">사유</td>
+                        <!-- 신고자 -->
+                        <td>
+                            <a class="author-link"
+                               th:href="@{/users/{u}(u=${r.reporter.username})}"
+                               th:text="${r.reporter.username}">user</a>
+                        </td>
 
-                    <!-- 대상 링크: 게시물이면 /posts/{id}, 댓글이면 /posts/?#comment-{id} -->
-                    <td>
-                        <a class="btn btn-sm"
-                           th:href="${r.targetType.name() == 'POST'}
-                                    ? '/posts/' + ${r.targetId}
-                                    : '/posts/search-comment/' + ${r.targetId}"
-                           target="_blank">[보기]</a>
-                    </td>
+                        <!-- 사유 -->
+                        <td th:text="${r.reason}">사유</td>
 
-                    <!-- 접수일 -->
-                    <td class="col-date"
-                        th:text="${#temporals.format(r.createdAt, 'yy/MM/dd HH:mm')}">날짜</td>
+                        <!--
+                            대상 링크.
+                            게시물 신고 → /posts/{id} 직접 이동.
+                            댓글 신고   → /posts/search-comment/{id} : 댓글 ID로 게시물을 찾아 앵커 이동.
+                        -->
+                        <td>
+                            <a class="btn btn-sm"
+                               th:href="${r.targetType.name() == 'POST'}
+                                        ? '/posts/' + ${r.targetId}
+                                        : '/posts/search-comment/' + ${r.targetId}"
+                               target="_blank">[보기]</a>
+                        </td>
 
-                    <!-- 처리 버튼 -->
-                    <td>
-                        <form th:action="@{/admin/reports/{id}/resolve(id=${r.id})}"
-                              method="post" style="display:inline;">
-                            <input type="hidden" th:name="${_csrf.parameterName}" th:value="${_csrf.token}">
-                            <button class="btn btn-sm btn-danger" type="submit">[조치완료]</button>
-                        </form>
-                        <form th:action="@{/admin/reports/{id}/dismiss(id=${r.id})}"
-                              method="post" style="display:inline;">
-                            <input type="hidden" th:name="${_csrf.parameterName}" th:value="${_csrf.token}">
-                            <button class="btn btn-sm" type="submit">[기각]</button>
-                        </form>
-                    </td>
-                </tr>
-            </tbody>
-        </table>
+                        <!-- 접수일 -->
+                        <td class="col-date"
+                            th:text="${#temporals.format(r.createdAt, 'yy/MM/dd HH:mm')}">날짜</td>
+
+                        <!-- 처리 버튼 -->
+                        <td>
+                            <form th:action="@{/admin/reports/{id}/resolve(id=${r.id})}"
+                                  method="post" style="display:inline;">
+                                <input type="hidden" th:name="${_csrf.parameterName}" th:value="${_csrf.token}">
+                                <button class="btn btn-sm btn-danger" type="submit">[조치완료]</button>
+                            </form>
+                            <form th:action="@{/admin/reports/{id}/dismiss(id=${r.id})}"
+                                  method="post" style="display:inline;">
+                                <input type="hidden" th:name="${_csrf.parameterName}" th:value="${_csrf.token}">
+                                <button class="btn btn-sm" type="submit">[기각]</button>
+                            </form>
+                        </td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+
+        <!-- ── 처리 이력 탭 ───────────────────────────────────── -->
+        <div th:if="${tab == 'resolved'}">
+            <div th:if="${#lists.isEmpty(reports)}" class="empty" style="padding:30px;">
+                처리된 신고 이력이 없습니다.
+            </div>
+
+            <table class="board-table" th:unless="${#lists.isEmpty(reports)}">
+                <thead>
+                    <tr>
+                        <th class="col-no">#</th>
+                        <th style="width:60px;">유형</th>
+                        <th style="width:80px;">신고자</th>
+                        <th>사유</th>
+                        <th style="width:80px;">대상 보기</th>
+                        <th class="col-date">접수일</th>
+                        <!-- 처리 결과와 처리일을 추가로 표시 -->
+                        <th style="width:70px;">결과</th>
+                        <th class="col-date">처리일</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr th:each="r, stat : ${reports}">
+                        <td class="col-no" th:text="${stat.count}">1</td>
+
+                        <!-- 유형 뱃지 -->
+                        <td>
+                            <span class="role-badge"
+                                  th:classappend="${r.targetType.name() == 'POST'} ? ' admin' : ' user'"
+                                  th:text="${r.targetType.name() == 'POST'} ? '게시물' : '댓글'">유형</span>
+                        </td>
+
+                        <!-- 신고자 -->
+                        <td>
+                            <a class="author-link"
+                               th:href="@{/users/{u}(u=${r.reporter.username})}"
+                               th:text="${r.reporter.username}">user</a>
+                        </td>
+
+                        <!-- 사유 -->
+                        <td th:text="${r.reason}">사유</td>
+
+                        <!-- 대상 링크 -->
+                        <td>
+                            <a class="btn btn-sm"
+                               th:href="${r.targetType.name() == 'POST'}
+                                        ? '/posts/' + ${r.targetId}
+                                        : '/posts/search-comment/' + ${r.targetId}"
+                               target="_blank">[보기]</a>
+                        </td>
+
+                        <!-- 접수일 -->
+                        <td class="col-date"
+                            th:text="${#temporals.format(r.createdAt, 'yy/MM/dd HH:mm')}">날짜</td>
+
+                        <!-- 처리 결과: RESOLVED=조치완료, DISMISSED=기각 -->
+                        <td>
+                            <span class="role-badge"
+                                  th:classappend="${r.status.name() == 'RESOLVED'} ? ' admin' : ''"
+                                  th:text="${r.status.name() == 'RESOLVED'} ? '조치완료' : '기각'">결과</span>
+                        </td>
+
+                        <!-- 처리일 -->
+                        <td class="col-date"
+                            th:text="${r.resolvedAt != null}
+                                     ? ${#temporals.format(r.resolvedAt, 'yy/MM/dd HH:mm')}
+                                     : '-'">처리일</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
 
     </div>
 </main>

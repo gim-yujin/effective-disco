@@ -17,6 +17,12 @@ public interface ReportRepository extends JpaRepository<Report, Long> {
     /** 관리자 패널: 처리 상태별 신고 목록 (접수 시간순) */
     List<Report> findByStatusOrderByCreatedAtAsc(ReportStatus status);
 
+    /**
+     * 처리 완료된 신고 이력 조회 (RESOLVED + DISMISSED).
+     * resolvedAt 역순(최신 처리 순)으로 반환한다.
+     */
+    List<Report> findByStatusInOrderByResolvedAtDesc(List<ReportStatus> statuses);
+
     /** 헤더 배지: 미처리(PENDING) 신고 건수 */
     long countByStatus(ReportStatus status);
 
