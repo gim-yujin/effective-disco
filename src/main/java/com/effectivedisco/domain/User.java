@@ -41,7 +41,7 @@ public class User {
      * 권한 역할. "ROLE_USER" 또는 "ROLE_ADMIN".
      * Spring Security의 hasRole("ADMIN") 검사와 일치시키기 위해 ROLE_ 접두사를 포함한다.
      */
-    @Column(nullable = false)
+    @Column(nullable = false, columnDefinition = "varchar(255) default 'ROLE_USER'")
     private String role = "ROLE_USER";
 
     /** 자기 소개 (선택 입력, 최대 300자) */
