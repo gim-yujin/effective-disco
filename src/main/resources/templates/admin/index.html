@@ -17,6 +17,16 @@
             <span>관리자 패널</span>
         </div>
 
+        <div class="toolbar" style="margin-bottom:16px;">
+            <span></span>
+            <a class="btn btn-primary" th:href="@{/admin/reports}">
+                [신고 관리]
+                <span th:if="${pendingReportCount > 0}"
+                      class="notif-badge"
+                      th:text="${pendingReportCount}"></span>
+            </a>
+        </div>
+
         <!-- ── 게시판 관리 ──────────────────────────────────── -->
         <div class="admin-section">
             <h2>게시판 관리</h2>

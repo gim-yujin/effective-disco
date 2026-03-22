@@ -2,6 +2,7 @@ package com.effectivedisco.config;
 
 import com.effectivedisco.service.MessageService;
 import com.effectivedisco.service.NotificationService;
+import com.effectivedisco.service.ReportService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.ControllerAdvice;
@@ -18,6 +19,7 @@ public class NotificationModelEnricher {
 
     private final NotificationService notificationService;
     private final MessageService      messageService;
+    private final ReportService       reportService;
 
     /** 미읽음 알림 수 (댓글·좋아요 등) */
     @ModelAttribute("unreadCount")
@@ -35,6 +37,21 @@ public class NotificationModelEnricher {
             return messageService.getUnreadCount(authentication.getName());
         }
         return 0L;
+    }
+
+    /** 미처리 신고 수 (관리자 헤더 배지용) */
+    @ModelAttribute("pendingReportCount")
+    public long pendingReportCount(Authentication authentication) {
+        if (isAdmin(authentication)) {
+            return reportService.getPendingCount();
+        }
+        return 0L;
+    }
+
+    private boolean isAdmin(Authentication auth) {
+        return auth != null && auth.isAuthenticated()
+                && auth.getAuthorities().stream()
+                       .anyMatch(a -> "ROLE_ADMIN".equals(a.getAuthority()));
     }
 
     private boolean isLoggedIn(Authentication auth) {

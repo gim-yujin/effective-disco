@@ -29,9 +29,14 @@
                           th:text="${unreadCount}"></span>
                 </span>
 
-                <!-- 관리자에게만 관리 패널 링크 표시 -->
+                <!-- 관리자에게만 관리 패널 링크 표시 (미처리 신고 배지 포함) -->
                 <sec:authorize access="hasAuthority('ROLE_ADMIN')">
-                    <a th:href="@{/admin}">[관리]</a>
+                    <span class="notif-wrap">
+                        <a th:href="@{/admin}">[관리]</a>
+                        <span class="notif-badge"
+                              th:if="${pendingReportCount != null and pendingReportCount > 0}"
+                              th:text="${pendingReportCount}"></span>
+                    </span>
                 </sec:authorize>
 
                 <a th:href="@{/logout}"

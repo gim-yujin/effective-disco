@@ -6,6 +6,7 @@ import com.effectivedisco.repository.UserRepository;
 import com.effectivedisco.service.BoardService;
 import com.effectivedisco.service.CommentService;
 import com.effectivedisco.service.PostService;
+import com.effectivedisco.service.ReportService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Controller;
 import org.springframework.ui.Model;
@@ -25,6 +26,7 @@ public class AdminWebController {
     private final PostService    postService;
     private final CommentService commentService;
     private final BoardService   boardService;
+    private final ReportService  reportService;
 
     /* ── 대시보드 ────────────────────────────────────────────── */
 
@@ -98,5 +100,28 @@ public class AdminWebController {
     public String deleteBoard(@PathVariable String slug) {
         boardService.deleteBoard(slug);
         return "redirect:/admin";
+    }
+
+    /* ── 신고 관리 ───────────────────────────────────────────── */
+
+    /** 미처리 신고 목록 */
+    @GetMapping("/reports")
+    public String reports(Model model) {
+        model.addAttribute("reports", reportService.getPendingReports());
+        return "admin/reports";
+    }
+
+    /** 신고 처리: 조치 완료 */
+    @PostMapping("/reports/{id}/resolve")
+    public String resolveReport(@PathVariable Long id) {
+        reportService.resolve(id);
+        return "redirect:/admin/reports";
+    }
+
+    /** 신고 기각: 문제 없음 */
+    @PostMapping("/reports/{id}/dismiss")
+    public String dismissReport(@PathVariable Long id) {
+        reportService.dismiss(id);
+        return "redirect:/admin/reports";
     }
 }
