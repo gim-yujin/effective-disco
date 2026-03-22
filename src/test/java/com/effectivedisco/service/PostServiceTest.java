@@ -1,5 +1,6 @@
 package com.effectivedisco.service;
 
+import com.effectivedisco.domain.Board;
 import com.effectivedisco.domain.Post;
 import com.effectivedisco.domain.User;
 import com.effectivedisco.dto.request.PostRequest;
@@ -125,6 +126,63 @@ class PostServiceTest {
                 .isInstanceOf(AccessDeniedException.class);
     }
 
+    // ── adminPinToggle ────────────────────────────────────────
+
+    @Test
+    void adminPinToggle_unpinnedPost_pinsItAndReturnsTrue() {
+        Post post = makePost(1L, "Title", "Content", makeUser("author"));
+        given(postRepository.findById(1L)).willReturn(Optional.of(post));
+
+        boolean result = postService.adminPinToggle(1L);
+
+        assertThat(result).isTrue();
+        assertThat(post.isPinned()).isTrue();
+    }
+
+    @Test
+    void adminPinToggle_pinnedPost_unpinsItAndReturnsFalse() {
+        Post post = makePost(1L, "Title", "Content", makeUser("author"));
+        ReflectionTestUtils.setField(post, "pinned", true);
+        given(postRepository.findById(1L)).willReturn(Optional.of(post));
+
+        boolean result = postService.adminPinToggle(1L);
+
+        assertThat(result).isFalse();
+        assertThat(post.isPinned()).isFalse();
+    }
+
+    // ── getPinnedPosts ────────────────────────────────────────
+
+    @Test
+    void getPinnedPosts_validBoard_returnsMappedList() {
+        Board board = makeBoard("free");
+        User author = makeUser("author");
+        Post post = makePost(1L, "Pinned", "Content", author);
+        ReflectionTestUtils.setField(post, "pinned", true);
+
+        given(boardRepository.findBySlug("free")).willReturn(Optional.of(board));
+        given(postRepository.findByBoardAndPinnedTrueOrderByCreatedAtDesc(board))
+                .willReturn(List.of(post));
+        given(postLikeRepository.countByPost(post)).willReturn(2L);
+
+        List<PostResponse> result = postService.getPinnedPosts("free");
+
+        assertThat(result).hasSize(1);
+        assertThat(result.get(0).getTitle()).isEqualTo("Pinned");
+    }
+
+    @Test
+    void getPinnedPosts_nullSlug_returnsEmptyList() {
+        assertThat(postService.getPinnedPosts(null)).isEmpty();
+    }
+
+    @Test
+    void getPinnedPosts_unknownBoard_returnsEmptyList() {
+        given(boardRepository.findBySlug("unknown")).willReturn(Optional.empty());
+
+        assertThat(postService.getPinnedPosts("unknown")).isEmpty();
+    }
+
     // --- helpers ---
 
     private User makeUser(String username) {
@@ -146,5 +204,9 @@ class PostServiceTest {
         req.setTitle(title);
         req.setContent(content);
         return req;
+    }
+
+    private Board makeBoard(String slug) {
+        return Board.builder().name(slug).slug(slug).build();
     }
 }
