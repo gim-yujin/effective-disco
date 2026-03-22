@@ -49,6 +49,14 @@ public class User {
     private String bio;
 
     /**
+     * 프로필 이미지 URL.
+     * null 이면 이름 첫 글자를 이니셜 아바타로 표시한다.
+     * 값이 있으면 해당 이미지를 프로필 카드와 댓글 목록에 표시한다.
+     */
+    @Column
+    private String profileImageUrl;
+
+    /**
      * 계정 정지 여부.
      * true 이면 해당 사용자는 로그인 시 LockedException 이 발생한다.
      * DDL 기본값을 false 로 지정해 기존 행의 NULL 방지.
@@ -82,9 +90,11 @@ public class User {
     public boolean isAdmin()      { return "ROLE_ADMIN".equals(this.role); }
 
     /** 프로필 편집 */
-    public void updateBio(String bio)             { this.bio = bio; }
-    public void updateEmail(String email)         { this.email = email; }
-    public void updatePassword(String encoded)    { this.password = encoded; }
+    public void updateBio(String bio)                    { this.bio = bio; }
+    public void updateEmail(String email)                { this.email = email; }
+    public void updatePassword(String encoded)           { this.password = encoded; }
+    /** 프로필 이미지 URL 변경 (null 허용 — null 이면 이니셜 아바타로 되돌림) */
+    public void updateProfileImageUrl(String url)        { this.profileImageUrl = url; }
 
     /* ── 계정 정지 관리 ───────────────────────────────────────── */
 

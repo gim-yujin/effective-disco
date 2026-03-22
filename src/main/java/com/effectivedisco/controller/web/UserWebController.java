@@ -5,6 +5,7 @@ import com.effectivedisco.dto.request.ProfileEditRequest;
 import com.effectivedisco.service.BlockService;
 import com.effectivedisco.service.BookmarkService;
 import com.effectivedisco.service.FollowService;
+import com.effectivedisco.service.ImageService;
 import com.effectivedisco.service.PostService;
 import com.effectivedisco.service.UserService;
 import jakarta.servlet.http.HttpServletRequest;
@@ -15,6 +16,7 @@ import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.stereotype.Controller;
 import org.springframework.ui.Model;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.multipart.MultipartFile;
 import org.springframework.web.servlet.mvc.support.RedirectAttributes;
 
 /**
@@ -35,6 +37,7 @@ public class UserWebController {
     private final BookmarkService bookmarkService;
     private final FollowService   followService;
     private final BlockService    blockService;
+    private final ImageService    imageService;
 
     /* ── 공개 프로필 ──────────────────────────────────────────── */
 
@@ -122,6 +125,31 @@ public class UserWebController {
         return "users/settings";
     }
 
+    /* ── 프로필 이미지 변경 ───────────────────────────────────── */
+
+    /**
+     * 프로필 이미지 업로드.
+     * ImageService로 파일을 저장한 뒤 URL을 UserService에 전달해 User 엔티티에 반영한다.
+     * 업로드 실패(형식·크기 오류) 시 플래시 에러를 띄우고 설정 페이지로 되돌아간다.
+     */
+    @PostMapping("/settings/profile-image")
+    public String updateProfileImage(@AuthenticationPrincipal UserDetails userDetails,
+                                     @RequestParam("image") MultipartFile image,
+                                     RedirectAttributes redirectAttributes) {
+        try {
+            String url = imageService.store(image);
+            if (url == null) {
+                redirectAttributes.addFlashAttribute("profileError", "이미지 파일을 선택해 주세요.");
+            } else {
+                userService.updateProfileImage(userDetails.getUsername(), url);
+                redirectAttributes.addFlashAttribute("profileMsg", "프로필 사진이 변경되었습니다.");
+            }
+        } catch (IllegalArgumentException e) {
+            redirectAttributes.addFlashAttribute("profileError", e.getMessage());
+        }
+        return "redirect:/settings";
+    }
+
     /* ── 프로필(bio·이메일) 변경 ─────────────────────────────── */
 
     @PostMapping("/settings/profile")
@@ -130,9 +158,10 @@ public class UserWebController {
                                 RedirectAttributes redirectAttributes) {
         try {
             userService.updateProfile(userDetails.getUsername(), req);
-            redirectAttributes.addFlashAttribute("profileMsg", "프로필이 수정되었습니다.");
+            // bio/email 변경 메시지는 bioMsg로 구분 (프로필 사진 메시지와 섹션 분리)
+            redirectAttributes.addFlashAttribute("bioMsg", "프로필이 수정되었습니다.");
         } catch (IllegalArgumentException e) {
-            redirectAttributes.addFlashAttribute("profileError", e.getMessage());
+            redirectAttributes.addFlashAttribute("bioError", e.getMessage());
         }
         return "redirect:/settings";
     }

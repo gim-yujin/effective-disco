@@ -320,6 +320,20 @@ public class BoardWebController {
         return "redirect:/posts/" + postId + "#comment-" + id;
     }
 
+    /**
+     * 댓글·대댓글 수정.
+     * 소유자 검사는 CommentService에서 수행한다 (타인 댓글 수정 시 AccessDeniedException).
+     * 수정 후 해당 댓글 앵커(#comment-{id})로 리다이렉트한다.
+     */
+    @PostMapping("/posts/{postId}/comments/{id}/edit")
+    public String editComment(@PathVariable Long postId,
+                              @PathVariable Long id,
+                              @ModelAttribute CommentRequest commentRequest,
+                              @AuthenticationPrincipal UserDetails userDetails) {
+        commentService.updateComment(postId, id, commentRequest, userDetails.getUsername());
+        return "redirect:/posts/" + postId + "#comment-" + id;
+    }
+
     /** 댓글·대댓글 삭제 */
     @PostMapping("/posts/{postId}/comments/{id}/delete")
     public String deleteComment(@PathVariable Long postId,

@@ -70,6 +70,19 @@ public class UserService {
     /* ── 프로필 편집 ──────────────────────────────────────────── */
 
     /**
+     * 프로필 이미지 URL 변경.
+     * 이미지 저장·검증은 호출자(컨트롤러)에서 ImageService로 처리한 뒤 URL을 전달한다.
+     *
+     * @param username 변경할 사용자명
+     * @param imageUrl 저장된 이미지 서빙 URL (예: /uploads/images/uuid.jpg)
+     */
+    @Transactional
+    public void updateProfileImage(String username, String imageUrl) {
+        User user = findUser(username);
+        user.updateProfileImageUrl(imageUrl);
+    }
+
+    /**
      * bio·email 변경.
      * 이메일이 다른 계정에서 이미 사용 중이면 예외 발생.
      */

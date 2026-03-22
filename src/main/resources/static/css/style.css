@@ -466,6 +466,67 @@ mark { background: #fff3b0; color: inherit; padding: 0 1px; }
     border-top: 2px solid #4a90d9;
 }
 
+/* ── 프로필 이미지 ────────────────────────────────────────── */
+/* 프로필 카드: 실제 이미지를 아바타 크기에 맞게 크롭 */
+.profile-avatar img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+}
+/* 설정 페이지: 현재 프로필 사진 미리보기 (80×80) */
+.profile-image-preview {
+    width: 80px;
+    height: 80px;
+    background: #1a1a2e;
+    color: #7ec8e3;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 32px;
+    font-weight: bold;
+    margin-bottom: 10px;
+    overflow: hidden;
+}
+.profile-image-preview img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+}
+
+/* ── 댓글 미니 아바타 ─────────────────────────────────────── */
+/* 댓글 목록에서 작성자 이름 왼쪽에 표시되는 작은 아바타 */
+.comment-avatar {
+    width: 22px;
+    height: 22px;
+    background: #1a1a2e;
+    color: #7ec8e3;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 10px;
+    font-weight: bold;
+    flex-shrink: 0;
+    overflow: hidden;
+    vertical-align: middle;
+    margin-right: 3px;
+}
+.comment-avatar img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+}
+
+/* ── 수정됨 표시 ──────────────────────────────────────────── */
+/* 댓글·대댓글이 수정되었을 때 날짜 옆에 표시 */
+.edited-badge {
+    font-size: 10px;
+    color: #bbb;
+    margin-left: 3px;
+}
+
 /* 폼 안의 버튼을 일반 링크처럼 보이게 — 로그아웃 등에 사용 */
 .btn-link {
     background: none;

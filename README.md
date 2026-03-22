@@ -1,6 +1,7 @@
 # Effective-Disco BBS
 
 Java 21 + Spring Boot 4로 구현한 게시판(BBS) 웹 애플리케이션.
+레트로 터미널 스타일 UI, REST API(JWT) + 웹 UI(세션) 이중 인증 구조.
 
 ## 기술 스택
 
@@ -14,19 +15,58 @@ Java 21 + Spring Boot 4로 구현한 게시판(BBS) 웹 애플리케이션.
 | ORM | Spring Data JPA / Hibernate |
 | 인증 | Spring Security — JWT (API) + 세션 폼 로그인 (웹) |
 | 뷰 | Thymeleaf + thymeleaf-extras-springsecurity6 |
+| 실시간 알림 | SSE (Server-Sent Events) |
 | 컨테이너 | Docker (멀티 스테이지 빌드) |
 
 ## 주요 기능
 
-- 게시판(자유 · 개발 · Q&A · 공지) 분류
-- 게시물 CRUD · 태그 · 조회수 · 좋아요
-- 댓글 · 대댓글 (1단계)
-- 제목 · 내용 · 작성자 통합 키워드 검색
-- 태그 필터
-- 사용자 프로필 (작성 게시물 · 댓글 수 · 받은 좋아요 통계)
-- REST API (JWT) + 웹 UI (세션) 이중 인증
+### 게시물·게시판
+- 게시판 분류 (자유 · 개발 · Q&A · 공지, 관리자 CRUD)
+- 게시물 작성·수정·삭제 · 다중 이미지 첨부 (JPEG·PNG·GIF·WebP, 최대 5MB)
+- 태그 · 조회수 · 좋아요 · 북마크
+- 초안(임시저장) · 나중에 발행
+- 게시물 고정(공지) — 관리자 전용
+
+### 댓글
+- 댓글·대댓글 (1단계) 작성·수정·삭제
+- 수정 시 "(수정됨)" 표시
+
+### 검색
+- 키워드 검색 (제목·내용) — `q=spring`
+- 태그 검색 — `q=#spring`
+- 작성자 검색 — `q=@alice`
+- 게시판 내 키워드·태그 필터
+- 인기 태그 표시
+
+### 소셜
+- 사용자 팔로우/언팔로우 · 팔로우 피드
+- 사용자 차단 (차단된 사용자의 게시물·댓글 숨김)
+- 쪽지 (1:1 메시지)
+
+### 알림
+- 댓글·대댓글·좋아요 알림 실시간 전달 (SSE)
+- 읽지 않은 알림 수 뱃지
+
+### 프로필
+- 프로필 사진 업로드
+- bio · 이메일 변경 · 비밀번호 변경
+- 활동 통계 (게시물 수 · 댓글 수 · 받은 좋아요 · 팔로워 · 팔로잉)
+
+### 관리자
+- 사용자 권한 부여·회수 · 계정 정지(기간/영구)
+- 게시물·댓글 강제 삭제 · 신고 관리
 
 ## 빠른 시작
+
+### Docker Compose로 실행 (권장)
+
+```bash
+cp .env.example .env
+# .env 파일에서 DB_PASSWORD, JWT_SECRET을 실제 값으로 교체
+
+docker compose up -d --build
+# http://localhost:8080 접속
+```
 
 ### 로컬 실행 (PostgreSQL 필요)
 
@@ -37,16 +77,23 @@ Java 21 + Spring Boot 4로 구현한 게시판(BBS) 웹 애플리케이션.
 
 `application.yml` 기본값: `localhost:5432`, 사용자 `postgres`, 비밀번호 `4321`
 
-### Docker Compose로 실행
+## 개발 명령어
 
 ```bash
-cp .env.example .env
-# .env 파일에서 DB_PASSWORD, JWT_SECRET을 실제 값으로 교체
+# 전체 테스트 실행 (H2 인메모리 DB, PostgreSQL 불필요)
+./gradlew test
 
-docker compose up -d --build
+# 특정 테스트 클래스 실행
+./gradlew test --tests "com.effectivedisco.service.PostServiceTest"
+
+# 특정 테스트 메서드 실행
+./gradlew test --tests "com.effectivedisco.service.PostServiceTest.getPost_success_returnsPostResponse"
+
+# JAR 빌드 (테스트 스킵)
+./gradlew bootJar -x test
 ```
 
-앱: `http://localhost:8080`
+테스트 리포트: `build/reports/tests/test/index.html`
 
 ## 환경 변수
 
@@ -55,10 +102,53 @@ docker compose up -d --build
 | 변수 | 설명 | 기본값 |
 |------|------|--------|
 | `DB_PASSWORD` | PostgreSQL 비밀번호 | (필수) |
-| `JWT_SECRET` | JWT 서명 키 (32자 이상) | (필수) |
-| `JWT_EXPIRATION` | 토큰 유효 시간 (ms) | `86400000` |
+| `JWT_SECRET` | JWT 서명 키 (32자 이상 권장) | (필수) |
+| `JWT_EXPIRATION` | 토큰 유효 시간 (ms) | `86400000` (24시간) |
 | `APP_PORT` | 호스트 바인딩 포트 | `8080` |
+| `APP_BASE_URL` | 비밀번호 재설정 링크 베이스 URL | `http://localhost:8080` |
+| `MAIL_HOST` | SMTP 서버 호스트 (미설정 시 콘솔 로그 출력) | — |
 | `JAVA_OPTS` | JVM 옵션 | `-Xmx512m` |
+
+## 아키텍처 개요
+
+### 이중 Security FilterChain
+
+```
+/api/**  →  apiFilterChain   JWT Bearer · Stateless · CSRF 비활성화
+/**      →  webFilterChain   폼 로그인 · 세션 · CSRF 활성화
+```
+
+- REST API(`/api/**`)는 `Authorization: Bearer <token>` 헤더로 인증한다.
+- 웹 UI(`/**`)는 Spring Security 기본 폼 로그인(`/login`)을 사용한다.
+
+### 컨트롤러 구조
+
+```
+controller/
+├── AuthController.java          # POST /api/auth/signup, /login
+├── PostController.java          # REST /api/posts
+├── CommentController.java       # REST /api/posts/{id}/comments
+└── web/
+    ├── BoardWebController.java  # 홈·게시판·게시물·댓글 UI
+    ├── UserWebController.java   # 프로필·설정·팔로우·차단
+    ├── SearchWebController.java # GET /search
+    ├── MessageWebController.java
+    ├── NotificationWebController.java
+    └── AdminWebController.java
+```
+
+### 예외 → HTTP 상태 코드 매핑 (REST API)
+
+`GlobalExceptionHandler`(`@RestControllerAdvice`)가 `/api/**`에서만 동작한다.
+
+| 예외 | HTTP |
+|------|------|
+| `IllegalArgumentException` | 400 |
+| `MethodArgumentNotValidException` | 400 |
+| `AuthenticationException` | 401 |
+| `AccessDeniedException` | 403 |
+
+웹 컨트롤러에서는 예외 대신 리다이렉트로 처리한다.
 
 ## API 엔드포인트
 
@@ -68,7 +158,7 @@ docker compose up -d --build
 |--------|------|------|------|
 | POST | `/api/auth/signup` | — | 회원가입 |
 | POST | `/api/auth/login` | — | 로그인 → JWT 반환 |
-| GET | `/api/posts` | — | 게시물 목록 (`keyword`, `tag`, `boardSlug`, `page`, `size`) |
+| GET | `/api/posts` | — | 게시물 목록 (`keyword`, `tag`, `boardSlug`, `sort`, `page`, `size`) |
 | GET | `/api/posts/{id}` | — | 게시물 단건 조회 |
 | POST | `/api/posts` | 필요 | 게시물 작성 |
 | PUT | `/api/posts/{id}` | 필요 | 게시물 수정 (본인만) |
@@ -76,17 +166,7 @@ docker compose up -d --build
 | POST | `/api/posts/{id}/like` | 필요 | 좋아요 토글 |
 | GET | `/api/boards` | — | 게시판 목록 |
 
-## 테스트
-
-```bash
-# 전체 테스트 (H2 인메모리 DB 사용)
-./gradlew test
-
-# 단일 클래스
-./gradlew test --tests "com.effectivedisco.service.PostServiceTest"
-```
-
-테스트는 PostgreSQL 없이 실행된다.
+Swagger UI: `http://localhost:8080/swagger-ui.html`
 
 ## CI/CD
 

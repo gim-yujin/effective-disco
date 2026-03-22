@@ -30,16 +30,23 @@ public class UserProfileResponse {
     /** 이 사용자가 팔로우하는 사람 수 */
     private final long followingCount;
 
+    /**
+     * 프로필 이미지 URL.
+     * null 이면 템플릿에서 이니셜 아바타를 렌더링한다.
+     */
+    private final String profileImageUrl;
+
     public UserProfileResponse(User user, long postCount, long commentCount,
                                long likesReceived, long followerCount, long followingCount) {
-        this.username      = user.getUsername();
-        this.email         = user.getEmail();
-        this.bio           = user.getBio();
-        this.createdAt     = user.getCreatedAt();
-        this.postCount     = postCount;
-        this.commentCount  = commentCount;
-        this.likesReceived = likesReceived;
-        this.followerCount = followerCount;
-        this.followingCount = followingCount;
+        this.username         = user.getUsername();
+        this.email            = user.getEmail();
+        this.bio              = user.getBio();
+        this.createdAt        = user.getCreatedAt();
+        this.postCount        = postCount;
+        this.commentCount     = commentCount;
+        this.likesReceived    = likesReceived;
+        this.followerCount    = followerCount;
+        this.followingCount   = followingCount;
+        this.profileImageUrl  = user.getProfileImageUrl();
     }
 }

@@ -19,12 +19,43 @@
             <span>설정</span>
         </div>
 
-        <!-- ── 프로필 편집 ───────────────────────────────────── -->
+        <!-- ── 프로필 사진 변경 ──────────────────────────────── -->
         <div class="form-box">
-            <h2>프로필 편집</h2>
+            <h2>프로필 사진</h2>
 
             <div class="alert alert-success" th:if="${profileMsg}" th:text="${profileMsg}"></div>
             <div class="alert alert-danger"  th:if="${profileError}" th:text="${profileError}"></div>
+
+            <!-- 현재 프로필 사진 미리보기 -->
+            <div class="profile-image-preview">
+                <img th:if="${profile.profileImageUrl != null}"
+                     th:src="${profile.profileImageUrl}" alt="현재 프로필 사진">
+                <span th:unless="${profile.profileImageUrl != null}"
+                      th:text="${#strings.toUpperCase(#strings.substring(profile.username, 0, 1))}">U</span>
+            </div>
+
+            <!--
+                multipart/form-data 인코딩: 파일 업로드에 필수.
+                ImageService가 JPEG·PNG·GIF·WebP·최대 5MB를 검증한다.
+            -->
+            <form th:action="@{/settings/profile-image}" method="post"
+                  enctype="multipart/form-data">
+                <input type="hidden" th:name="${_csrf.parameterName}" th:value="${_csrf.token}">
+                <div class="form-group">
+                    <label>새 이미지 (JPEG·PNG·GIF·WebP, 최대 5MB)</label>
+                    <input type="file" name="image" accept="image/*" required>
+                </div>
+                <button class="btn btn-primary" type="submit">[사진 변경]</button>
+            </form>
+        </div>
+
+        <!-- ── 프로필 편집 ───────────────────────────────────── -->
+        <div class="form-box" style="margin-top:24px;">
+            <h2>프로필 편집</h2>
+
+            <!-- bio/email 변경 결과 메시지 (프로필 사진 메시지와 구분된 flash attribute 사용) -->
+            <div class="alert alert-success" th:if="${bioMsg}"   th:text="${bioMsg}"></div>
+            <div class="alert alert-danger"  th:if="${bioError}" th:text="${bioError}"></div>
 
             <form th:action="@{/settings/profile}" method="post">
                 <input type="hidden" th:name="${_csrf.parameterName}" th:value="${_csrf.token}">
