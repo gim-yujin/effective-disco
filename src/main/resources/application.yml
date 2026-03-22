@@ -12,6 +12,10 @@ spring:
       hibernate:
         format_sql: true
         dialect: org.hibernate.dialect.PostgreSQLDialect
+  servlet:
+    multipart:
+      max-file-size: 5MB
+      max-request-size: 10MB
 
 jwt:
   secret: effective-disco-secret-key-must-be-at-least-256-bits-long-for-hs256
@@ -19,12 +23,6 @@ jwt:
 
 server:
   port: 8080
-
-spring:
-  servlet:
-    multipart:
-      max-file-size: 5MB
-      max-request-size: 10MB
 
 app:
   upload-dir: uploads/images
