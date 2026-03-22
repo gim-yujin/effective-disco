@@ -44,7 +44,9 @@
                 </tr>
             </thead>
             <tbody>
-                <tr th:each="post : ${posts.content}">
+                <!-- 차단된 사용자의 피드 게시물은 숨긴다 -->
+                <tr th:each="post : ${posts.content}"
+                    th:unless="${blockedUsernames != null and blockedUsernames.contains(post.author)}">
                     <td>
                         <a class="title-link"
                            th:href="@{/posts/{id}(id=${post.id})}"

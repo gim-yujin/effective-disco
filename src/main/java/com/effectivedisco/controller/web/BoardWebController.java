@@ -4,6 +4,7 @@ import com.effectivedisco.dto.request.CommentRequest;
 import com.effectivedisco.dto.request.PostRequest;
 import com.effectivedisco.dto.response.BoardResponse;
 import com.effectivedisco.dto.response.PostResponse;
+import com.effectivedisco.service.BlockService;
 import com.effectivedisco.service.BoardService;
 import com.effectivedisco.service.BookmarkService;
 import com.effectivedisco.service.CommentService;
@@ -19,6 +20,7 @@ import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 import org.springframework.web.servlet.mvc.support.RedirectAttributes;
 
+import java.util.Collections;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
@@ -46,6 +48,7 @@ public class BoardWebController {
     private final CommentService  commentService;
     private final BookmarkService bookmarkService;
     private final ImageService    imageService;
+    private final BlockService    blockService;
 
     /* ══════════════════════════════════════════════════════════
      * 홈 / 게시판 목록
@@ -80,6 +83,7 @@ public class BoardWebController {
                                 @RequestParam(required = false) String keyword,
                                 @RequestParam(required = false) String tag,
                                 @RequestParam(defaultValue = "latest") String sort,
+                                @AuthenticationPrincipal UserDetails userDetails,
                                 Model model) {
         // sort 파라미터를 서비스에 전달해 좋아요순/댓글순 정렬 지원
         model.addAttribute("posts",       postService.getPosts(page, size, keyword, tag, slug, sort));
@@ -90,6 +94,11 @@ public class BoardWebController {
         model.addAttribute("sort",    sort);
         // 이 게시판 안에서 사용된 태그 목록 (태그 필터 바)
         model.addAttribute("allTags", postService.getAllTagNames());
+        // 차단된 사용자명 집합 — 템플릿에서 해당 사용자의 게시물 행을 숨기는 데 사용
+        Set<String> blocked = userDetails != null
+                ? blockService.getBlockedUsernames(userDetails.getUsername())
+                : Collections.emptySet();
+        model.addAttribute("blockedUsernames", blocked);
         return "boards/list"; // templates/boards/list.html
     }
 
@@ -164,6 +173,16 @@ public class BoardWebController {
         }
 
         PostResponse post = postService.getPost(id);
+
+        // 초안은 작성자 본인만 열람 가능 — 다른 사용자가 URL로 직접 접근하면 홈으로 리다이렉트
+        if (post.isDraft()) {
+            boolean isAuthor = userDetails != null
+                    && userDetails.getUsername().equals(post.getAuthor());
+            if (!isAuthor) {
+                return "redirect:/";
+            }
+        }
+
         model.addAttribute("post",           post);
         model.addAttribute("comments",       commentService.getComments(id));
         model.addAttribute("commentRequest", new CommentRequest());
@@ -172,6 +191,12 @@ public class BoardWebController {
         boolean bookmarked = userDetails != null && bookmarkService.isBookmarked(userDetails.getUsername(), id);
         model.addAttribute("liked",      liked);
         model.addAttribute("bookmarked", bookmarked);
+
+        // 차단된 사용자명 집합 — 댓글 목록에서 차단 사용자의 댓글을 숨기는 데 사용
+        Set<String> blocked = userDetails != null
+                ? blockService.getBlockedUsernames(userDetails.getUsername())
+                : Collections.emptySet();
+        model.addAttribute("blockedUsernames", blocked);
 
         return "post/detail";
     }
@@ -203,6 +228,8 @@ public class BoardWebController {
         model.addAttribute("isEdit",         true);
         // 수정 폼에서 기존 이미지 미리보기 표시용 — 새 파일 업로드 시 교체됨
         model.addAttribute("existingImages", post.getImageUrls());
+        // 현재 초안 여부 — 버튼 레이블("발행" vs "저장") 결정에 사용
+        model.addAttribute("isDraft",        post.isDraft());
         return "post/form";
     }
 
@@ -292,5 +319,32 @@ public class BoardWebController {
                                 @AuthenticationPrincipal UserDetails userDetails) {
         commentService.deleteComment(postId, id, userDetails.getUsername());
         return "redirect:/posts/" + postId + "#comments";
+    }
+
+    /* ══════════════════════════════════════════════════════════
+     * 초안(Draft) 관리
+     * ══════════════════════════════════════════════════════════ */
+
+    /**
+     * 내 초안 목록 페이지.
+     * 로그인한 사용자 본인의 미공개 초안 게시물을 최신순으로 표시한다.
+     */
+    @GetMapping("/drafts")
+    public String draftList(@AuthenticationPrincipal UserDetails userDetails,
+                            @RequestParam(defaultValue = "0") int page,
+                            Model model) {
+        model.addAttribute("drafts", postService.getDrafts(userDetails.getUsername(), page, 20));
+        return "post/drafts";
+    }
+
+    /**
+     * 초안 발행 — draft=false로 전환 후 게시물 상세 페이지로 리다이렉트한다.
+     * 작성자 본인만 발행할 수 있다 (PostService에서 권한 확인).
+     */
+    @PostMapping("/drafts/{id}/publish")
+    public String publishDraft(@PathVariable Long id,
+                               @AuthenticationPrincipal UserDetails userDetails) {
+        postService.publishDraft(id, userDetails.getUsername());
+        return "redirect:/posts/" + id;
     }
 }

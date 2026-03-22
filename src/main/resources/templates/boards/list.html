@@ -127,7 +127,9 @@
                 <tr th:if="${posts.content.empty}">
                     <td colspan="7" class="empty">게시물이 없습니다. 첫 글을 작성해보세요!</td>
                 </tr>
-                <tr th:each="post, stat : ${posts.content}">
+                <!-- 차단된 사용자의 게시물은 렌더링하지 않는다 -->
+                <tr th:each="post, stat : ${posts.content}"
+                    th:unless="${blockedUsernames != null and blockedUsernames.contains(post.author)}">
                     <!-- 번호: 총 게시물 수에서 역순으로 표시 -->
                     <td class="col-no"
                         th:text="${posts.totalElements - (posts.number * posts.size) - stat.index}">1</td>

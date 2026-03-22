@@ -2,6 +2,7 @@ package com.effectivedisco.repository;
 
 import com.effectivedisco.domain.Board;
 import com.effectivedisco.domain.Post;
+import com.effectivedisco.domain.User;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
@@ -11,39 +12,52 @@ import org.springframework.data.repository.query.Param;
 
 import java.util.List;
 
+/**
+ * 게시물 레포지토리.
+ *
+ * 공개 목록 조회 메서드는 모두 draft = false 조건을 포함한다.
+ * 초안은 작성자 전용 메서드(findByAuthorAndDraftTrue*)를 통해서만 접근한다.
+ */
 public interface PostRepository extends JpaRepository<Post, Long> {
 
-    /** 전체 게시물을 최신순으로 페이징 조회 (게시판 미지정 상태의 전체 목록) */
-    Page<Post> findAllByOrderByCreatedAtDesc(Pageable pageable);
+    // ══════════════════════════════════════════════════════
+    // 전체 공개 게시물 조회 (draft = false)
+    // ══════════════════════════════════════════════════════
+
+    /** 공개 게시물을 최신순으로 페이징 조회 */
+    Page<Post> findByDraftFalseOrderByCreatedAtDesc(Pageable pageable);
 
     /**
-     * 전체 게시물에서 키워드 검색 (제목 OR 내용 OR 작성자).
-     * LOWER() 로 대소문자 무시한다.
+     * 전체 공개 게시물에서 키워드 검색 (제목 OR 내용 OR 작성자).
+     * LOWER()로 대소문자를 무시한다.
      */
-    @Query("SELECT p FROM Post p WHERE " +
+    @Query("SELECT p FROM Post p WHERE p.draft = false AND (" +
            "LOWER(p.title) LIKE LOWER(CONCAT('%', :keyword, '%')) OR " +
            "LOWER(p.content) LIKE LOWER(CONCAT('%', :keyword, '%')) OR " +
-           "LOWER(p.author.username) LIKE LOWER(CONCAT('%', :keyword, '%')) " +
+           "LOWER(p.author.username) LIKE LOWER(CONCAT('%', :keyword, '%'))) " +
            "ORDER BY p.createdAt DESC")
     Page<Post> searchByKeyword(@Param("keyword") String keyword, Pageable pageable);
 
-    /** 전체 게시물에서 특정 태그로 필터링 */
-    @Query("SELECT p FROM Post p JOIN p.tags t WHERE t.name = :tagName ORDER BY p.createdAt DESC")
+    /** 전체 공개 게시물에서 특정 태그로 필터링 */
+    @Query("SELECT p FROM Post p JOIN p.tags t WHERE p.draft = false AND t.name = :tagName " +
+           "ORDER BY p.createdAt DESC")
     Page<Post> findByTagName(@Param("tagName") String tagName, Pageable pageable);
 
-    /* ── 게시판별 쿼리 ─────────────────────────────────────────── */
+    // ══════════════════════════════════════════════════════
+    // 게시판별 공개 게시물 조회 (draft = false)
+    // ══════════════════════════════════════════════════════
 
-    /** 특정 게시판의 게시물을 최신순으로 페이징 조회 */
-    Page<Post> findByBoardOrderByCreatedAtDesc(Board board, Pageable pageable);
+    /** 특정 게시판의 공개 게시물을 최신순으로 페이징 조회 */
+    Page<Post> findByBoardAndDraftFalseOrderByCreatedAtDesc(Board board, Pageable pageable);
 
-    /** 특정 게시판의 고정 게시물 목록 (공지사항 핀) */
-    List<Post> findByBoardAndPinnedTrueOrderByCreatedAtDesc(Board board);
+    /** 특정 게시판의 고정(공지) 공개 게시물 목록 */
+    List<Post> findByBoardAndPinnedTrueAndDraftFalseOrderByCreatedAtDesc(Board board);
 
     /**
-     * 특정 게시판 안에서 키워드 검색.
-     * 제목, 내용, 작성자명에 대해 OR 검색을 수행한다.
+     * 특정 게시판 안에서 키워드 검색 (제목 OR 내용 OR 작성자).
+     * 공개 게시물만 대상으로 한다.
      */
-    @Query("SELECT p FROM Post p WHERE p.board = :board AND (" +
+    @Query("SELECT p FROM Post p WHERE p.board = :board AND p.draft = false AND (" +
            "LOWER(p.title) LIKE LOWER(CONCAT('%', :keyword, '%')) OR " +
            "LOWER(p.content) LIKE LOWER(CONCAT('%', :keyword, '%')) OR " +
            "LOWER(p.author.username) LIKE LOWER(CONCAT('%', :keyword, '%'))) " +
@@ -52,83 +66,109 @@ public interface PostRepository extends JpaRepository<Post, Long> {
                                       @Param("keyword") String keyword,
                                       Pageable pageable);
 
-    /** 특정 게시판 안에서 태그로 필터링 */
-    @Query("SELECT p FROM Post p JOIN p.tags t WHERE p.board = :board AND t.name = :tagName " +
+    /** 특정 게시판 안에서 태그로 필터링 (공개 게시물만) */
+    @Query("SELECT p FROM Post p JOIN p.tags t " +
+           "WHERE p.board = :board AND p.draft = false AND t.name = :tagName " +
            "ORDER BY p.createdAt DESC")
     Page<Post> findByBoardAndTagName(@Param("board") Board board,
                                      @Param("tagName") String tagName,
                                      Pageable pageable);
 
-    /** 게시판별 게시물 수 (홈 화면 게시판 목록의 "N개" 표시용) */
-    long countByBoard(Board board);
+    /**
+     * 게시판별 공개 게시물 수 (홈 화면 게시판 목록의 "N개" 표시용).
+     * 초안은 집계에서 제외한다.
+     */
+    long countByBoardAndDraftFalse(Board board);
 
-    /* ── 프로필 관련 쿼리 ────────────────────────────────────── */
+    // ══════════════════════════════════════════════════════
+    // 프로필 관련 쿼리
+    // ══════════════════════════════════════════════════════
 
     /**
-     * 특정 사용자가 작성한 게시물을 최신순으로 페이징 조회.
-     * 프로필 페이지의 "작성한 게시물" 목록에 사용한다.
+     * 특정 사용자의 공개 게시물을 최신순으로 페이징 조회.
+     * 프로필 페이지의 "작성한 게시물" 목록에 사용한다 (초안 제외).
      */
-    Page<Post> findByAuthorOrderByCreatedAtDesc(
-            com.effectivedisco.domain.User author, Pageable pageable);
-
-    /** 특정 사용자의 총 게시물 수 (프로필 통계 표시용) */
-    long countByAuthor(com.effectivedisco.domain.User author);
+    Page<Post> findByAuthorAndDraftFalseOrderByCreatedAtDesc(User author, Pageable pageable);
 
     /**
-     * 게시판 삭제 시 해당 게시판 소속 게시물을 미분류(board = null)로 일괄 전환.
-     * 게시물 자체는 삭제하지 않아 데이터 손실을 방지한다.
+     * 특정 사용자의 공개 게시물 총 수 (프로필 통계 표시용, 초안 제외).
      */
-    @Modifying
-    @Query("UPDATE Post p SET p.board = null WHERE p.board = :board")
-    void detachFromBoard(@Param("board") Board board);
+    long countByAuthorAndDraftFalse(User author);
 
     /**
-     * 팔로우 피드: 지정한 사용자 목록이 작성한 게시물을 최신순으로 페이징 조회.
-     * 팔로잉 목록이 비어있으면 호출하지 않아야 한다 (JPQL IN 절에 빈 컬렉션은 오류 발생).
+     * 특정 사용자의 초안(미공개) 게시물을 최신순으로 페이징 조회.
+     * 본인의 초안 목록(/drafts) 페이지에 사용한다.
      */
-    @Query("SELECT p FROM Post p WHERE p.author IN :authors ORDER BY p.createdAt DESC")
+    Page<Post> findByAuthorAndDraftTrueOrderByCreatedAtDesc(User author, Pageable pageable);
+
+    // ══════════════════════════════════════════════════════
+    // 팔로우 피드 쿼리 (draft = false)
+    // ══════════════════════════════════════════════════════
+
+    /**
+     * 팔로우 피드: 지정한 사용자 목록의 공개 게시물을 최신순으로 페이징 조회.
+     * 팔로잉 목록이 비어 있으면 호출하지 않아야 한다 (JPQL IN 절에 빈 컬렉션은 오류 발생).
+     */
+    @Query("SELECT p FROM Post p WHERE p.draft = false AND p.author IN :authors " +
+           "ORDER BY p.createdAt DESC")
     Page<Post> findByAuthorInOrderByCreatedAtDesc(
-            @Param("authors") List<com.effectivedisco.domain.User> authors, Pageable pageable);
+            @Param("authors") List<User> authors, Pageable pageable);
+
+    // ══════════════════════════════════════════════════════
+    // 인기 태그
+    // ══════════════════════════════════════════════════════
 
     /**
-     * 인기 태그: 게시물에 가장 많이 사용된 태그 이름을 빈도 내림차순으로 반환.
+     * 공개 게시물에 가장 많이 사용된 태그 이름을 빈도 내림차순으로 반환.
      * 홈 화면 및 검색 페이지에 표시한다.
      */
-    @Query("SELECT t.name FROM Post p JOIN p.tags t GROUP BY t.name ORDER BY COUNT(p) DESC")
+    @Query("SELECT t.name FROM Post p JOIN p.tags t WHERE p.draft = false " +
+           "GROUP BY t.name ORDER BY COUNT(p) DESC")
     List<String> findPopularTagNames(Pageable pageable);
 
-    /* ── 정렬 쿼리 ────────────────────────────────────────────── */
+    // ══════════════════════════════════════════════════════
+    // 정렬 쿼리 (draft = false)
+    // ══════════════════════════════════════════════════════
 
     /**
-     * 전체 게시물을 좋아요 수 내림차순으로 페이징 조회.
-     * LEFT JOIN 으로 좋아요가 없는 게시물도 포함하고,
-     * 좋아요 수가 같으면 최신순으로 정렬한다.
+     * 전체 공개 게시물을 좋아요 수 내림차순으로 페이징 조회.
+     * LEFT JOIN으로 좋아요가 없는 게시물도 포함한다.
      */
     @Query("SELECT p FROM Post p LEFT JOIN PostLike pl ON pl.post = p " +
+           "WHERE p.draft = false " +
            "GROUP BY p ORDER BY COUNT(pl) DESC, p.createdAt DESC")
     Page<Post> findAllOrderByLikeCountDesc(Pageable pageable);
 
     /**
-     * 전체 게시물을 댓글 수 내림차순으로 페이징 조회.
-     * LEFT JOIN 으로 댓글이 없는 게시물도 포함한다.
+     * 전체 공개 게시물을 댓글 수 내림차순으로 페이징 조회.
+     * LEFT JOIN으로 댓글이 없는 게시물도 포함한다.
      */
     @Query("SELECT p FROM Post p LEFT JOIN Comment c ON c.post = p " +
+           "WHERE p.draft = false " +
            "GROUP BY p ORDER BY COUNT(c) DESC, p.createdAt DESC")
     Page<Post> findAllOrderByCommentCountDesc(Pageable pageable);
 
-    /**
-     * 특정 게시판의 게시물을 좋아요 수 내림차순으로 페이징 조회.
-     */
+    /** 특정 게시판의 공개 게시물을 좋아요 수 내림차순으로 페이징 조회 */
     @Query("SELECT p FROM Post p LEFT JOIN PostLike pl ON pl.post = p " +
-           "WHERE p.board = :board " +
+           "WHERE p.board = :board AND p.draft = false " +
            "GROUP BY p ORDER BY COUNT(pl) DESC, p.createdAt DESC")
     Page<Post> findByBoardOrderByLikeCountDesc(@Param("board") Board board, Pageable pageable);
 
-    /**
-     * 특정 게시판의 게시물을 댓글 수 내림차순으로 페이징 조회.
-     */
+    /** 특정 게시판의 공개 게시물을 댓글 수 내림차순으로 페이징 조회 */
     @Query("SELECT p FROM Post p LEFT JOIN Comment c ON c.post = p " +
-           "WHERE p.board = :board " +
+           "WHERE p.board = :board AND p.draft = false " +
            "GROUP BY p ORDER BY COUNT(c) DESC, p.createdAt DESC")
     Page<Post> findByBoardOrderByCommentCountDesc(@Param("board") Board board, Pageable pageable);
+
+    // ══════════════════════════════════════════════════════
+    // 관리 / 유지보수 쿼리
+    // ══════════════════════════════════════════════════════
+
+    /**
+     * 게시판 삭제 시 해당 게시판 소속 게시물을 미분류(board = null)로 일괄 전환.
+     * 초안 포함 전체 게시물에 적용된다.
+     */
+    @Modifying
+    @Query("UPDATE Post p SET p.board = null WHERE p.board = :board")
+    void detachFromBoard(@Param("board") Board board);
 }

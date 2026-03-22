@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org"
+      xmlns:sec="http://www.thymeleaf.org/extras/spring-security">
+<head>
+    <meta charset="UTF-8">
+    <title>내 초안 — BBS</title>
+    <link rel="stylesheet" th:href="@{/css/style.css}">
+</head>
+<body>
+<div th:replace="~{fragments/header :: header}"></div>
+
+<main>
+    <div class="container">
+
+        <div class="breadcrumb">
+            <a th:href="@{/}">홈</a>
+            <span class="breadcrumb-sep">&rsaquo;</span>
+            <span>내 초안</span>
+        </div>
+
+        <div class="toolbar">
+            <h2>내 초안 — <span th:text="${drafts.totalElements}">0</span>개</h2>
+        </div>
+
+        <!-- 초안이 없을 때 안내 -->
+        <div th:if="${drafts.content.empty}"
+             style="padding:32px 0; text-align:center; color:#aaa;">
+            <p>저장된 초안이 없습니다.</p>
+            <p style="font-size:13px;">
+                글쓰기 폼에서 <strong>[초안으로 저장]</strong> 버튼을 클릭하면 초안으로 저장됩니다.
+            </p>
+        </div>
+
+        <!-- 초안 목록 테이블 -->
+        <table class="board-table" th:unless="${drafts.content.empty}">
+            <thead>
+                <tr>
+                    <th>제목</th>
+                    <th class="col-board-name">게시판</th>
+                    <th class="col-date">작성일</th>
+                    <th style="width:160px; text-align:center;">관리</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr th:each="post : ${drafts.content}">
+                    <td>
+                        <!-- 초안 클릭 시 수정 폼으로 이동 (아직 공개되지 않은 게시물) -->
+                        <a class="title-link"
+                           th:href="@{/posts/{id}/edit(id=${post.id})}"
+                           th:text="${post.title}">제목</a>
+                        <!-- 태그 뱃지 -->
+                        <span th:if="${!#lists.isEmpty(post.tags)}">
+                            <span th:each="t : ${post.tags}" class="tag tag-sm"
+                                  th:text="'#' + ${t}">태그</span>
+                        </span>
+                    </td>
+                    <td class="col-board-name">
+                        <a th:if="${post.boardSlug != null}"
+                           class="board-name-link"
+                           th:href="@{/boards/{slug}(slug=${post.boardSlug})}"
+                           th:text="${post.boardName}">게시판</a>
+                        <span th:unless="${post.boardSlug != null}" style="color:#bbb;">—</span>
+                    </td>
+                    <td class="col-date"
+                        th:text="${#temporals.format(post.createdAt, 'yy/MM/dd')}">날짜</td>
+                    <td style="text-align:center; white-space:nowrap;">
+                        <!-- 수정 버튼 -->
+                        <a class="btn btn-sm"
+                           th:href="@{/posts/{id}/edit(id=${post.id})}">[수정]</a>
+                        <!-- 발행 버튼: 초안을 공개 게시물로 전환 -->
+                        <form th:action="@{/drafts/{id}/publish(id=${post.id})}"
+                              method="post" style="display:inline;"
+                              onsubmit="return confirm('이 초안을 발행하시겠습니까?')">
+                            <input type="hidden" th:name="${_csrf.parameterName}" th:value="${_csrf.token}">
+                            <button class="btn btn-sm btn-primary" type="submit">[발행]</button>
+                        </form>
+                        <!-- 삭제 버튼 -->
+                        <form th:action="@{/posts/{id}/delete(id=${post.id})}"
+                              method="post" style="display:inline;"
+                              onsubmit="return confirm('초안을 삭제하시겠습니까?')">
+                            <input type="hidden" th:name="${_csrf.parameterName}" th:value="${_csrf.token}">
+                            <button class="btn btn-sm btn-danger" type="submit">[삭제]</button>
+                        </form>
+                    </td>
+                </tr>
+            </tbody>
+        </table>
+
+        <!-- 페이지네이션 -->
+        <div class="pagination" th:if="${drafts.totalPages > 1}">
+            <a th:if="${!drafts.first}"
+               th:href="@{/drafts(page=${drafts.number - 1})}">&laquo; 이전</a>
+            <th:block th:each="i : ${#numbers.sequence(0, drafts.totalPages - 1)}">
+                <span th:if="${i == drafts.number}" class="current" th:text="${i + 1}">1</span>
+                <a th:unless="${i == drafts.number}"
+                   th:href="@{/drafts(page=${i})}" th:text="${i + 1}">1</a>
+            </th:block>
+            <a th:if="${!drafts.last}"
+               th:href="@{/drafts(page=${drafts.number + 1})}">다음 &raquo;</a>
+        </div>
+
+    </div>
+</main>
+</body>
+</html>

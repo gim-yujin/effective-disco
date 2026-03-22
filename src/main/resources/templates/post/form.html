@@ -70,10 +70,21 @@
                     <!-- multiple 속성으로 여러 파일 동시 선택 가능 -->
                     <input type="file" id="images" name="images" accept="image/*" multiple>
                 </div>
-                <div style="display:flex; gap:8px;">
-                    <button class="btn btn-primary" type="submit">
-                        <span th:text="${isEdit} ? '[저장]' : '[등록]'">[등록]</span>
+                <!--
+                    hidden 필드 draft를 JS로 조작해 두 버튼이 서로 다른 값을 제출한다.
+                    "등록/저장/발행" → draft=false (공개)
+                    "초안으로 저장"  → draft=true  (비공개)
+                -->
+                <input type="hidden" name="draft" id="draft-input" value="false">
+                <div style="display:flex; gap:8px; flex-wrap:wrap;">
+                    <!-- 공개 버튼: 초안이었던 게시물을 수정 중이면 "발행", 아니면 "등록/저장" -->
+                    <button class="btn btn-primary" type="submit"
+                            onclick="document.getElementById('draft-input').value='false'">
+                        <span th:text="${isEdit} ? (${isDraft} ? '[발행]' : '[저장]') : '[등록]'">[등록]</span>
                     </button>
+                    <!-- 초안 저장 버튼: 공개하지 않고 임시 저장 -->
+                    <button class="btn" type="submit"
+                            onclick="document.getElementById('draft-input').value='true'">[초안으로 저장]</button>
                     <!-- 취소: 수정이면 게시물 상세로, 신규면 게시판 목록(또는 홈)으로 -->
                     <a class="btn" th:href="${isEdit}
                         ? @{/posts/{id}(id=${postId})}

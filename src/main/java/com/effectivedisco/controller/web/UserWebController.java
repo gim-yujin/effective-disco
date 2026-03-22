@@ -2,6 +2,7 @@ package com.effectivedisco.controller.web;
 
 import com.effectivedisco.dto.request.PasswordChangeRequest;
 import com.effectivedisco.dto.request.ProfileEditRequest;
+import com.effectivedisco.service.BlockService;
 import com.effectivedisco.service.BookmarkService;
 import com.effectivedisco.service.FollowService;
 import com.effectivedisco.service.PostService;
@@ -33,6 +34,7 @@ public class UserWebController {
     private final PostService     postService;
     private final BookmarkService bookmarkService;
     private final FollowService   followService;
+    private final BlockService    blockService;
 
     /* ── 공개 프로필 ──────────────────────────────────────────── */
 
@@ -50,11 +52,15 @@ public class UserWebController {
         model.addAttribute("profile", userService.getProfile(username));
         model.addAttribute("posts", postService.getPostsByAuthor(username, page, 10));
 
-        // 현재 로그인 사용자가 이 프로필 사용자를 팔로우 중인지 여부 (팔로우 버튼 표시용)
-        boolean isFollowing = userDetails != null
-                && !userDetails.getUsername().equals(username)
-                && followService.isFollowing(userDetails.getUsername(), username);
+        boolean isOther = userDetails != null && !userDetails.getUsername().equals(username);
+
+        // 팔로우 여부 (팔로우 버튼 상태 결정)
+        boolean isFollowing = isOther && followService.isFollowing(userDetails.getUsername(), username);
         model.addAttribute("isFollowing", isFollowing);
+
+        // 차단 여부 (차단 버튼 상태 결정)
+        boolean isBlocking = isOther && blockService.isBlocking(userDetails.getUsername(), username);
+        model.addAttribute("isBlocking", isBlocking);
 
         return "users/profile";
     }
@@ -71,6 +77,27 @@ public class UserWebController {
     }
 
     /**
+     * 차단 토글 — 차단/차단 해제 처리 후 프로필 페이지로 리다이렉트.
+     * 자기 자신에 대한 요청은 BlockService에서 예외로 처리한다.
+     */
+    @PostMapping("/users/{username}/block")
+    public String toggleBlock(@PathVariable String username,
+                              @AuthenticationPrincipal UserDetails userDetails) {
+        blockService.toggle(userDetails.getUsername(), username);
+        return "redirect:/users/" + username;
+    }
+
+    /**
+     * 차단 사용자 목록 페이지.
+     * 현재 로그인 사용자가 차단한 사용자 목록을 최신순으로 표시한다.
+     */
+    @GetMapping("/blocks")
+    public String blockedUsers(@AuthenticationPrincipal UserDetails userDetails, Model model) {
+        model.addAttribute("blocks", blockService.getBlockList(userDetails.getUsername()));
+        return "users/blocks";
+    }
+
+    /**
      * 팔로우 피드 — 팔로우한 사용자들의 최신 게시물 목록.
      * 팔로잉이 없으면 빈 목록을 표시한다.
      */
@@ -80,6 +107,9 @@ public class UserWebController {
                        Model model) {
         model.addAttribute("posts",
                 followService.getFeed(userDetails.getUsername(), page, 20));
+        // 차단된 사용자의 피드 게시물을 숨기기 위해 차단 목록을 전달
+        model.addAttribute("blockedUsernames",
+                blockService.getBlockedUsernames(userDetails.getUsername()));
         return "users/feed";
     }
 

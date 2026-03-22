@@ -35,4 +35,11 @@ public class PostRequest {
      * REST API에서는 사용하지 않는다.
      */
     private List<String> imageUrls = new ArrayList<>();
+
+    /**
+     * 초안 여부.
+     * true이면 비공개 임시저장, false(기본값)이면 즉시 공개.
+     * 웹 폼의 hidden 필드를 통해 "초안으로 저장" / "등록" 버튼으로 구분하여 전달된다.
+     */
+    private boolean draft = false;
 }

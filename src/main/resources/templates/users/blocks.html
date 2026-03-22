@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org"
+      xmlns:sec="http://www.thymeleaf.org/extras/spring-security">
+<head>
+    <meta charset="UTF-8">
+    <title>차단 목록 — BBS</title>
+    <link rel="stylesheet" th:href="@{/css/style.css}">
+</head>
+<body>
+<div th:replace="~{fragments/header :: header}"></div>
+
+<main>
+    <div class="container">
+
+        <div class="breadcrumb">
+            <a th:href="@{/}">홈</a>
+            <span class="breadcrumb-sep">&rsaquo;</span>
+            <a th:href="@{/settings}">설정</a>
+            <span class="breadcrumb-sep">&rsaquo;</span>
+            <span>차단 목록</span>
+        </div>
+
+        <div class="toolbar">
+            <h2>차단한 사용자 — <span th:text="${#lists.size(blocks)}">0</span>명</h2>
+        </div>
+
+        <!-- 차단 목록이 비어 있을 때 안내 -->
+        <div th:if="${#lists.isEmpty(blocks)}"
+             style="padding:32px 0; text-align:center; color:#aaa;">
+            <p>차단한 사용자가 없습니다.</p>
+            <p style="font-size:13px;">
+                사용자 프로필에서 <strong>[🚫 차단]</strong> 버튼을 클릭하면 차단할 수 있습니다.
+            </p>
+        </div>
+
+        <!-- 차단 사용자 목록 -->
+        <table class="board-table" th:unless="${#lists.isEmpty(blocks)}">
+            <thead>
+                <tr>
+                    <th>사용자</th>
+                    <th class="col-date">차단일</th>
+                    <th style="width:100px;">관리</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr th:each="block : ${blocks}">
+                    <!-- 차단된 사용자 프로필 링크 -->
+                    <td>
+                        <a class="author-link"
+                           th:href="@{/users/{u}(u=${block.blocked.username})}"
+                           th:text="${block.blocked.username}">사용자명</a>
+                    </td>
+                    <!-- 차단한 날짜 -->
+                    <td class="col-date"
+                        th:text="${#temporals.format(block.createdAt, 'yy/MM/dd')}">날짜</td>
+                    <!-- 차단 해제 버튼: 동일한 /block 토글 엔드포인트 사용 -->
+                    <td>
+                        <form th:action="@{/users/{u}/block(u=${block.blocked.username})}"
+                              method="post" style="display:inline;"
+                              onsubmit="return confirm('차단을 해제하시겠습니까?')">
+                            <input type="hidden" th:name="${_csrf.parameterName}" th:value="${_csrf.token}">
+                            <button class="btn btn-sm btn-danger" type="submit">[해제]</button>
+                        </form>
+                    </td>
+                </tr>
+            </tbody>
+        </table>
+
+        <!-- 해제 후 /blocks로 리다이렉트되므로 페이지네이션 생략 (목록이 짧음) -->
+        <div style="margin-top:16px;">
+            <a class="btn" th:href="@{/settings}">← 설정으로 돌아가기</a>
+        </div>
+
+    </div>
+</main>
+</body>
+</html>

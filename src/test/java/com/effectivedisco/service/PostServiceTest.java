@@ -161,7 +161,7 @@ class PostServiceTest {
         ReflectionTestUtils.setField(post, "pinned", true);
 
         given(boardRepository.findBySlug("free")).willReturn(Optional.of(board));
-        given(postRepository.findByBoardAndPinnedTrueOrderByCreatedAtDesc(board))
+        given(postRepository.findByBoardAndPinnedTrueAndDraftFalseOrderByCreatedAtDesc(board))
                 .willReturn(List.of(post));
         given(postLikeRepository.countByPost(post)).willReturn(2L);
 

@@ -31,6 +31,12 @@ public class PostResponse {
     private final boolean pinned;
 
     /**
+     * 초안 여부. true이면 작성자 본인만 볼 수 있는 임시저장 게시물.
+     * 초안 목록 페이지와 접근 제어 판단에 사용한다.
+     */
+    private final boolean draft;
+
+    /**
      * 첨부 이미지 URL 목록 (sortOrder 오름차순).
      * PostImage 엔티티 목록을 우선 사용하고,
      * 기존 단일 imageUrl 필드(하위 호환)는 images가 비어 있을 때 폴백으로 포함한다.
@@ -54,6 +60,7 @@ public class PostResponse {
         this.boardName = post.getBoard() != null ? post.getBoard().getName() : null;
         this.boardSlug = post.getBoard() != null ? post.getBoard().getSlug() : null;
         this.pinned    = post.isPinned();
+        this.draft     = post.isDraft();
 
         // PostImage 컬렉션에서 URL 목록 구성 (sortOrder 기준 @OrderBy 적용됨)
         List<String> urls = post.getImages().stream()

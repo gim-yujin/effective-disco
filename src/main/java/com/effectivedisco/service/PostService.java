@@ -68,30 +68,30 @@ public class PostService {
         Page<Post> posts;
 
         if (board != null && tag != null && !tag.isBlank()) {
-            // 게시판 내 태그 필터 (태그 필터는 항상 최신순)
+            // 게시판 내 태그 필터 (태그 필터는 항상 최신순, 초안 제외)
             posts = postRepository.findByBoardAndTagName(board, tag, pageable);
         } else if (board != null && keyword != null && !keyword.isBlank()) {
-            // 게시판 내 키워드 검색 (검색은 항상 최신순)
+            // 게시판 내 키워드 검색 (검색은 항상 최신순, 초안 제외)
             posts = postRepository.searchByKeywordInBoard(board, keyword, pageable);
         } else if (board != null) {
-            // 게시판 전체 목록 — 정렬 기준 적용
+            // 게시판 전체 목록 — 정렬 기준 적용 (초안 제외)
             posts = switch (sortKey) {
                 case "likes"    -> postRepository.findByBoardOrderByLikeCountDesc(board, pageable);
                 case "comments" -> postRepository.findByBoardOrderByCommentCountDesc(board, pageable);
-                default         -> postRepository.findByBoardOrderByCreatedAtDesc(board, pageable);
+                default         -> postRepository.findByBoardAndDraftFalseOrderByCreatedAtDesc(board, pageable);
             };
         } else if (tag != null && !tag.isBlank()) {
-            // 전체 게시판 태그 필터 (태그 필터는 항상 최신순)
+            // 전체 게시판 태그 필터 (태그 필터는 항상 최신순, 초안 제외)
             posts = postRepository.findByTagName(tag, pageable);
         } else if (keyword != null && !keyword.isBlank()) {
-            // 전체 게시판 키워드 검색 (검색은 항상 최신순)
+            // 전체 게시판 키워드 검색 (검색은 항상 최신순, 초안 제외)
             posts = postRepository.searchByKeyword(keyword, pageable);
         } else {
-            // 전체 목록 — 정렬 기준 적용
+            // 전체 목록 — 정렬 기준 적용 (초안 제외)
             posts = switch (sortKey) {
                 case "likes"    -> postRepository.findAllOrderByLikeCountDesc(pageable);
                 case "comments" -> postRepository.findAllOrderByCommentCountDesc(pageable);
-                default         -> postRepository.findAllByOrderByCreatedAtDesc(pageable);
+                default         -> postRepository.findByDraftFalseOrderByCreatedAtDesc(pageable);
             };
         }
 
@@ -117,10 +117,29 @@ public class PostService {
      * 특정 사용자가 작성한 게시물을 최신순으로 페이징 반환.
      * 프로필 페이지의 "작성한 게시물" 섹션에 사용한다.
      */
+    /**
+     * 특정 사용자의 공개 게시물을 최신순으로 페이징 반환 (초안 제외).
+     * 프로필 페이지의 "작성한 게시물" 섹션에 사용한다.
+     */
     public Page<PostResponse> getPostsByAuthor(String username, int page, int size) {
         User user = findUser(username);
         return postRepository
-                .findByAuthorOrderByCreatedAtDesc(user, PageRequest.of(page, size))
+                .findByAuthorAndDraftFalseOrderByCreatedAtDesc(user, PageRequest.of(page, size))
+                .map(post -> new PostResponse(post, postLikeRepository.countByPost(post)));
+    }
+
+    /**
+     * 현재 사용자의 초안(미공개) 게시물을 최신순으로 페이징 반환.
+     * 초안은 작성자 본인만 접근할 수 있다.
+     *
+     * @param username 현재 로그인 사용자명
+     * @param page 페이지 번호 (0부터)
+     * @param size 페이지 크기
+     */
+    public Page<PostResponse> getDrafts(String username, int page, int size) {
+        User user = findUser(username);
+        return postRepository
+                .findByAuthorAndDraftTrueOrderByCreatedAtDesc(user, PageRequest.of(page, size))
                 .map(post -> new PostResponse(post, postLikeRepository.countByPost(post)));
     }
 
@@ -156,6 +175,11 @@ public class PostService {
 
         post.getTags().addAll(resolveTags(request.getTagsInput()));
 
+        // 초안 여부 설정 — true이면 비공개 저장, false(기본)이면 즉시 공개
+        if (request.isDraft()) {
+            post.saveDraft();
+        }
+
         // 다중 이미지 첨부 — PostImage 엔티티를 생성해 컬렉션에 추가
         // CascadeType.ALL에 의해 Post와 함께 자동 저장된다
         Post saved = postRepository.save(post);
@@ -188,6 +212,13 @@ public class PostService {
             for (int i = 0; i < newImageUrls.size(); i++) {
                 post.addImage(new PostImage(post, newImageUrls.get(i), i));
             }
+        }
+
+        // 초안 여부 업데이트 — "등록/저장" 버튼이면 draft=false(공개), "초안으로 저장"이면 draft=true
+        if (request.isDraft()) {
+            post.saveDraft();
+        } else {
+            post.publish();
         }
 
         return new PostResponse(post, postLikeRepository.countByPost(post));
@@ -228,14 +259,30 @@ public class PostService {
         }
     }
 
-    /** 특정 게시판의 고정 게시물 목록 (관리자 고정, 최신순) */
+    /** 특정 게시판의 고정 공개 게시물 목록 (관리자 고정, 최신순, 초안 제외) */
     public List<PostResponse> getPinnedPosts(String boardSlug) {
         if (boardSlug == null || boardSlug.isBlank()) return List.of();
         Board board = boardRepository.findBySlug(boardSlug).orElse(null);
         if (board == null) return List.of();
-        return postRepository.findByBoardAndPinnedTrueOrderByCreatedAtDesc(board).stream()
+        return postRepository.findByBoardAndPinnedTrueAndDraftFalseOrderByCreatedAtDesc(board).stream()
                 .map(p -> new PostResponse(p, postLikeRepository.countByPost(p)))
                 .toList();
+    }
+
+    /**
+     * 초안을 발행(공개)한다.
+     * 작성자 본인만 발행할 수 있다.
+     * 이미 공개된 게시물에 호출하면 예외 없이 무시한다(멱등).
+     *
+     * @param id       발행할 게시물 ID
+     * @param username 현재 로그인 사용자명
+     * @throws AccessDeniedException 작성자가 아닌 경우
+     */
+    @Transactional
+    public void publishDraft(Long id, String username) {
+        Post post = findPost(id);
+        checkOwnership(post.getAuthor().getUsername(), username);
+        post.publish(); // 이미 공개 상태여도 무해함 (idempotent)
     }
 
     /**

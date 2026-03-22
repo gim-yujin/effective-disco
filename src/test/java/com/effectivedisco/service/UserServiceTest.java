@@ -3,7 +3,9 @@ package com.effectivedisco.service;
 import com.effectivedisco.domain.User;
 import com.effectivedisco.dto.request.PasswordChangeRequest;
 import com.effectivedisco.dto.request.ProfileEditRequest;
+import com.effectivedisco.repository.BlockRepository;
 import com.effectivedisco.repository.CommentRepository;
+import com.effectivedisco.repository.FollowRepository;
 import com.effectivedisco.repository.MessageRepository;
 import com.effectivedisco.repository.NotificationRepository;
 import com.effectivedisco.repository.PostLikeRepository;
@@ -34,6 +36,8 @@ class UserServiceTest {
     @Mock NotificationRepository notificationRepository;
     @Mock MessageRepository      messageRepository;
     @Mock ReportRepository       reportRepository;
+    @Mock FollowRepository       followRepository;  // 팔로우 기능 추가로 필요
+    @Mock BlockRepository        blockRepository;   // 사용자 차단 기능 추가로 필요
     @Mock PasswordEncoder        passwordEncoder;
 
     @InjectMocks UserService userService;

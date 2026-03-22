@@ -6,6 +6,7 @@ import com.effectivedisco.dto.request.ProfileEditRequest;
 import com.effectivedisco.dto.response.UserProfileResponse;
 
 import java.time.LocalDateTime;
+import com.effectivedisco.repository.BlockRepository;
 import com.effectivedisco.repository.CommentRepository;
 import com.effectivedisco.repository.FollowRepository;
 import com.effectivedisco.repository.MessageRepository;
@@ -35,6 +36,7 @@ public class UserService {
     private final MessageRepository      messageRepository;
     private final ReportRepository       reportRepository;
     private final FollowRepository       followRepository;
+    private final BlockRepository        blockRepository;
     private final PasswordEncoder        passwordEncoder;
 
     /**
@@ -52,7 +54,8 @@ public class UserService {
                 .orElseThrow(() -> new UsernameNotFoundException(
                         "존재하지 않는 사용자입니다: " + username));
 
-        long postCount     = postRepository.countByAuthor(user);
+        // 초안을 제외한 공개 게시물 수만 집계
+        long postCount     = postRepository.countByAuthorAndDraftFalse(user);
         long commentCount  = commentRepository.countByAuthor(user);
         // 내가 작성한 게시물 전체에 달린 좋아요 합산
         long likesReceived = postLikeRepository.countLikesReceivedByUser(user);
@@ -128,7 +131,11 @@ public class UserService {
         postLikeRepository.deleteByPostAuthor(user);
         // 5. 제출한 신고 (reporter FK)
         reportRepository.deleteByReporter(user);
-        // 6. 계정 삭제 (cascade: posts → comments)
+        // 6. 차단 관계 — blocker/blocked 양방향 모두 삭제
+        //    @OnDelete CASCADE가 설정되어 있으나 JPA 세션 일관성을 위해 명시적으로 삭제
+        blockRepository.deleteAllByBlocker(user);
+        blockRepository.deleteAllByBlocked(user);
+        // 7. 계정 삭제 (cascade: posts → comments)
         userRepository.delete(user);
     }
 

@@ -59,7 +59,8 @@ public class SecurityConfig {
                         .requestMatchers("/admin/**").hasAuthority("ROLE_ADMIN")
                         // /notifications, /messages, /reports, /settings, /bookmarks, /sse, /feed 는 로그인 필요
                         .requestMatchers("/notifications/**", "/messages/**", "/reports/**",
-                                         "/settings/**", "/bookmarks", "/sse/**", "/feed").authenticated()
+                                         "/settings/**", "/bookmarks", "/sse/**", "/feed",
+                                         "/blocks", "/drafts/**").authenticated()
                         .anyRequest().authenticated())
                 .formLogin(form -> form
                         .loginPage("/login")

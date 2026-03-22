@@ -29,7 +29,7 @@ public class BoardService {
      */
     public List<BoardResponse> getAllBoards() {
         return boardRepository.findAllByOrderByNameAsc().stream()
-                .map(board -> new BoardResponse(board, postRepository.countByBoard(board)))
+                .map(board -> new BoardResponse(board, postRepository.countByBoardAndDraftFalse(board)))
                 .collect(Collectors.toList());
     }
 
@@ -68,7 +68,7 @@ public class BoardService {
         Board board = boardRepository.findBySlug(slug)
                 .orElseThrow(() -> new IllegalArgumentException("존재하지 않는 게시판입니다: " + slug));
         board.update(request.getName(), request.getDescription());
-        return new BoardResponse(board, postRepository.countByBoard(board));
+        return new BoardResponse(board, postRepository.countByBoardAndDraftFalse(board));
     }
 
     /**

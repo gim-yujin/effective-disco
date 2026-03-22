@@ -46,6 +46,14 @@ public class Post {
     @Column(nullable = false, columnDefinition = "boolean default false")
     private boolean pinned = false;
 
+    /**
+     * 초안(비공개 임시저장) 여부.
+     * true이면 작성자 본인만 볼 수 있고 공개 게시물 목록에서 제외된다.
+     * false(기본값)이면 즉시 공개된다.
+     */
+    @Column(nullable = false, columnDefinition = "boolean default false")
+    private boolean draft = false;
+
     /** 첨부 이미지 URL (없으면 null) */
     @Column
     private String imageUrl;
@@ -97,6 +105,12 @@ public class Post {
 
     public void pin()   { this.pinned = true;  }
     public void unpin() { this.pinned = false; }
+
+    /** 초안으로 전환한다 — 공개 목록에서 숨겨진다. */
+    public void saveDraft() { this.draft = true;  }
+
+    /** 초안을 발행(공개)한다 — 공개 목록에 노출된다. */
+    public void publish()   { this.draft = false; }
 
     public void setImageUrl(String imageUrl) { this.imageUrl = imageUrl; }
 
