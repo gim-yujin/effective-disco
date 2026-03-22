@@ -24,15 +24,18 @@ public class PostController {
 
     private final PostService postService;
 
-    @Operation(summary = "게시물 목록 조회", description = "boardSlug·keyword·tag 조합으로 필터링 가능합니다.")
+    @Operation(summary = "게시물 목록 조회",
+               description = "boardSlug·keyword·tag 조합으로 필터링 가능합니다. " +
+                             "sort: latest(최신순, 기본) | likes(좋아요순) | comments(댓글순)")
     @GetMapping
     public ResponseEntity<Page<PostResponse>> getPosts(
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "10") int size,
             @RequestParam(required = false) String keyword,
             @RequestParam(required = false) String tag,
-            @RequestParam(required = false) String boardSlug) {
-        return ResponseEntity.ok(postService.getPosts(page, size, keyword, tag, boardSlug));
+            @RequestParam(required = false) String boardSlug,
+            @RequestParam(defaultValue = "latest") String sort) {
+        return ResponseEntity.ok(postService.getPosts(page, size, keyword, tag, boardSlug, sort));
     }
 
     @Operation(summary = "게시물 단건 조회")

@@ -37,6 +37,8 @@ dependencies {
     compileOnly("org.projectlombok:lombok")
     annotationProcessor("org.projectlombok:lombok")
     implementation("org.springdoc:springdoc-openapi-starter-webmvc-ui:2.8.5")
+    // 비밀번호 재설정 이메일 발송
+    implementation("org.springframework.boot:spring-boot-starter-mail")
     testImplementation("org.springframework.boot:spring-boot-starter-test")
     testImplementation("org.springframework.security:spring-security-test")
     testRuntimeOnly("com.h2database:h2")

@@ -79,12 +79,15 @@ public class BoardWebController {
                                 @RequestParam(defaultValue = "20") int size,
                                 @RequestParam(required = false) String keyword,
                                 @RequestParam(required = false) String tag,
+                                @RequestParam(defaultValue = "latest") String sort,
                                 Model model) {
-        model.addAttribute("posts",       postService.getPosts(page, size, keyword, tag, slug));
+        // sort 파라미터를 서비스에 전달해 좋아요순/댓글순 정렬 지원
+        model.addAttribute("posts",       postService.getPosts(page, size, keyword, tag, slug, sort));
         model.addAttribute("pinnedPosts", postService.getPinnedPosts(slug));
         model.addAttribute("board",       boardService.getBoard(slug));
         model.addAttribute("keyword", keyword != null ? keyword : "");
         model.addAttribute("tag",     tag     != null ? tag     : "");
+        model.addAttribute("sort",    sort);
         // 이 게시판 안에서 사용된 태그 목록 (태그 필터 바)
         model.addAttribute("allTags", postService.getAllTagNames());
         return "boards/list"; // templates/boards/list.html

@@ -17,8 +17,21 @@
                  th:if="${param.signup != null}">
                 회원가입이 완료되었습니다. 로그인 해주세요.
             </div>
+            <!-- 비밀번호 재설정 성공 후 리다이렉트 메시지 -->
+            <div class="alert alert-success"
+                 th:if="${msg}" th:text="${msg}"></div>
+
+            <!-- 계정 정지 (LockedException) -->
             <div class="alert"
-                 th:if="${param.error != null}">
+                 th:if="${param.error != null and session.SPRING_SECURITY_LAST_EXCEPTION != null
+                          and session.SPRING_SECURITY_LAST_EXCEPTION.class.simpleName == 'LockedException'}"
+                 th:text="'계정이 정지되었습니다. ' + ${session.SPRING_SECURITY_LAST_EXCEPTION.message}">
+            </div>
+            <!-- 일반 인증 실패 -->
+            <div class="alert"
+                 th:if="${param.error != null
+                          and (session.SPRING_SECURITY_LAST_EXCEPTION == null
+                               or session.SPRING_SECURITY_LAST_EXCEPTION.class.simpleName != 'LockedException')}">
                 아이디 또는 비밀번호가 올바르지 않습니다.
             </div>
 
@@ -37,6 +50,8 @@
 
             <p class="auth-note">
                 계정이 없으신가요? <a th:href="@{/signup}">회원가입</a>
+                &nbsp;|&nbsp;
+                <a th:href="@{/forgot-password}">비밀번호 찾기</a>
             </p>
         </div>
     </div>

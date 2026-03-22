@@ -88,4 +88,39 @@ public interface PostRepository extends JpaRepository<Post, Long> {
      */
     @Query("SELECT t.name FROM Post p JOIN p.tags t GROUP BY t.name ORDER BY COUNT(p) DESC")
     List<String> findPopularTagNames(Pageable pageable);
+
+    /* ── 정렬 쿼리 ────────────────────────────────────────────── */
+
+    /**
+     * 전체 게시물을 좋아요 수 내림차순으로 페이징 조회.
+     * LEFT JOIN 으로 좋아요가 없는 게시물도 포함하고,
+     * 좋아요 수가 같으면 최신순으로 정렬한다.
+     */
+    @Query("SELECT p FROM Post p LEFT JOIN PostLike pl ON pl.post = p " +
+           "GROUP BY p ORDER BY COUNT(pl) DESC, p.createdAt DESC")
+    Page<Post> findAllOrderByLikeCountDesc(Pageable pageable);
+
+    /**
+     * 전체 게시물을 댓글 수 내림차순으로 페이징 조회.
+     * LEFT JOIN 으로 댓글이 없는 게시물도 포함한다.
+     */
+    @Query("SELECT p FROM Post p LEFT JOIN Comment c ON c.post = p " +
+           "GROUP BY p ORDER BY COUNT(c) DESC, p.createdAt DESC")
+    Page<Post> findAllOrderByCommentCountDesc(Pageable pageable);
+
+    /**
+     * 특정 게시판의 게시물을 좋아요 수 내림차순으로 페이징 조회.
+     */
+    @Query("SELECT p FROM Post p LEFT JOIN PostLike pl ON pl.post = p " +
+           "WHERE p.board = :board " +
+           "GROUP BY p ORDER BY COUNT(pl) DESC, p.createdAt DESC")
+    Page<Post> findByBoardOrderByLikeCountDesc(@Param("board") Board board, Pageable pageable);
+
+    /**
+     * 특정 게시판의 게시물을 댓글 수 내림차순으로 페이징 조회.
+     */
+    @Query("SELECT p FROM Post p LEFT JOIN Comment c ON c.post = p " +
+           "WHERE p.board = :board " +
+           "GROUP BY p ORDER BY COUNT(c) DESC, p.createdAt DESC")
+    Page<Post> findByBoardOrderByCommentCountDesc(@Param("board") Board board, Pageable pageable);
 }

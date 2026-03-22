@@ -97,7 +97,8 @@
                         <th>이메일</th>
                         <th class="col-date">가입일</th>
                         <th style="width:80px;text-align:center;">권한</th>
-                        <th style="width:80px;">관리</th>
+                        <th style="width:80px;text-align:center;">상태</th>
+                        <th style="width:260px;">관리</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -116,8 +117,20 @@
                                   th:classappend="${u.role == 'ROLE_ADMIN'} ? ' admin' : ' user'"
                                   th:text="${u.role == 'ROLE_ADMIN'} ? 'ADMIN' : 'USER'">USER</span>
                         </td>
+                        <!-- 현재 정지 상태 표시 -->
+                        <td style="text-align:center;">
+                            <span th:if="${u.currentlySuspended}"
+                                  class="role-badge"
+                                  style="background:#dc3545;color:#fff;"
+                                  th:title="${u.suspensionReason}"
+                                  th:text="${u.suspendedUntil != null}
+                                           ? '정지(' + ${#temporals.format(u.suspendedUntil,'MM/dd')} + ')'
+                                           : '영구정지'">정지</span>
+                            <span th:unless="${u.currentlySuspended}"
+                                  style="color:#28a745;">정상</span>
+                        </td>
                         <td>
-                            <!-- 자기 자신은 권한 변경 불가 -->
+                            <!-- 자기 자신은 권한 변경/정지 불가 -->
                             <form th:action="@{/admin/users/{id}/toggle-role(id=${u.id})}"
                                   method="post" style="display:inline;">
                                 <input type="hidden" th:name="${_csrf.parameterName}" th:value="${_csrf.token}">
@@ -127,6 +140,32 @@
                                         th:text="${u.role == 'ROLE_ADMIN'} ? '[강등]' : '[승격]'">
                                 </button>
                             </form>
+
+                            <!-- 정지 해제 버튼 (현재 정지 상태일 때만 표시) -->
+                            <form th:if="${u.currentlySuspended}"
+                                  th:action="@{/admin/users/{id}/unsuspend(id=${u.id})}"
+                                  method="post" style="display:inline;">
+                                <input type="hidden" th:name="${_csrf.parameterName}" th:value="${_csrf.token}">
+                                <button class="btn btn-sm btn-primary" type="submit">[해제]</button>
+                            </form>
+
+                            <!-- 정지 버튼 (자기 자신 및 이미 정지된 사용자 제외) -->
+                            <form th:unless="${u.currentlySuspended or u.username == #authentication.name}"
+                                  th:action="@{/admin/users/{id}/suspend(id=${u.id})}"
+                                  method="post" style="display:inline;"
+                                  onsubmit="return confirmSuspend(this)">
+                                <input type="hidden" th:name="${_csrf.parameterName}" th:value="${_csrf.token}">
+                                <!-- 자기 자신이 아닌 경우에도 currentUsername 을 전달해 서버에서 재검증 -->
+                                <input type="hidden" name="currentUsername" sec:authentication="name">
+                                <input type="text"   name="reason"
+                                       placeholder="사유(선택)"
+                                       style="width:80px;padding:2px 4px;font-size:12px;">
+                                <input type="number" name="days"
+                                       placeholder="일수(영구)"
+                                       min="1" max="365"
+                                       style="width:60px;padding:2px 4px;font-size:12px;">
+                                <button class="btn btn-sm btn-danger" type="submit">[정지]</button>
+                            </form>
                         </td>
                     </tr>
                 </tbody>
@@ -135,5 +174,16 @@
 
     </div>
 </main>
+<script>
+/**
+ * 정지 버튼 클릭 시 사유와 기간을 확인 메시지에 포함해 실수를 방지한다.
+ */
+function confirmSuspend(form) {
+    const reason = form.querySelector('[name=reason]').value.trim() || '(없음)';
+    const days   = form.querySelector('[name=days]').value;
+    const period = days ? days + '일' : '영구';
+    return confirm('정지하시겠습니까?\n사유: ' + reason + '\n기간: ' + period);
+}
+</script>
 </body>
 </html>

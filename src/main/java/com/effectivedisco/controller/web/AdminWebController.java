@@ -7,6 +7,7 @@ import com.effectivedisco.service.BoardService;
 import com.effectivedisco.service.CommentService;
 import com.effectivedisco.service.PostService;
 import com.effectivedisco.service.ReportService;
+import com.effectivedisco.service.UserService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Controller;
 import org.springframework.ui.Model;
@@ -23,6 +24,7 @@ import org.springframework.web.bind.annotation.*;
 public class AdminWebController {
 
     private final UserRepository userRepository;
+    private final UserService    userService;
     private final PostService    postService;
     private final CommentService commentService;
     private final BoardService   boardService;
@@ -58,6 +60,34 @@ public class AdminWebController {
             }
             userRepository.save(target);
         }
+        return "redirect:/admin";
+    }
+
+    /**
+     * 계정 정지.
+     * days = null 이면 영구 정지, days > 0 이면 그 일수만큼 기간 정지.
+     * 관리자 자신의 계정은 정지할 수 없다.
+     */
+    @PostMapping("/users/{id}/suspend")
+    public String suspendUser(@PathVariable Long id,
+                              @RequestParam(required = false) String reason,
+                              @RequestParam(required = false) Integer days,
+                              @RequestParam String currentUsername) {
+        User target = userRepository.findById(id)
+                .orElseThrow(() -> new IllegalArgumentException("사용자를 찾을 수 없습니다: " + id));
+        // 관리자 자신은 정지 불가
+        if (!target.getUsername().equals(currentUsername)) {
+            userService.suspendUser(id, reason, days);
+        }
+        return "redirect:/admin";
+    }
+
+    /**
+     * 계정 정지 해제.
+     */
+    @PostMapping("/users/{id}/unsuspend")
+    public String unsuspendUser(@PathVariable Long id) {
+        userService.unsuspendUser(id);
         return "redirect:/admin";
     }
 

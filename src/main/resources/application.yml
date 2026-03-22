@@ -16,6 +16,20 @@ spring:
     multipart:
       max-file-size: 5MB
       max-request-size: 10MB
+  # 이메일 발송 설정 (환경 변수로 오버라이드: MAIL_HOST, MAIL_PORT, MAIL_USERNAME, MAIL_PASSWORD)
+  # spring.mail.host 가 비어있으면 Spring Boot 가 JavaMailSender 빈을 생성하지 않으므로
+  # 개발 환경에서 SMTP 설정 없이도 기동 가능하다. 이 경우 재설정 링크를 콘솔 로그로 확인한다.
+  mail:
+    host: ${MAIL_HOST:}
+    port: ${MAIL_PORT:587}
+    username: ${MAIL_USERNAME:}
+    password: ${MAIL_PASSWORD:}
+    properties:
+      mail:
+        smtp:
+          auth: true
+          starttls:
+            enable: true
 
 jwt:
   secret: effective-disco-secret-key-must-be-at-least-256-bits-long-for-hs256
@@ -26,6 +40,8 @@ server:
 
 app:
   upload-dir: uploads/images
+  # 비밀번호 재설정 링크에 사용할 베이스 URL (환경 변수 APP_BASE_URL로 오버라이드 가능)
+  base-url: ${APP_BASE_URL:http://localhost:8080}
 
 springdoc:
   api-docs:

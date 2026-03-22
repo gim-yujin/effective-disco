@@ -47,9 +47,11 @@ public class PostService {
      * @param boardSlug null이면 전체 게시판 검색
      * @param keyword   null이면 키워드 검색 미적용
      * @param tag       null이면 태그 필터 미적용
+     * @param sort      정렬 기준: "latest"(최신순, 기본), "likes"(좋아요순), "comments"(댓글순)
      */
     public Page<PostResponse> getPosts(int page, int size,
-                                       String keyword, String tag, String boardSlug) {
+                                       String keyword, String tag,
+                                       String boardSlug, String sort) {
         PageRequest pageable = PageRequest.of(page, size);
 
         // 게시판 슬러그가 있으면 해당 Board 엔티티를 로드
@@ -59,29 +61,49 @@ public class PostService {
                     .orElseThrow(() -> new IllegalArgumentException("존재하지 않는 게시판: " + boardSlug));
         }
 
+        // 정렬 기준 정규화 — 지원하지 않는 값은 최신순으로 폴백
+        String sortKey = (sort != null) ? sort.trim().toLowerCase() : "latest";
+
         Page<Post> posts;
 
         if (board != null && tag != null && !tag.isBlank()) {
-            // 게시판 내 태그 필터
+            // 게시판 내 태그 필터 (태그 필터는 항상 최신순)
             posts = postRepository.findByBoardAndTagName(board, tag, pageable);
         } else if (board != null && keyword != null && !keyword.isBlank()) {
-            // 게시판 내 키워드 검색
+            // 게시판 내 키워드 검색 (검색은 항상 최신순)
             posts = postRepository.searchByKeywordInBoard(board, keyword, pageable);
         } else if (board != null) {
-            // 게시판 전체 목록
-            posts = postRepository.findByBoardOrderByCreatedAtDesc(board, pageable);
+            // 게시판 전체 목록 — 정렬 기준 적용
+            posts = switch (sortKey) {
+                case "likes"    -> postRepository.findByBoardOrderByLikeCountDesc(board, pageable);
+                case "comments" -> postRepository.findByBoardOrderByCommentCountDesc(board, pageable);
+                default         -> postRepository.findByBoardOrderByCreatedAtDesc(board, pageable);
+            };
         } else if (tag != null && !tag.isBlank()) {
-            // 전체 게시판 태그 필터
+            // 전체 게시판 태그 필터 (태그 필터는 항상 최신순)
             posts = postRepository.findByTagName(tag, pageable);
         } else if (keyword != null && !keyword.isBlank()) {
-            // 전체 게시판 키워드 검색
+            // 전체 게시판 키워드 검색 (검색은 항상 최신순)
             posts = postRepository.searchByKeyword(keyword, pageable);
         } else {
-            // 전체 최신 목록
-            posts = postRepository.findAllByOrderByCreatedAtDesc(pageable);
+            // 전체 목록 — 정렬 기준 적용
+            posts = switch (sortKey) {
+                case "likes"    -> postRepository.findAllOrderByLikeCountDesc(pageable);
+                case "comments" -> postRepository.findAllOrderByCommentCountDesc(pageable);
+                default         -> postRepository.findAllByOrderByCreatedAtDesc(pageable);
+            };
         }
 
         return posts.map(post -> new PostResponse(post, postLikeRepository.countByPost(post)));
+    }
+
+    /**
+     * 정렬 기준 없이 게시물 목록을 조회한다 (하위 호환용 — 최신순 기본값 적용).
+     * REST API 컨트롤러 등 sort 파라미터를 명시하지 않는 기존 호출에서 사용한다.
+     */
+    public Page<PostResponse> getPosts(int page, int size,
+                                       String keyword, String tag, String boardSlug) {
+        return getPosts(page, size, keyword, tag, boardSlug, "latest");
     }
 
     /** 단일 게시물 조회 */

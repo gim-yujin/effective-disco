@@ -51,7 +51,9 @@ public class SecurityConfig {
     public SecurityFilterChain webFilterChain(HttpSecurity http) throws Exception {
         return http
                 .authorizeHttpRequests(auth -> auth
-                        .requestMatchers("/login", "/signup", "/css/**", "/uploads/**").permitAll()
+                        // 비인증 사용자도 접근 가능한 경로: 로그인/회원가입/비밀번호재설정/정적자원
+                        .requestMatchers("/login", "/signup", "/css/**", "/uploads/**",
+                                         "/forgot-password", "/reset-password").permitAll()
                         .requestMatchers(HttpMethod.GET, "/", "/boards/**", "/posts/**", "/users/**", "/search").permitAll()
                         // /admin/** 은 ROLE_ADMIN 만 접근 가능
                         .requestMatchers("/admin/**").hasAuthority("ROLE_ADMIN")

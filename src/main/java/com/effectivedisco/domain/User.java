@@ -48,6 +48,25 @@ public class User {
     @Column(columnDefinition = "TEXT")
     private String bio;
 
+    /**
+     * 계정 정지 여부.
+     * true 이면 해당 사용자는 로그인 시 LockedException 이 발생한다.
+     * DDL 기본값을 false 로 지정해 기존 행의 NULL 방지.
+     */
+    @Column(nullable = false, columnDefinition = "boolean default false")
+    private boolean suspended = false;
+
+    /**
+     * 정지 해제 시각. null 이면 영구 정지.
+     * 현재 시각이 이 값을 넘으면 자동으로 접근이 허용된다.
+     */
+    @Column
+    private LocalDateTime suspendedUntil;
+
+    /** 정지 사유 (관리자 입력, 선택) */
+    @Column
+    private String suspensionReason;
+
     @Builder
     public User(String username, String email, String password) {
         this.username = username;
@@ -66,4 +85,42 @@ public class User {
     public void updateBio(String bio)             { this.bio = bio; }
     public void updateEmail(String email)         { this.email = email; }
     public void updatePassword(String encoded)    { this.password = encoded; }
+
+    /* ── 계정 정지 관리 ───────────────────────────────────────── */
+
+    /**
+     * 계정을 정지한다.
+     *
+     * @param reason 정지 사유 (null 허용)
+     * @param until  정지 해제 시각. null 이면 영구 정지
+     */
+    public void suspend(String reason, LocalDateTime until) {
+        this.suspended        = true;
+        this.suspensionReason = reason;
+        this.suspendedUntil   = until;
+    }
+
+    /**
+     * 계정 정지를 해제한다.
+     * suspended·suspendedUntil·suspensionReason 을 모두 초기화한다.
+     */
+    public void unsuspend() {
+        this.suspended        = false;
+        this.suspendedUntil   = null;
+        this.suspensionReason = null;
+    }
+
+    /**
+     * 현재 시점에서 실제로 정지 상태인지 반환한다.
+     *
+     * suspended = true 이더라도 suspendedUntil 이 이미 지난 경우 false 를 반환한다
+     * (기간 만료 → 자동 허용).
+     */
+    public boolean isCurrentlySuspended() {
+        if (!this.suspended) return false;
+        // 영구 정지: until = null
+        if (this.suspendedUntil == null) return true;
+        // 기간 정지: 아직 만료 시각 전이면 정지 상태
+        return LocalDateTime.now().isBefore(this.suspendedUntil);
+    }
 }

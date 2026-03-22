@@ -58,6 +58,17 @@
                th:text="'#' + ${t}">태그</a>
         </div>
 
+        <!-- 정렬 선택 바: 태그/키워드 필터 중에는 비활성화 (최신순 고정) -->
+        <div class="sort-bar" th:if="${(tag == null or tag.isBlank()) and (keyword == null or keyword.isBlank())}">
+            <span class="sort-label">정렬:</span>
+            <a th:classappend="${sort == 'latest'} ? ' active' : ''"
+               th:href="@{/boards/{slug}(slug=${board.slug}, sort='latest')}">최신순</a>
+            <a th:classappend="${sort == 'likes'} ? ' active' : ''"
+               th:href="@{/boards/{slug}(slug=${board.slug}, sort='likes')}">인기순 ♥</a>
+            <a th:classappend="${sort == 'comments'} ? ' active' : ''"
+               th:href="@{/boards/{slug}(slug=${board.slug}, sort='comments')}">댓글순 💬</a>
+        </div>
+
         <!-- 키워드 검색 폼 -->
         <form class="search-form"
               th:action="@{/boards/{slug}(slug=${board.slug})}" method="get">
@@ -99,7 +110,8 @@
                th:data-total-pages="${posts.totalPages}"
                th:data-current-page="${posts.number}"
                th:data-tag="${tag}"
-               th:data-keyword="${keyword}">
+               th:data-keyword="${keyword}"
+               th:data-sort="${sort}">
             <thead>
                 <tr>
                     <th class="col-no">번호</th>
@@ -176,6 +188,7 @@
     const boardSlug  = table.dataset.boardSlug || '';
     const tag        = table.dataset.tag        || '';
     const keyword    = table.dataset.keyword    || '';
+    const sort       = table.dataset.sort       || 'latest'; // 정렬 기준 유지
     const totalPages = parseInt(table.dataset.totalPages || '1', 10);
     let   nextPage   = parseInt(table.dataset.currentPage || '0', 10) + 1;
     let   loading    = false;
@@ -198,6 +211,7 @@
         if (boardSlug) params.set('boardSlug', boardSlug);
         if (tag)       params.set('tag', tag);
         if (keyword)   params.set('keyword', keyword);
+        if (sort)      params.set('sort', sort); // 정렬 기준을 API 요청에 포함
 
         fetch('/api/posts?' + params)
             .then(r => r.json())

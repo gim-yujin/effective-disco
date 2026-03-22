@@ -3,12 +3,14 @@ package com.effectivedisco.security;
 import com.effectivedisco.domain.User;
 import com.effectivedisco.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
+import org.springframework.security.authentication.LockedException;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.security.core.userdetails.UserDetailsService;
 import org.springframework.security.core.userdetails.UsernameNotFoundException;
 import org.springframework.stereotype.Service;
 
+import java.time.format.DateTimeFormatter;
 import java.util.List;
 
 @Service
@@ -21,11 +23,41 @@ public class CustomUserDetailsService implements UserDetailsService {
     public UserDetails loadUserByUsername(String username) throws UsernameNotFoundException {
         User user = userRepository.findByUsername(username)
                 .orElseThrow(() -> new UsernameNotFoundException("User not found: " + username));
+
+        // 계정 정지 확인: 정지 상태이면 LockedException 을 던져 로그인을 차단한다
+        if (user.isCurrentlySuspended()) {
+            String reason = buildSuspensionMessage(user);
+            throw new LockedException(reason);
+        }
+
         // DB에 저장된 role("ROLE_USER" 또는 "ROLE_ADMIN")을 그대로 권한으로 사용
         return new org.springframework.security.core.userdetails.User(
                 user.getUsername(),
                 user.getPassword(),
                 List.of(new SimpleGrantedAuthority(user.getRole()))
         );
+    }
+
+    /**
+     * 정지 안내 메시지를 조립한다.
+     * 사유와 해제 일자를 포함해 사용자에게 명확한 정보를 제공한다.
+     */
+    private String buildSuspensionMessage(User user) {
+        StringBuilder msg = new StringBuilder("계정이 정지되었습니다");
+
+        if (user.getSuspensionReason() != null && !user.getSuspensionReason().isBlank()) {
+            msg.append(": ").append(user.getSuspensionReason());
+        }
+
+        if (user.getSuspendedUntil() != null) {
+            // 기간 정지: 해제 일자를 사람이 읽기 쉬운 형태로 표시
+            String until = user.getSuspendedUntil()
+                    .format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm"));
+            msg.append(" (~").append(until).append("까지)");
+        } else {
+            msg.append(" (영구)");
+        }
+
+        return msg.toString();
     }
 }

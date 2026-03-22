@@ -4,6 +4,8 @@ import com.effectivedisco.domain.User;
 import com.effectivedisco.dto.request.PasswordChangeRequest;
 import com.effectivedisco.dto.request.ProfileEditRequest;
 import com.effectivedisco.dto.response.UserProfileResponse;
+
+import java.time.LocalDateTime;
 import com.effectivedisco.repository.CommentRepository;
 import com.effectivedisco.repository.MessageRepository;
 import com.effectivedisco.repository.NotificationRepository;
@@ -122,6 +124,42 @@ public class UserService {
         reportRepository.deleteByReporter(user);
         // 6. 계정 삭제 (cascade: posts → comments)
         userRepository.delete(user);
+    }
+
+    /* ── 계정 정지 관리 (관리자 전용) ────────────────────────── */
+
+    /**
+     * 사용자 계정을 정지한다.
+     *
+     * @param userId 정지할 사용자 ID
+     * @param reason 정지 사유 (관리자 입력, 빈 문자열이면 null 저장)
+     * @param days   정지 일수. null 이면 영구 정지
+     * @throws IllegalArgumentException 대상 사용자를 찾을 수 없을 때
+     */
+    @Transactional
+    public void suspendUser(Long userId, String reason, Integer days) {
+        User target = userRepository.findById(userId)
+                .orElseThrow(() -> new IllegalArgumentException("사용자를 찾을 수 없습니다: " + userId));
+
+        // 정지 해제 시각 계산: days = null 이면 영구 정지 (until = null)
+        LocalDateTime until = (days != null && days > 0)
+                ? LocalDateTime.now().plusDays(days)
+                : null;
+
+        String trimmedReason = (reason != null && !reason.isBlank()) ? reason.trim() : null;
+        target.suspend(trimmedReason, until);
+    }
+
+    /**
+     * 사용자 계정 정지를 해제한다.
+     *
+     * @param userId 정지를 해제할 사용자 ID
+     */
+    @Transactional
+    public void unsuspendUser(Long userId) {
+        User target = userRepository.findById(userId)
+                .orElseThrow(() -> new IllegalArgumentException("사용자를 찾을 수 없습니다: " + userId));
+        target.unsuspend();
     }
 
     private User findUser(String username) {
