@@ -79,24 +79,52 @@ public class PostResponse {
     private final List<String> imageUrls;
 
     public PostResponse(Post post, long likeCount) {
+        this(
+                post,
+                post.getAuthor().getUsername(),
+                post.getTags().stream()
+                        .map(t -> t.getName())
+                        .sorted()
+                        .collect(Collectors.toList()),
+                post.getBoard() != null ? post.getBoard().getName() : null,
+                post.getBoard() != null ? post.getBoard().getSlug() : null,
+                extractImageUrls(post)
+        );
+    }
+
+    /**
+     * 문제 해결:
+     * freshly-created 게시물 응답은 작성자/태그/게시판/이미지 정보를 이미 알고 있으므로
+     * save 직후 연관 LAZY 로딩을 다시 타지 않고 DTO 를 만들 수 있어야 한다.
+     */
+    public PostResponse(Post post,
+                        String authorUsername,
+                        List<String> tagNames,
+                        String boardName,
+                        String boardSlug,
+                        List<String> imageUrls) {
         this.id = post.getId();
         this.title = post.getTitle();
         this.content = post.getContent();
-        this.author = post.getAuthor().getUsername();
+        this.author = authorUsername;
         this.createdAt = post.getCreatedAt();
         this.updatedAt = post.getUpdatedAt();
         this.commentCount = post.getCommentCount();
         this.likeCount = post.getLikeCount();
         this.viewCount = post.getViewCount();
-        this.tags = post.getTags().stream()
-                .map(t -> t.getName())
-                .sorted()
-                .collect(Collectors.toList());
-        this.boardName = post.getBoard() != null ? post.getBoard().getName() : null;
-        this.boardSlug = post.getBoard() != null ? post.getBoard().getSlug() : null;
+        this.tags = List.copyOf(tagNames);
+        this.boardName = boardName;
+        this.boardSlug = boardSlug;
         this.pinned    = post.isPinned();
         this.draft     = post.isDraft();
+        this.imageUrls = List.copyOf(imageUrls);
+    }
 
+    public PostResponse(Post post) {
+        this(post, 0);
+    }
+
+    private static List<String> extractImageUrls(Post post) {
         // PostImage 컬렉션에서 URL 목록 구성 (sortOrder 기준 @OrderBy 적용됨)
         List<String> urls = post.getImages().stream()
                 .map(PostImage::getImageUrl)
@@ -105,10 +133,6 @@ public class PostResponse {
         if (urls.isEmpty() && post.getImageUrl() != null) {
             urls.add(post.getImageUrl());
         }
-        this.imageUrls = List.copyOf(urls);
-    }
-
-    public PostResponse(Post post) {
-        this(post, 0);
+        return urls;
     }
 }

@@ -5,15 +5,16 @@ import com.effectivedisco.domain.Post;
 import com.effectivedisco.domain.User;
 import com.effectivedisco.dto.request.PostRequest;
 import com.effectivedisco.dto.response.PostResponse;
+import com.effectivedisco.loadtest.NoOpLoadTestStepProfiler;
 import com.effectivedisco.repository.BoardRepository;
 import com.effectivedisco.repository.PostLikeRepository;
 import com.effectivedisco.repository.PostRepository;
 import com.effectivedisco.repository.TagRepository;
 import com.effectivedisco.repository.UserRepository;
-import com.effectivedisco.service.NotificationService;
+import jakarta.persistence.EntityManager;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.security.access.AccessDeniedException;
@@ -42,8 +43,23 @@ class PostServiceTest {
     @Mock TagRepository       tagRepository;
     @Mock BoardRepository     boardRepository;
     @Mock NotificationService notificationService;
+    @Mock EntityManager       entityManager;
 
-    @InjectMocks PostService postService;
+    PostService postService;
+
+    @BeforeEach
+    void setUp() {
+        postService = new PostService(
+                postRepository,
+                userRepository,
+                postLikeRepository,
+                tagRepository,
+                boardRepository,
+                notificationService,
+                new NoOpLoadTestStepProfiler(),
+                entityManager
+        );
+    }
 
     @Test
     void getPost_success_returnsPostResponse() {
@@ -68,10 +84,13 @@ class PostServiceTest {
     @Test
     void createPost_success_savesAndReturnsResponse() {
         User user = makeUser("author");
+        ReflectionTestUtils.setField(user, "id", 11L);
         PostRequest request = makePostRequest("New Title", "New Content");
         Post savedPost = makePost(1L, "New Title", "New Content", user);
 
-        given(userRepository.findByUsername("author")).willReturn(Optional.of(user));
+        given(userRepository.findPostCreateAuthorSnapshotByUsername("author"))
+                .willReturn(Optional.of(postCreateAuthorSnapshot(11L, "author")));
+        given(entityManager.getReference(User.class, 11L)).willReturn(user);
         given(postRepository.save(any(Post.class))).willReturn(savedPost);
 
         PostResponse response = postService.createPost(request, "author");
@@ -83,7 +102,7 @@ class PostServiceTest {
 
     @Test
     void createPost_unknownUser_throwsException() {
-        given(userRepository.findByUsername("ghost")).willReturn(Optional.empty());
+        given(userRepository.findPostCreateAuthorSnapshotByUsername("ghost")).willReturn(Optional.empty());
 
         assertThatThrownBy(() -> postService.createPost(makePostRequest("t", "c"), "ghost"))
                 .isInstanceOf(UsernameNotFoundException.class);
@@ -264,10 +283,13 @@ class PostServiceTest {
     @Test
     void createPost_draftFlagTrue_savesPostAsDraft() {
         User user = makeUser("author");
+        ReflectionTestUtils.setField(user, "id", 11L);
         PostRequest request = makePostRequest("Draft Title", "Draft Content");
         request.setDraft(true); // 초안 플래그 설정
 
-        given(userRepository.findByUsername("author")).willReturn(Optional.of(user));
+        given(userRepository.findPostCreateAuthorSnapshotByUsername("author"))
+                .willReturn(Optional.of(postCreateAuthorSnapshot(11L, "author")));
+        given(entityManager.getReference(User.class, 11L)).willReturn(user);
         // save()에 전달된 Post 객체를 그대로 반환해 draft 플래그를 검증한다
         given(postRepository.save(any(Post.class))).willAnswer(inv -> inv.getArgument(0));
 
@@ -368,5 +390,19 @@ class PostServiceTest {
 
     private Board makeBoard(String slug) {
         return Board.builder().name(slug).slug(slug).build();
+    }
+
+    private UserRepository.PostCreateAuthorSnapshot postCreateAuthorSnapshot(Long id, String username) {
+        return new UserRepository.PostCreateAuthorSnapshot() {
+            @Override
+            public Long getId() {
+                return id;
+            }
+
+            @Override
+            public String getUsername() {
+                return username;
+            }
+        };
     }
 }

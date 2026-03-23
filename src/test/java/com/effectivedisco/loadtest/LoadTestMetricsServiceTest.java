@@ -76,11 +76,29 @@ class LoadTestMetricsServiceTest {
                 new DataAccessResourceFailureException("pool timeout",
                         new SQLTransientConnectionException("Connection is not available, request timed out"))
         );
+        loadTestMetricsService.recordJwtAuthCacheHit();
+        loadTestMetricsService.recordJwtAuthCacheMiss();
 
         LoadTestMetricsSnapshot snapshot = loadTestMetricsService.reset();
 
         assertThat(snapshot.duplicateKeyConflicts()).isZero();
         assertThat(snapshot.dbPoolTimeouts()).isZero();
+        assertThat(snapshot.jwtAuthCacheHits()).isZero();
+        assertThat(snapshot.jwtAuthCacheMisses()).isZero();
+    }
+
+    @Test
+    void jwtAuthCacheCounters_accumulateHitAndMissCounts() {
+        loadTestMetricsService.recordJwtAuthCacheHit();
+        loadTestMetricsService.recordJwtAuthCacheHit();
+        loadTestMetricsService.recordJwtAuthCacheMiss();
+
+        LoadTestMetricsSnapshot snapshot = loadTestMetricsService.snapshot();
+
+        assertThat(snapshot.jwtAuthCacheHits())
+                .as("문제 해결 검증: JWT 인증 캐시 hit/miss 는 인증 조회 병목을 분리해 볼 수 있게 누적돼야 한다")
+                .isEqualTo(2);
+        assertThat(snapshot.jwtAuthCacheMisses()).isEqualTo(1);
     }
 
     @Test

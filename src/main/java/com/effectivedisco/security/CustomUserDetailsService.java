@@ -1,6 +1,5 @@
 package com.effectivedisco.security;
 
-import com.effectivedisco.domain.User;
 import com.effectivedisco.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.security.authentication.LockedException;
@@ -21,11 +20,11 @@ public class CustomUserDetailsService implements UserDetailsService {
 
     @Override
     public UserDetails loadUserByUsername(String username) throws UsernameNotFoundException {
-        User user = userRepository.findByUsername(username)
+        UserRepository.SecurityUserSnapshot user = userRepository.findSecuritySnapshotByUsername(username)
                 .orElseThrow(() -> new UsernameNotFoundException("User not found: " + username));
 
         // 계정 정지 확인: 정지 상태이면 LockedException 을 던져 로그인을 차단한다
-        if (user.isCurrentlySuspended()) {
+        if (isCurrentlySuspended(user)) {
             String reason = buildSuspensionMessage(user);
             throw new LockedException(reason);
         }
@@ -42,7 +41,7 @@ public class CustomUserDetailsService implements UserDetailsService {
      * 정지 안내 메시지를 조립한다.
      * 사유와 해제 일자를 포함해 사용자에게 명확한 정보를 제공한다.
      */
-    private String buildSuspensionMessage(User user) {
+    private String buildSuspensionMessage(UserRepository.SecurityUserSnapshot user) {
         StringBuilder msg = new StringBuilder("계정이 정지되었습니다");
 
         if (user.getSuspensionReason() != null && !user.getSuspensionReason().isBlank()) {
@@ -59,5 +58,11 @@ public class CustomUserDetailsService implements UserDetailsService {
         }
 
         return msg.toString();
+    }
+
+    private static boolean isCurrentlySuspended(UserRepository.SecurityUserSnapshot user) {
+        if (!user.getSuspended()) return false;
+        if (user.getSuspendedUntil() == null) return true;
+        return java.time.LocalDateTime.now().isBefore(user.getSuspendedUntil());
     }
 }

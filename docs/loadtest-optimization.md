@@ -247,3 +247,94 @@ SOAK_FACTOR=1 SOAK_DURATION=10s WARMUP_DURATION=5s SAMPLE_INTERVAL_SECONDS=2 \
 - 오히려 이번 반복 샘플 기준으로는 `1.25x` 도 `5/5 PASS` 를 유지하지 못해, 보수적으로는 `1.0x 안정 / 1.25x 경계 / 1.5x 실패` 로 보는 편이 맞다.
 - 즉 이번 최적화는 hot path 하나하나를 가볍게 만들었지만, 시스템 전체 병목은 여전히 DB pool 포화와 다른 혼합 경로 경합에 묶여 있다.
 - 다음 단계는 `pool 포화를 유발하는 남은 경로` 를 다시 좁히는 것이다. 특히 `write_posts_and_comments` 와 mixed race 전체에서 어떤 경로가 커넥션을 오래 점유하는지 재계측이 필요하다.
+
+## 2026-03-24 `JWT 인증 조회` 계측 분리 + 로컬 캐시 최적화
+
+상태: 완료
+
+### 배경
+
+- `post.list`, `comment.create`, `notification.store` 를 줄인 뒤에도 반복 ramp-up 에서는 `1.25x 경계 / 1.5x 실패` 가 유지됐다.
+- 짧은 soak 실행 중 실제 timeout stack trace를 보면 서비스 메서드보다 먼저 `CustomUserDetailsService.loadUserByUsername()` 에서 커넥션 획득 timeout 이 터지는 경우가 반복됐다.
+- 즉 남은 pool 포화 원인을 더 잘게 쪼개려면 "비즈니스 로직 경로"와 별개로 "JWT 인증 조회 경로"를 따로 계측해야 했다.
+
+### 원인
+
+- `/api/**` 요청은 JWT 필터를 거치며, 같은 사용자의 토큰이 연속으로 들어와도 매 요청마다 `UserDetailsService` 를 통해 DB에서 사용자 인증 정보를 다시 읽었다.
+- 이 경로는 요청 수가 많은 읽기/좋아요/댓글 API 전체에 공통으로 붙기 때문에, 서비스 메서드가 짧아져도 인증 조회가 pool을 먼저 잠식할 수 있었다.
+- 기존 병목 계측에는 auth 경로가 별도 profile 로 드러나지 않아, "서비스가 느린지"와 "인증 조회가 느린지"를 구분하기 어려웠다.
+
+### 적용한 변경
+
+- `LoadTestStepProfiler` 를 도입해 서비스 메서드 안과 필터 경로에서도 동일한 형식의 sub-step profile 을 기록할 수 있게 했다.
+- `JwtAuthenticationFilter` 에 `jwt.auth.resolve-user` profile 을 추가해 토큰 해석 후 인증 정보 결정을 별도 계측하도록 바꿨다.
+- `CachedJwtUserDetailsService` 를 추가해 같은 username 의 JWT 인증 정보를 짧은 TTL 로 캐시하고, miss 시에만 `jwt.auth.load-user.db` profile 을 기록하도록 했다.
+- `LoadTestMetricsSnapshot` / `LoadTestMetricsService` 에 `jwtAuthCacheHits`, `jwtAuthCacheMisses` 를 추가해 auth cache 효과를 k6 결과와 함께 저장하도록 했다.
+- `CustomUserDetailsService` 와 `UserRepository` 는 인증용 최소 projection 으로 바꿔 miss 시에도 전체 `User` 엔티티를 읽지 않게 정리했다.
+
+### 측정 결과
+
+실행 전 참고 샘플:
+
+- 실행 시각: `20260324-045437`
+- artifact: `loadtest/results/soak-20260324-045437-server.json`
+- 당시에는 auth 경로가 별도 profile 로 분리되지 않았다.
+- 같은 조건의 short soak 에서 `dbPoolTimeouts = 15`, `maxThreadsAwaitingConnection = 197`
+
+계측/최적화 후:
+
+- 실행 시각: `20260324-050212`
+- artifact: `loadtest/results/soak-20260324-050212-server.json`
+- `jwtAuthCacheHits = 3820`
+- `jwtAuthCacheMisses = 62`
+- `jwt.auth.resolve-user sampleCount = 3882`
+- `jwt.auth.resolve-user averageWallTimeMs = 11.12`
+- `jwt.auth.resolve-user averageSqlStatementCount = 0.016`
+- `jwt.auth.load-user.db sampleCount = 62`
+- `jwt.auth.load-user.db averageWallTimeMs = 228.79`
+- `jwt.auth.load-user.db averageSqlExecutionTimeMs = 0.40`
+- `jwt.auth.load-user.db averageSqlStatementCount = 0.98`
+- `dbPoolTimeouts = 435`
+- `maxActiveConnections = 20`, `maxThreadsAwaitingConnection = 200`
+
+### 해석
+
+- 인증 요청 대부분은 `3820 / 3882` 수준으로 캐시 hit 가 되었고, 평균 SQL 문 수도 `jwt.auth.resolve-user = 0.016` 까지 낮아졌다.
+- 반면 miss 경로의 `averageWallTimeMs = 228.79` 에 비해 `averageSqlExecutionTimeMs = 0.40` 이 매우 작다.
+- 즉 auth miss 비용의 대부분은 느린 SQL 이 아니라 "커넥션을 얻기 전 대기"다. 이 결과로 남은 병목이 query plan 보다 pool 포화 쪽이라는 점이 더 명확해졌다.
+- 이번 short soak 샘플에서는 전체 `dbPoolTimeouts` 가 여전히 높았고 오히려 더 나쁘게 나왔다. 따라서 auth cache 하나만으로 전체 한계점이 올라갔다고 해석하면 안 된다.
+- 다만 이번 변경으로 "인증 경로가 실제로 얼마나 DB를 치는가"와 "miss 가 왜 비싼가"를 수치로 볼 수 있게 됐고, 다음 최적화 우선순위를 더 정확히 좁힐 수 있게 됐다.
+
+### 검증
+
+targeted Gradle 테스트:
+
+```bash
+GRADLE_USER_HOME=/tmp/gradle-home ./gradlew test --no-daemon \
+  --tests "com.effectivedisco.security.CachedJwtUserDetailsServiceTest" \
+  --tests "com.effectivedisco.loadtest.LoadTestMetricsServiceTest" \
+  --tests "com.effectivedisco.loadtest.LoadTestMetricsControllerTest" \
+  --tests "com.effectivedisco.service.PostServiceTest" \
+  --tests "com.effectivedisco.service.PostCreateOptimizationIntegrationTest" \
+  --tests "com.effectivedisco.service.NotificationServiceTest" \
+  --tests "com.effectivedisco.loadtest.LoadTestActionControllerTest"
+```
+
+short soak:
+
+```bash
+SOAK_FACTOR=1 SOAK_DURATION=10s WARMUP_DURATION=5s SAMPLE_INTERVAL_SECONDS=2 \
+  BASE_URL=http://localhost:18080 ./loadtest/run-bbs-soak.sh
+```
+
+결과:
+
+- targeted Gradle 테스트 통과
+- short soak 에서 새 metric (`jwtAuthCacheHits/Misses`) 과 새 bottleneck profile (`jwt.auth.resolve-user`, `jwt.auth.load-user.db`) 이 정상적으로 기록됐다
+- 같은 실행에서도 `duplicateKeyConflicts=0`, 관계 중복 row `0`, SQL mismatch `0`
+
+### 남은 과제
+
+- `jwt.auth.load-user.db` miss 자체는 가벼워졌지만, miss 시점의 wall time 대부분이 커넥션 대기이므로 다음 단계는 `pool 포화를 유발하는 나머지 경로`를 더 줄이는 것이다.
+- 특히 현재 short soak 기준으로는 `post.list averageWallTimeMs = 30.97` 가 여전히 가장 큰 profile 이고, pool timeout 은 전체 혼합 부하에서 계속 먼저 드러난다.
+- 다음 경계점 재측정과 장시간 soak 에서는 `jwtAuthCacheHits/Misses` 를 함께 보며 인증 경로가 더 이상 주병목이 아닌지 확인해야 한다.

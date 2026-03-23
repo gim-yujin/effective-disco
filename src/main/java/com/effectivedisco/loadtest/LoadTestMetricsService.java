@@ -24,6 +24,8 @@ public class LoadTestMetricsService {
     private final DataSource dataSource;
     private final AtomicLong duplicateKeyConflicts = new AtomicLong();
     private final AtomicLong dbPoolTimeouts = new AtomicLong();
+    private final AtomicLong jwtAuthCacheHits = new AtomicLong();
+    private final AtomicLong jwtAuthCacheMisses = new AtomicLong();
     private final AtomicInteger maxActiveConnections = new AtomicInteger();
     private final AtomicInteger maxIdleConnections = new AtomicInteger();
     private final AtomicInteger maxTotalConnections = new AtomicInteger();
@@ -75,9 +77,24 @@ public class LoadTestMetricsService {
                 .record(wallTimeNanos, sqlStatementCount, sqlExecutionNanos, transactionTimeNanos, transactionObserved);
     }
 
+    /**
+     * 문제 해결:
+     * JWT API 요청마다 DB로 사용자 인증 정보를 다시 읽으면 pool 포화 원인을 서비스 로직과 구분하기 어렵다.
+     * 로컬 캐시의 hit/miss를 별도 카운터로 남겨야 "인증 조회가 실제 병목인지"를 실행 결과로 판단할 수 있다.
+     */
+    public void recordJwtAuthCacheHit() {
+        jwtAuthCacheHits.incrementAndGet();
+    }
+
+    public void recordJwtAuthCacheMiss() {
+        jwtAuthCacheMisses.incrementAndGet();
+    }
+
     public synchronized LoadTestMetricsSnapshot reset() {
         duplicateKeyConflicts.set(0);
         dbPoolTimeouts.set(0);
+        jwtAuthCacheHits.set(0);
+        jwtAuthCacheMisses.set(0);
         maxActiveConnections.set(0);
         maxIdleConnections.set(0);
         maxTotalConnections.set(0);
@@ -97,6 +114,8 @@ public class LoadTestMetricsService {
         return new LoadTestMetricsSnapshot(
                 duplicateKeyConflicts.get(),
                 dbPoolTimeouts.get(),
+                jwtAuthCacheHits.get(),
+                jwtAuthCacheMisses.get(),
                 state.activeConnections(),
                 state.idleConnections(),
                 state.totalConnections(),

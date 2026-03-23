@@ -99,6 +99,9 @@
 - 병목 프로파일 기준 `comment.create averageSqlStatementCount = 4.95 -> 4.00`, `notification.store averageSqlStatementCount = 3.00 -> 2.00` 으로 줄었다.
 - `notification.store averageWallTimeMs = 4.23 -> 1.95` 로 낮아졌고, short soak에서도 `duplicateKeyConflicts=0`, `dbPoolTimeouts=0`, SQL mismatch `0` 이 유지됐다.
 - 이후 반복 ramp-up 재측정에서는 `1.0x = 5/5 PASS`, `1.25x = 3/5 PASS`, `1.5x = 3/3 FAIL` 로, write path 최적화만으로 전체 경계점이 올라가지는 않았다.
+- 2026-03-24 `JWT 인증 조회`를 `jwt.auth.resolve-user` / `jwt.auth.load-user.db` 로 분리 계측하고, 짧은 TTL 로컬 캐시를 적용했다.
+- short soak 기준 `jwtAuthCacheHits=3820`, `jwtAuthCacheMisses=62` 로 인증 요청 대부분은 캐시 hit 로 처리됐고, `jwt.auth.load-user.db averageWallTimeMs = 228.79`, `averageSqlExecutionTimeMs = 0.40` 으로 miss 비용의 대부분이 SQL 자체가 아니라 커넥션 획득 대기임을 확인했다.
+- 같은 실행에서도 `duplicateKeyConflicts=0`, 관계 중복 row `0`, SQL mismatch `0` 으로 정합성 불변식은 유지됐지만 `dbPoolTimeouts=435` 로 DB pool 포화 자체는 여전히 해소되지 않았다.
 - 상세 원인, 조치, 전후 수치는 [loadtest-optimization.md](loadtest-optimization.md) 에 기록한다.
 
 ## 4차 결과

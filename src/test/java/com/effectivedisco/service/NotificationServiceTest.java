@@ -7,6 +7,7 @@ import com.effectivedisco.domain.Post;
 import com.effectivedisco.domain.User;
 import com.effectivedisco.dto.response.NotificationResponse;
 import com.effectivedisco.event.NotificationRequestedEvent;
+import com.effectivedisco.loadtest.NoOpLoadTestStepProfiler;
 import com.effectivedisco.repository.NotificationRepository;
 import com.effectivedisco.repository.UserRepository;
 import org.junit.jupiter.api.BeforeEach;
@@ -17,6 +18,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.test.util.ReflectionTestUtils;
 
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
 
@@ -43,7 +45,8 @@ class NotificationServiceTest {
                 notificationRepository,
                 userRepository,
                 sseEmitterService,
-                eventPublisher
+                eventPublisher,
+                new NoOpLoadTestStepProfiler()
         );
     }
 
@@ -163,15 +166,17 @@ class NotificationServiceTest {
     void getAndMarkAllRead_returnsList_marksRead_resetsCounter_andPushesTrackedCountWithoutExtraRead() {
         User user = makeUser("alice");
         ReflectionTestUtils.setField(user, "unreadNotificationCount", 1L);
-        Notification notification = Notification.builder()
-                .recipient(user)
-                .type(NotificationType.LIKE)
-                .message("좋아요!")
-                .link("/posts/1")
-                .build();
+        NotificationResponse notification = new NotificationResponse(
+                1L,
+                NotificationType.LIKE,
+                "좋아요!",
+                "/posts/1",
+                false,
+                LocalDateTime.now()
+        );
 
         given(userRepository.findByUsernameForUpdate("alice")).willReturn(Optional.of(user));
-        given(notificationRepository.findByRecipientOrderByCreatedAtDesc(user)).willReturn(List.of(notification));
+        given(notificationRepository.findResponseByRecipientOrderByCreatedAtDesc(user)).willReturn(List.of(notification));
 
         List<NotificationResponse> result = notificationService.getAndMarkAllRead("alice");
 
@@ -185,20 +190,41 @@ class NotificationServiceTest {
     @Test
     void getAndMarkAllRead_whenUnreadAlreadyZero_skipsBulkUpdate() {
         User user = makeUser("alice");
-        Notification notification = Notification.builder()
-                .recipient(user)
-                .type(NotificationType.LIKE)
-                .message("이미 읽은 알림")
-                .link("/posts/1")
-                .build();
+        NotificationResponse notification = new NotificationResponse(
+                2L,
+                NotificationType.LIKE,
+                "이미 읽은 알림",
+                "/posts/1",
+                true,
+                LocalDateTime.now()
+        );
 
         given(userRepository.findByUsernameForUpdate("alice")).willReturn(Optional.of(user));
-        given(notificationRepository.findByRecipientOrderByCreatedAtDesc(user)).willReturn(List.of(notification));
+        given(notificationRepository.findResponseByRecipientOrderByCreatedAtDesc(user)).willReturn(List.of(notification));
 
         List<NotificationResponse> result = notificationService.getAndMarkAllRead("alice");
 
         assertThat(result).hasSize(1);
         verify(notificationRepository, never()).markAllAsRead(user);
+        verify(sseEmitterService).sendCount("alice", 0L);
+    }
+
+    @Test
+    void markAllAsReadForLoadTest_usesCountWithoutMaterializingFullList() {
+        User user = makeUser("alice");
+        ReflectionTestUtils.setField(user, "unreadNotificationCount", 2L);
+
+        given(userRepository.findByUsernameForUpdate("alice")).willReturn(Optional.of(user));
+        given(notificationRepository.countByRecipient(user)).willReturn(7L);
+
+        NotificationService.NotificationReadSummary summary =
+                notificationService.markAllAsReadForLoadTest("alice");
+
+        assertThat(summary.listedNotificationCount()).isEqualTo(7);
+        assertThat(summary.unreadCount()).isZero();
+        verify(notificationRepository).countByRecipient(user);
+        verify(notificationRepository).markAllAsRead(user);
+        verify(notificationRepository, never()).findByRecipientOrderByCreatedAtDesc(user);
         verify(sseEmitterService).sendCount("alice", 0L);
     }
 

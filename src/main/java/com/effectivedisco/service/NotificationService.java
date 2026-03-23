@@ -7,6 +7,7 @@ import com.effectivedisco.domain.Post;
 import com.effectivedisco.domain.User;
 import com.effectivedisco.dto.response.NotificationResponse;
 import com.effectivedisco.event.NotificationRequestedEvent;
+import com.effectivedisco.loadtest.LoadTestStepProfiler;
 import com.effectivedisco.repository.NotificationRepository;
 import com.effectivedisco.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
@@ -19,7 +20,6 @@ import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 import java.util.List;
-import java.util.stream.Collectors;
 
 @Service
 @RequiredArgsConstructor
@@ -29,6 +29,7 @@ public class NotificationService {
     private final UserRepository         userRepository;
     private final SseEmitterService      sseEmitterService;
     private final ApplicationEventPublisher eventPublisher;
+    private final LoadTestStepProfiler   loadTestStepProfiler;
 
     /**
      * 게시물에 댓글이 달렸을 때 게시물 작성자에게 알림을 요청한다.
@@ -131,21 +132,39 @@ public class NotificationService {
     @Transactional
     public List<NotificationResponse> getAndMarkAllRead(String username) {
         User user = findUserForUpdate(username);
-        List<NotificationResponse> list = notificationRepository
-                .findByRecipientOrderByCreatedAtDesc(user)
-                .stream()
-                .map(NotificationResponse::new)
-                .collect(Collectors.toList());
-
-        if (user.getUnreadNotificationCount() > 0) {
-            // 문제 해결:
-            // 이미 unread 가 0 인 사용자는 bulk UPDATE 를 다시 날릴 이유가 없다.
-            // 직렬화된 User 엔티티의 비정규화 카운터를 기준으로 필요한 경우에만 읽음 처리를 수행한다.
-            notificationRepository.markAllAsRead(user);
-            user.resetUnreadNotificationCount();
-        }
-        scheduleUnreadCountPushAfterCommit(username, user.getUnreadNotificationCount());
+        List<NotificationResponse> list = loadTestStepProfiler.profile(
+                "notification.read-all.page.fetch",
+                true,
+                () -> notificationRepository.findResponseByRecipientOrderByCreatedAtDesc(user)
+        );
+        loadTestStepProfiler.profile(
+                "notification.read-all.page.transition",
+                true,
+                () -> markAllUnreadNotificationsRead(user, username)
+        );
         return list;
+    }
+
+    /**
+     * 문제 해결:
+     * loadtest mixed scenario 는 "알림 목록 본문"이 아니라 "read-all 상태 전환" 비용을 보고 싶다.
+     * 내부 전용 경로에는 count + mark-read summary 메서드를 따로 두어
+     * full list materialize 비용이 pool 포화 분석을 흐리지 않게 만든다.
+     */
+    @Transactional
+    public NotificationReadSummary markAllAsReadForLoadTest(String username) {
+        User user = findUserForUpdate(username);
+        long listedNotificationCount = loadTestStepProfiler.profile(
+                "notification.read-all.summary.count",
+                true,
+                () -> notificationRepository.countByRecipient(user)
+        );
+        long unreadCount = loadTestStepProfiler.profile(
+                "notification.read-all.summary.transition",
+                true,
+                () -> markAllUnreadNotificationsRead(user, username)
+        );
+        return new NotificationReadSummary((int) listedNotificationCount, unreadCount);
     }
 
     /**
@@ -187,4 +206,18 @@ public class NotificationService {
         return userRepository.findByUsernameForUpdate(username)
                 .orElseThrow(() -> new UsernameNotFoundException("사용자를 찾을 수 없습니다: " + username));
     }
+
+    private long markAllUnreadNotificationsRead(User user, String username) {
+        if (user.getUnreadNotificationCount() > 0) {
+            // 문제 해결:
+            // 이미 unread 가 0 인 사용자는 bulk UPDATE 를 다시 날릴 이유가 없다.
+            // 직렬화된 User 엔티티의 비정규화 카운터를 기준으로 필요한 경우에만 읽음 처리를 수행한다.
+            notificationRepository.markAllAsRead(user);
+            user.resetUnreadNotificationCount();
+        }
+        scheduleUnreadCountPushAfterCommit(username, user.getUnreadNotificationCount());
+        return user.getUnreadNotificationCount();
+    }
+
+    public record NotificationReadSummary(int listedNotificationCount, long unreadCount) {}
 }

@@ -1,13 +1,11 @@
 package com.effectivedisco.loadtest;
 
-import com.effectivedisco.dto.response.NotificationResponse;
 import com.effectivedisco.service.BlockService;
 import com.effectivedisco.service.BookmarkService;
 import com.effectivedisco.service.FollowService;
 import com.effectivedisco.service.NotificationService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.mockito.Mockito;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.http.MediaType;
@@ -18,10 +16,6 @@ import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 import org.springframework.web.context.WebApplicationContext;
-
-import java.util.List;
-
-import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.BDDMockito.given;
 import static org.mockito.Mockito.verify;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -71,11 +65,8 @@ class LoadTestActionControllerTest {
 
     @Test
     void notificationReadEndpoint_withoutAuth_returnsUnreadCount() throws Exception {
-        given(notificationService.getAndMarkAllRead("reader")).willReturn(List.of(
-                Mockito.mock(NotificationResponse.class),
-                Mockito.mock(NotificationResponse.class)
-        ));
-        given(notificationService.getUnreadCount(eq("reader"))).willReturn(0L);
+        given(notificationService.markAllAsReadForLoadTest("reader"))
+                .willReturn(new NotificationService.NotificationReadSummary(2, 0L));
 
         mockMvc.perform(post("/internal/load-test/actions/notifications/read-all")
                         .contentType(MediaType.APPLICATION_JSON)
@@ -88,7 +79,6 @@ class LoadTestActionControllerTest {
                 .andExpect(jsonPath("$.listedNotificationCount").value(2))
                 .andExpect(jsonPath("$.unreadCount").value(0));
 
-        verify(notificationService).getAndMarkAllRead("reader");
-        verify(notificationService).getUnreadCount("reader");
+        verify(notificationService).markAllAsReadForLoadTest("reader");
     }
 }

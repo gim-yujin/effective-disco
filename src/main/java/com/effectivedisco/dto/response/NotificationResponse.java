@@ -29,12 +29,28 @@ public class NotificationResponse {
     @Schema(description = "알림 생성 시각")
     private final LocalDateTime createdAt;
 
+    public NotificationResponse(Long id,
+                                NotificationType type,
+                                String message,
+                                String link,
+                                boolean read,
+                                LocalDateTime createdAt) {
+        this.id = id;
+        this.type = type;
+        this.message = message;
+        this.link = link;
+        this.read = read;
+        this.createdAt = createdAt;
+    }
+
     public NotificationResponse(Notification n) {
-        this.id        = n.getId();
-        this.type      = n.getType();
-        this.message   = n.getMessage();
-        this.link      = n.getLink();
-        this.read      = n.isRead();
-        this.createdAt = n.getCreatedAt();
+        this(
+                n.getId(),
+                n.getType(),
+                n.getMessage(),
+                n.getLink(),
+                n.isRead(),
+                n.getCreatedAt()
+        );
     }
 }

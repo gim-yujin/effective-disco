@@ -9,11 +9,13 @@ import com.effectivedisco.domain.User;
 import com.effectivedisco.dto.request.PostRequest;
 import com.effectivedisco.dto.response.LikeResponse;
 import com.effectivedisco.dto.response.PostResponse;
+import com.effectivedisco.loadtest.LoadTestStepProfiler;
 import com.effectivedisco.repository.BoardRepository;
 import com.effectivedisco.repository.PostLikeRepository;
 import com.effectivedisco.repository.PostRepository;
 import com.effectivedisco.repository.TagRepository;
 import com.effectivedisco.repository.UserRepository;
+import jakarta.persistence.EntityManager;
 import lombok.RequiredArgsConstructor;
 import org.springframework.cache.annotation.CacheEvict;
 import org.springframework.cache.annotation.Cacheable;
@@ -26,7 +28,9 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.util.Arrays;
 import java.util.HashSet;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.stream.Collectors;
 
@@ -40,6 +44,8 @@ public class PostService {
     private final TagRepository       tagRepository;
     private final BoardRepository     boardRepository;
     private final NotificationService notificationService;
+    private final LoadTestStepProfiler loadTestStepProfiler;
+    private final EntityManager       entityManager;
 
     /**
      * 게시물 목록 조회.
@@ -170,33 +176,62 @@ public class PostService {
     @CacheEvict(value = "popularTags", allEntries = true)
     @Transactional
     public PostResponse createPost(PostRequest request, String username) {
-        User user = findUser(username);
-
-        // 게시판 지정 (없으면 null = 미분류)
-        Board board = resolveBoard(request.getBoardSlug());
+        UserRepository.PostCreateAuthorSnapshot authorSnapshot = loadTestStepProfiler.profile(
+                "post.create.resolve-author",
+                true,
+                () -> findPostCreateAuthorSnapshot(username)
+        );
+        BoardRepository.BoardSummary boardSummary = loadTestStepProfiler.profile(
+                "post.create.resolve-board",
+                true,
+                () -> resolveBoardSummary(request.getBoardSlug())
+        );
+        ResolvedTags resolvedTags = loadTestStepProfiler.profile(
+                "post.create.resolve-tags",
+                true,
+                () -> resolveTagsForWrite(request.getTagsInput())
+        );
+        // 문제 해결:
+        // createPost 는 작성자/게시판/태그를 각각 여러 번 조회하고, 저장 직후 응답 DTO에서 연관을 다시 따라가며
+        // 불필요한 SELECT fan-out 을 만들고 있었다. projection + batch tag lookup + explicit response data 로
+        // 쓰기 hot path 를 "입력 해석 / INSERT / join table 저장" 수준으로 고정해 pool 점유 시간을 줄인다.
+        User authorReference = entityManager.getReference(User.class, authorSnapshot.getId());
+        Board boardReference = boardSummary == null
+                ? null
+                : entityManager.getReference(Board.class, boardSummary.getId());
+        List<String> imageUrls = List.copyOf(request.getImageUrls());
 
         Post post = Post.builder()
                 .title(request.getTitle())
                 .content(request.getContent())
-                .author(user)
-                .board(board)
+                .author(authorReference)
+                .board(boardReference)
                 .build();
-
-        post.getTags().addAll(resolveTags(request.getTagsInput()));
+        post.getTags().addAll(resolvedTags.entities());
 
         // 초안 여부 설정 — true이면 비공개 저장, false(기본)이면 즉시 공개
         if (request.isDraft()) {
             post.saveDraft();
         }
 
-        // 다중 이미지 첨부 — PostImage 엔티티를 생성해 컬렉션에 추가
-        // CascadeType.ALL에 의해 Post와 함께 자동 저장된다
-        Post saved = postRepository.save(post);
-        List<String> imageUrls = request.getImageUrls();
+        // 다중 이미지 첨부 — PostImage 엔티티를 저장 전 컬렉션에 추가해
+        // Post save 한 번으로 함께 flush 되도록 묶는다.
         for (int i = 0; i < imageUrls.size(); i++) {
-            saved.addImage(new PostImage(saved, imageUrls.get(i), i));
+            post.addImage(new PostImage(post, imageUrls.get(i), i));
         }
-        return new PostResponse(saved, 0);
+        Post saved = loadTestStepProfiler.profile("post.create.persist", true, () -> postRepository.save(post));
+        return loadTestStepProfiler.profile(
+                "post.create.response",
+                true,
+                () -> new PostResponse(
+                        saved,
+                        authorSnapshot.getUsername(),
+                        resolvedTags.sortedNames(),
+                        boardSummary != null ? boardSummary.getName() : null,
+                        boardSummary != null ? boardSummary.getSlug() : null,
+                        imageUrls
+                )
+        );
     }
 
     /**
@@ -212,7 +247,7 @@ public class PostService {
         post.update(request.getTitle(), request.getContent());
 
         post.getTags().clear();
-        post.getTags().addAll(resolveTags(request.getTagsInput()));
+        post.getTags().addAll(resolveTagsForWrite(request.getTagsInput()).entities());
 
         // 새 이미지가 업로드된 경우 기존 이미지를 모두 교체
         // post.clearImages() → orphanRemoval로 기존 PostImage 행 자동 삭제
@@ -390,23 +425,54 @@ public class PostService {
      * 태그 이름 문자열(콤마 구분)을 Tag 엔티티 Set으로 변환한다.
      * DB에 없는 태그는 자동으로 생성한다.
      */
-    private Set<Tag> resolveTags(String tagsInput) {
-        if (tagsInput == null || tagsInput.isBlank()) return new HashSet<>();
-        return Arrays.stream(tagsInput.split(","))
-                .map(String::trim)
-                .filter(s -> !s.isEmpty())
-                .map(name -> tagRepository.findByName(name)
-                        .orElseGet(() -> tagRepository.save(new Tag(name))))
-                .collect(Collectors.toSet());
+    private ResolvedTags resolveTagsForWrite(String tagsInput) {
+        Set<String> tagNames = parseTagNames(tagsInput);
+        if (tagNames.isEmpty()) {
+            return new ResolvedTags(new HashSet<>(), List.of());
+        }
+
+        List<Tag> existingTags = tagRepository.findAllByNameIn(tagNames);
+        Map<String, Tag> existingByName = existingTags.stream()
+                .collect(Collectors.toMap(Tag::getName, tag -> tag));
+
+        List<Tag> missingTags = tagNames.stream()
+                .filter(name -> !existingByName.containsKey(name))
+                .map(Tag::new)
+                .toList();
+        List<Tag> savedMissingTags = missingTags.isEmpty() ? List.of() : tagRepository.saveAll(missingTags);
+
+        Set<Tag> resolvedTags = new LinkedHashSet<>(existingTags);
+        resolvedTags.addAll(savedMissingTags);
+
+        return new ResolvedTags(
+                resolvedTags,
+                tagNames.stream().sorted().toList()
+        );
     }
 
     /**
-     * 슬러그로 게시판을 조회한다.
-     * null 또는 빈 슬러그이면 null을 반환 (미분류 허용).
+     * 문제 해결:
+     * createPost/updatePost 는 태그 수만큼 findByName() 를 반복하면서 SQL fan-out 이 커졌다.
+     * 요청 태그 이름을 먼저 정규화하고 한 번의 IN 조회로 existing tag 를 가져오면
+     * 태그 해석 비용을 "태그 수 비례"가 아니라 "요청당 상수 + missing tag insert" 수준으로 줄일 수 있다.
      */
-    private Board resolveBoard(String boardSlug) {
-        if (boardSlug == null || boardSlug.isBlank()) return null;
-        return boardRepository.findBySlug(boardSlug)
+    private Set<String> parseTagNames(String tagsInput) {
+        if (tagsInput == null || tagsInput.isBlank()) {
+            return Set.of();
+        }
+
+        return Arrays.stream(tagsInput.split(","))
+                .map(String::trim)
+                .filter(s -> !s.isEmpty())
+                .collect(Collectors.toCollection(LinkedHashSet::new));
+    }
+
+    private BoardRepository.BoardSummary resolveBoardSummary(String boardSlug) {
+        if (boardSlug == null || boardSlug.isBlank()) {
+            return null;
+        }
+
+        return boardRepository.findSummaryBySlug(boardSlug)
                 .orElseThrow(() -> new IllegalArgumentException("존재하지 않는 게시판: " + boardSlug));
     }
 
@@ -417,6 +483,11 @@ public class PostService {
 
     private User findUser(String username) {
         return userRepository.findByUsername(username)
+                .orElseThrow(() -> new UsernameNotFoundException("사용자를 찾을 수 없습니다: " + username));
+    }
+
+    private UserRepository.PostCreateAuthorSnapshot findPostCreateAuthorSnapshot(String username) {
+        return userRepository.findPostCreateAuthorSnapshotByUsername(username)
                 .orElseThrow(() -> new UsernameNotFoundException("사용자를 찾을 수 없습니다: " + username));
     }
 
@@ -434,4 +505,6 @@ public class PostService {
             throw new AccessDeniedException("수정/삭제 권한이 없습니다");
         }
     }
+
+    private record ResolvedTags(Set<Tag> entities, List<String> sortedNames) {}
 }

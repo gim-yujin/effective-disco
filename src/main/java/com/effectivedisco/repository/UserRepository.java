@@ -18,6 +18,20 @@ public interface UserRepository extends JpaRepository<User, Long> {
         String getProfileImageUrl();
     }
 
+    interface PostCreateAuthorSnapshot {
+        Long getId();
+        String getUsername();
+    }
+
+    interface SecurityUserSnapshot {
+        String getUsername();
+        String getPassword();
+        String getRole();
+        boolean getSuspended();
+        java.time.LocalDateTime getSuspendedUntil();
+        String getSuspensionReason();
+    }
+
     Optional<User> findByUsername(String username);
 
     /**
@@ -46,6 +60,36 @@ public interface UserRepository extends JpaRepository<User, Long> {
             WHERE u.username = :username
             """)
     Optional<CommentAuthorSnapshot> findCommentAuthorSnapshotByUsername(@Param("username") String username);
+
+    /**
+     * 문제 해결:
+     * createPost hot path 는 사용자 전체 엔티티를 읽지 않아도 user id / username 만 있으면 충분하다.
+     * 게시물 작성 응답용 최소 컬럼만 projection 으로 읽어 write path SELECT fan-out 을 줄인다.
+     */
+    @Query("""
+            SELECT u.id AS id,
+                   u.username AS username
+            FROM User u
+            WHERE u.username = :username
+            """)
+    Optional<PostCreateAuthorSnapshot> findPostCreateAuthorSnapshotByUsername(@Param("username") String username);
+
+    /**
+     * 문제 해결:
+     * JWT 인증 miss 와 로그인 인증은 전체 User 엔티티가 아니라 username/password/role/정지 정보만 있으면 된다.
+     * 인증 hot path 를 최소 projection 으로 읽어 miss 시에도 pool 체류 시간을 줄인다.
+     */
+    @Query("""
+            SELECT u.username AS username,
+                   u.password AS password,
+                   u.role AS role,
+                   u.suspended AS suspended,
+                   u.suspendedUntil AS suspendedUntil,
+                   u.suspensionReason AS suspensionReason
+            FROM User u
+            WHERE u.username = :username
+            """)
+    Optional<SecurityUserSnapshot> findSecuritySnapshotByUsername(@Param("username") String username);
 
     @Query("SELECT u.unreadNotificationCount FROM User u WHERE u.username = :username")
     Optional<Long> findUnreadNotificationCountByUsername(@Param("username") String username);

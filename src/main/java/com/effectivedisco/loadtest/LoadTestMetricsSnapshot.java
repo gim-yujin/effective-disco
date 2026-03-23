@@ -10,6 +10,8 @@ import java.util.List;
 public record LoadTestMetricsSnapshot(
         long duplicateKeyConflicts,
         long dbPoolTimeouts,
+        long jwtAuthCacheHits,
+        long jwtAuthCacheMisses,
         int currentActiveConnections,
         int currentIdleConnections,
         int currentTotalConnections,
