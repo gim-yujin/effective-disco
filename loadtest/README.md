@@ -26,6 +26,12 @@ SPRING_PROFILES_ACTIVE=loadtest ./gradlew bootRun
 ./loadtest/run-bbs-ramp-up.sh
 ```
 
+sub-1.0 안정 구간 반복 탐색:
+
+```bash
+./loadtest/run-bbs-sub-stability.sh
+```
+
 장시간 soak + SQL 정합성 검증:
 
 ```bash
@@ -54,6 +60,8 @@ SPRING_PROFILES_ACTIVE=loadtest ./gradlew bootRun
 - `loadtest/results/consistency-stress-*-runNN-sql.tsv`: 실행별 SQL 정합성 스냅샷
 - `loadtest/results/ramp-up-*.md`: 배수별 한계점 탐색 요약 리포트
 - `loadtest/results/ramp-up-*.tsv`: 배수별 원본 수치와 중단 이유
+- `loadtest/results/sub-stability-*.md`: `0.75 ~ 1.0` 구간 반복 PASS/LIMIT/FAIL 집계
+- `loadtest/results/sub-stability-*.tsv`: sub-1.0 반복 원본 수치
 - `loadtest/results/soak-*.md`: 장시간 soak 최종 요약
 - `loadtest/results/soak-*-metrics.jsonl`: soak 중 주기적 서버 메트릭 타임라인
 
@@ -63,6 +71,8 @@ SPRING_PROFILES_ACTIVE=loadtest ./gradlew bootRun
 - `duplicateKeyConflicts`: 유니크 키 충돌이 실제로 몇 번 났는지
 - `dbPoolTimeouts`: 커넥션 풀 획득 timeout 감지 횟수
 - `maxThreadsAwaitingConnection`: 부하 중 DB pool 대기 정점
+- `postgresSnapshot.waitingSessions`, `lockWaitingSessions`: PostgreSQL 내부 wait event 관측치
+- `postgresSnapshot.slowActiveQueries`: 현재 장기 실행 query 와 wait event 스냅샷
 - SQL 정합성: `Post.likeCount`, `Post.commentCount`, `User.unreadNotificationCount` 와 실제 row 수 일치 여부
 - 관계 중복: `post_likes`, `bookmarks`, `follows`, `blocks` 의 동일 키 중복 row 여부
 - 병목 프로파일: `comment.create`, `notification.store`, `post.list` 의 벽시계 시간, SQL 실행 시간, SQL 문 수, 트랜잭션 길이

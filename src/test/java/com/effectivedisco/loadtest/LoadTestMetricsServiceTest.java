@@ -4,6 +4,8 @@ import com.zaxxer.hikari.HikariDataSource;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.dao.DataAccessResourceFailureException;
 import org.springframework.dao.DataIntegrityViolationException;
 
@@ -11,8 +13,13 @@ import java.sql.SQLException;
 import java.sql.SQLTransientConnectionException;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.BDDMockito.given;
 
+@org.junit.jupiter.api.extension.ExtendWith(MockitoExtension.class)
 class LoadTestMetricsServiceTest {
+
+    @Mock
+    PostgresLoadTestInspector postgresLoadTestInspector;
 
     HikariDataSource dataSource;
     LoadTestMetricsService loadTestMetricsService;
@@ -27,7 +34,10 @@ class LoadTestMetricsServiceTest {
         dataSource.setMaximumPoolSize(2);
         dataSource.setMinimumIdle(1);
 
-        loadTestMetricsService = new LoadTestMetricsService(dataSource);
+        given(postgresLoadTestInspector.snapshot())
+                .willReturn(PostgresLoadTestSnapshot.unavailable("not-postgresql", "H2", "effective-disco-loadtest"));
+
+        loadTestMetricsService = new LoadTestMetricsService(dataSource, postgresLoadTestInspector);
     }
 
     @AfterEach
@@ -99,6 +109,35 @@ class LoadTestMetricsServiceTest {
                 .as("문제 해결 검증: JWT 인증 캐시 hit/miss 는 인증 조회 병목을 분리해 볼 수 있게 누적돼야 한다")
                 .isEqualTo(2);
         assertThat(snapshot.jwtAuthCacheMisses()).isEqualTo(1);
+    }
+
+    @Test
+    void snapshot_includesPostgresInspectorOutput() {
+        given(postgresLoadTestInspector.snapshot()).willReturn(
+                new PostgresLoadTestSnapshot(
+                        true,
+                        "ok",
+                        "PostgreSQL",
+                        "effective-disco-loadtest",
+                        3,
+                        2,
+                        1,
+                        1,
+                        2,
+                        1400L,
+                        1600L,
+                        java.util.List.of(new PostgresWaitEventSnapshot("Lock", "transactionid", 2)),
+                        java.util.List.of(new PostgresActiveQuerySnapshot(1600L, "active", "Lock", "transactionid", "select 1"))
+                )
+        );
+
+        LoadTestMetricsSnapshot snapshot = loadTestMetricsService.snapshot();
+
+        assertThat(snapshot.postgresSnapshot().available())
+                .as("문제 해결 검증: loadtest 스냅샷은 PostgreSQL wait/slow-query 정보까지 함께 포함해야 한다")
+                .isTrue();
+        assertThat(snapshot.postgresSnapshot().waitingSessions()).isEqualTo(2);
+        assertThat(snapshot.postgresSnapshot().slowActiveQueries()).hasSize(1);
     }
 
     @Test

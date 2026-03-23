@@ -2,6 +2,8 @@ package com.effectivedisco.security;
 
 import com.effectivedisco.loadtest.LoadTestMetricsService;
 import com.effectivedisco.loadtest.NoOpLoadTestStepProfiler;
+import com.effectivedisco.loadtest.PostgresLoadTestInspector;
+import com.effectivedisco.loadtest.PostgresLoadTestSnapshot;
 import com.zaxxer.hikari.HikariDataSource;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -26,6 +28,7 @@ import static org.mockito.Mockito.verify;
 class CachedJwtUserDetailsServiceTest {
 
     @Mock CustomUserDetailsService delegate;
+    @Mock PostgresLoadTestInspector postgresLoadTestInspector;
 
     HikariDataSource dataSource;
     LoadTestMetricsService loadTestMetricsService;
@@ -42,7 +45,10 @@ class CachedJwtUserDetailsServiceTest {
         dataSource.setMaximumPoolSize(2);
         dataSource.setMinimumIdle(1);
 
-        loadTestMetricsService = new LoadTestMetricsService(dataSource);
+        given(postgresLoadTestInspector.snapshot())
+                .willReturn(PostgresLoadTestSnapshot.unavailable("not-postgresql", "H2", "effective-disco-loadtest"));
+
+        loadTestMetricsService = new LoadTestMetricsService(dataSource, postgresLoadTestInspector);
         nowNanos = new AtomicLong(1_000_000L);
         cachedJwtUserDetailsService = new CachedJwtUserDetailsService(
                 delegate,

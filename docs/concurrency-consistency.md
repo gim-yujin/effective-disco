@@ -105,6 +105,10 @@
 - 2026-03-24 `20 / 24 / 28 / 32` Hikari pool sweep 결과, 현재 로컬 workload 기준 중앙값은 `28` 이 가장 좋았다.
 - `20` 은 `dbPoolTimeouts` 와 오류 응답이 재현됐고, `24/28/32` 는 모두 timeout 없이 버텼지만 `p95/p99` 는 `28` 이 가장 낮았다.
 - 이에 따라 loadtest 프로필 기본 Hikari `maximum-pool-size` 를 `28` 로 조정했다.
+- 2026-03-24 `sub-1.0` 안정 구간 탐색용 [run-bbs-sub-stability.sh](/home/admin0/effective-disco/loadtest/run-bbs-sub-stability.sh) 를 추가했다.
+- 같은 날짜에 `postgresSnapshot` 계측을 넣어 PostgreSQL `wait_event`, 장기 실행 query, longest query/transaction 시간을 `server-metrics` 와 함께 남기도록 확장했다.
+- 짧은 sanity 기준 [sub-stability-20260324-060133.md](/home/admin0/effective-disco/loadtest/results/sub-stability-20260324-060133.md) 에서 `0.75`, `0.9` 는 `1/1 PASS` 였고, `postgresSnapshot` 은 idle `ClientRead` 를 과대계상하지 않도록 보정된 상태로 `waitingSessions=0`, `slowActiveQueries=[]` 를 반환했다.
+- 이 결과는 "정식 안정 구간 확정" 이 아니라, 반복 탐색 도구와 PostgreSQL 계측이 실제 loadtest 실행에 붙는지 확인한 준비 단계다.
 - 상세 원인, 조치, 전후 수치는 [loadtest-optimization.md](loadtest-optimization.md) 에 기록한다.
 
 ## 4차 결과

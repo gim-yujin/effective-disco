@@ -1,6 +1,11 @@
 spring:
   datasource:
     hikari:
+      data-source-properties:
+        # 문제 해결:
+        # PostgreSQL wait/slow-query 계측은 loadtest 인스턴스가 만든 커넥션만 골라봐야 의미가 있다.
+        # application_name 을 고정해 pg_stat_activity 에서 기본 앱과 실험용 앱을 구분한다.
+        ApplicationName: ${APP_LOAD_TEST_PG_APPLICATION_NAME:effective-disco-loadtest}
       # 문제 해결:
       # 2026-03-24 pool sweep(20/24/28/32) 기준 현재 로컬 부하 시나리오에서는 28이
       # timeout 없이 p95/p99가 가장 낮았다. loadtest 기본값을 28로 올려
@@ -28,3 +33,9 @@ app:
     # loadtest 프로필에서만 켜서 k6 계측에 필요한 최소 관측면만 노출한다.
     enabled: true
     sampling-interval-ms: ${APP_LOAD_TEST_SAMPLING_INTERVAL_MS:250}
+    postgres:
+      application-name: ${APP_LOAD_TEST_PG_APPLICATION_NAME:effective-disco-loadtest}
+      long-running-transaction-threshold-ms: ${APP_LOAD_TEST_PG_LONG_TRANSACTION_THRESHOLD_MS:500}
+      long-running-query-threshold-ms: ${APP_LOAD_TEST_PG_LONG_QUERY_THRESHOLD_MS:500}
+      wait-event-limit: ${APP_LOAD_TEST_PG_WAIT_EVENT_LIMIT:5}
+      slow-query-limit: ${APP_LOAD_TEST_PG_SLOW_QUERY_LIMIT:5}

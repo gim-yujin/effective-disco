@@ -22,6 +22,7 @@ public class LoadTestMetricsService {
     private static final String DUPLICATE_KEY_SQL_STATE = "23505";
 
     private final DataSource dataSource;
+    private final PostgresLoadTestInspector postgresLoadTestInspector;
     private final AtomicLong duplicateKeyConflicts = new AtomicLong();
     private final AtomicLong dbPoolTimeouts = new AtomicLong();
     private final AtomicLong jwtAuthCacheHits = new AtomicLong();
@@ -32,8 +33,9 @@ public class LoadTestMetricsService {
     private final AtomicInteger maxThreadsAwaitingConnection = new AtomicInteger();
     private final Map<String, BottleneckAccumulator> bottleneckProfiles = new ConcurrentHashMap<>();
 
-    public LoadTestMetricsService(DataSource dataSource) {
+    public LoadTestMetricsService(DataSource dataSource, PostgresLoadTestInspector postgresLoadTestInspector) {
         this.dataSource = dataSource;
+        this.postgresLoadTestInspector = postgresLoadTestInspector;
     }
 
     /**
@@ -124,7 +126,8 @@ public class LoadTestMetricsService {
                 maxIdleConnections.get(),
                 maxTotalConnections.get(),
                 maxThreadsAwaitingConnection.get(),
-                snapshotBottleneckProfiles()
+                snapshotBottleneckProfiles(),
+                postgresLoadTestInspector.snapshot()
         );
     }
 

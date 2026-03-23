@@ -20,6 +20,7 @@ public record LoadTestMetricsSnapshot(
         int maxIdleConnections,
         int maxTotalConnections,
         int maxThreadsAwaitingConnection,
-        List<LoadTestBottleneckProfileSnapshot> bottleneckProfiles
+        List<LoadTestBottleneckProfileSnapshot> bottleneckProfiles,
+        PostgresLoadTestSnapshot postgresSnapshot
 ) {
 }

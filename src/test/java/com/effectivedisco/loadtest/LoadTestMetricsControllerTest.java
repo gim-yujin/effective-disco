@@ -42,6 +42,8 @@ class LoadTestMetricsControllerTest {
                 .andExpect(jsonPath("$.jwtAuthCacheHits").value(0))
                 .andExpect(jsonPath("$.jwtAuthCacheMisses").value(0))
                 .andExpect(jsonPath("$.bottleneckProfiles").isArray())
+                .andExpect(jsonPath("$.postgresSnapshot.available").exists())
+                .andExpect(jsonPath("$.postgresSnapshot.slowActiveQueries").isArray())
                 .andExpect(jsonPath("$.currentActiveConnections").exists())
                 .andExpect(jsonPath("$.maxThreadsAwaitingConnection").exists());
     }
@@ -54,6 +56,7 @@ class LoadTestMetricsControllerTest {
                 .andExpect(jsonPath("$.dbPoolTimeouts").value(0))
                 .andExpect(jsonPath("$.jwtAuthCacheHits").value(0))
                 .andExpect(jsonPath("$.jwtAuthCacheMisses").value(0))
-                .andExpect(jsonPath("$.bottleneckProfiles").isArray());
+                .andExpect(jsonPath("$.bottleneckProfiles").isArray())
+                .andExpect(jsonPath("$.postgresSnapshot.available").exists());
     }
 }

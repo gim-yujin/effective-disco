@@ -408,3 +408,74 @@ SOAK_FACTOR=1 SOAK_DURATION=10s WARMUP_DURATION=5s SAMPLE_INTERVAL_SECONDS=2 \
 - 이 값은 현재 로컬 장비 + 현재 workload 기준값이다.
 - 장시간 soak 와 더 높은 ramp-up 에서도 `28` 이 최선인지 다시 확인해야 한다.
 - 대용량 데이터셋으로 넘어가면 같은 sweep 를 다시 돌려야 한다.
+
+## 2026-03-24 `sub-1.0` 안정 구간 탐색 + PostgreSQL wait/slow-query 계측 추가
+
+상태: 완료
+
+### 배경
+
+- `pool=28` 재측정 이후에도 `1.0x` 가 `4/5 PASS`, `1.25x` 가 `0/4 PASS` 였다.
+- 따라서 다음 단계는 "1.0 미만 어디까지가 실제 안정 구간인가"를 반복 실험으로 좁히는 것이었다.
+- 동시에 기존 `server-metrics` 는 `maxActiveConnections`, `maxThreadsAwaitingConnection`, `dbPoolTimeouts` 까지만 보여줘서, "왜 커넥션이 오래 점유되는지"를 PostgreSQL 내부에서 바로 읽기 어려웠다.
+
+### 적용한 변경
+
+- [run-bbs-sub-stability.sh](/home/admin0/effective-disco/loadtest/run-bbs-sub-stability.sh) 를 추가했다.
+- 이 스크립트는 `run-bbs-ramp-up.sh` 를 반복 실행하고, 각 run 의 raw `ramp-up-*.tsv` 를 factor 기준으로 재집계해 `PASS/LIMIT/FAIL` 분포와 `highest stable factor` 를 별도 리포트로 남긴다.
+- `LoadTestMetricsSnapshot` 에 `postgresSnapshot` 을 추가했다.
+- `PostgresLoadTestInspector` 는 `pg_stat_activity` 를 조회해 아래 항목을 `server-metrics` 와 함께 저장한다.
+  - `waitingSessions`
+  - `lockWaitingSessions`
+  - `longRunningTransactions`
+  - `longRunningQueries`
+  - `longestTransactionMs`
+  - `longestQueryMs`
+  - `topWaitEvents`
+  - `slowActiveQueries`
+- `application-loadtest.yml` 에 PostgreSQL `ApplicationName` 을 고정해 loadtest 인스턴스가 만든 세션만 `pg_stat_activity` 에서 구분할 수 있게 했다.
+- idle 세션의 `ClientRead` 는 실제 병목이 아니므로, wait 계측은 `state <> 'idle'` 또는 `state = 'active'` 조건으로 필터링했다.
+
+### 검증
+
+targeted Gradle 테스트:
+
+```bash
+GRADLE_USER_HOME=/tmp/gradle-home ./gradlew test --no-daemon \
+  --tests "com.effectivedisco.loadtest.LoadTestMetricsServiceTest" \
+  --tests "com.effectivedisco.loadtest.LoadTestMetricsControllerTest" \
+  --tests "com.effectivedisco.loadtest.PostgresLoadTestInspectorTest" \
+  --tests "com.effectivedisco.security.CachedJwtUserDetailsServiceTest"
+```
+
+짧은 실제 sanity:
+
+```bash
+RUNS=1 STAGE_FACTORS=0.75,0.9 STOP_ON_HTTP_P99_MS=1200 \
+  BROWSE_DURATION=5s HOT_POST_DURATION=5s SEARCH_DURATION=5s \
+  WRITE_STAGE_ONE_DURATION=5s WRITE_STAGE_TWO_DURATION=5s \
+  LIKE_ADD_DURATION=5s LIKE_REMOVE_DURATION=5s \
+  BOOKMARK_MIXED_DURATION=5s FOLLOW_MIXED_DURATION=5s \
+  BLOCK_MIXED_DURATION=5s NOTIFICATION_MIXED_DURATION=5s \
+  BASE_URL=http://localhost:18081 ./loadtest/run-bbs-sub-stability.sh
+```
+
+결과:
+
+- targeted Gradle 테스트 통과
+- `curl -sf http://localhost:18081/internal/load-test/metrics` 기준 `postgresSnapshot.waitingSessions=0`, `lockWaitingSessions=0`, `slowActiveQueries=[]`
+- [sub-stability-20260324-060133.md](/home/admin0/effective-disco/loadtest/results/sub-stability-20260324-060133.md) 기준 `0.75`, `0.9` 는 모두 `PASS`
+- 같은 짧은 sanity 최종 `server-metrics` 에서 `dbPoolTimeouts=0`, `duplicateKeyConflicts=0`, `jwtAuthCacheHits=4203`, `jwtAuthCacheMisses=45`
+
+### 해석
+
+- 이번 변경은 경계점을 "올린" 최적화가 아니라, 다음 실험을 더 정확히 하기 위한 관측면 확장이다.
+- `sub-1.0` 래퍼가 생겨서 이제 `0.75 / 0.85 / 0.9 / 0.95 / 1.0` 구간을 반복 실행하고, factor별 재현성 있는 안정 구간을 바로 집계할 수 있다.
+- `postgresSnapshot` 으로는 이제 pool 포화가 생겼을 때 PostgreSQL 내부에서 실제 lock wait 인지, 장기 query 인지, 단순 active session 증가인지 같은 실행 기준으로 같이 볼 수 있다.
+- 짧은 sanity 에서 `0.75`, `0.9` 가 모두 `PASS` 였지만, 이는 `RUNS=1` 확인이므로 아직 안정 구간 결론으로 쓰면 안 된다.
+
+### 남은 과제
+
+- `RUNS=5` 이상으로 `0.75 / 0.85 / 0.9 / 0.95 / 1.0` 반복 탐색을 돌려 실제 `highest stable factor` 를 확정해야 한다.
+- 확정된 factor 로 `30분 -> 1시간 -> 2시간` soak 를 재개해야 한다.
+- PostgreSQL wait/slow-query 스냅샷에서 의미 있는 `Lock`, `LWLock`, 장기 active query 가 관측되면 그 경로를 다음 최적화 대상으로 삼아야 한다.
