@@ -1,5 +1,7 @@
 # Effective-Disco BBS
 
+[![CI](https://github.com/gim-yujin/effective-disco/actions/workflows/ci.yml/badge.svg)](https://github.com/gim-yujin/effective-disco/actions/workflows/ci.yml)
+
 Java 21 + Spring Boot 4로 구현한 게시판(BBS) 웹 애플리케이션.
 레트로 터미널 스타일 UI, REST API(JWT) + 웹 UI(세션) 이중 인증 구조.
 
