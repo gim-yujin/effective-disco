@@ -11,9 +11,16 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 
+/**
+ * 문제 해결:
+ * 게시판 목록/검색은 `board_id + draft` 조건 뒤에 최신순(`created_at desc`) 정렬을 반복한다.
+ * 기존 인덱스는 board slice 까지만 줄였고 정렬 비용은 남아 있었으므로,
+ * `board_id, draft, created_at desc` 복합 인덱스를 추가해 최신 목록 read pressure를 낮춘다.
+ */
 @Entity
 @Table(name = "posts", indexes = {
         @Index(name = "idx_post_board_draft", columnList = "board_id, draft"),
+        @Index(name = "idx_post_board_draft_created_at_desc", columnList = "board_id, draft, created_at DESC"),
         @Index(name = "idx_post_user", columnList = "user_id")
 })
 @Getter
@@ -79,10 +86,19 @@ public class Post {
     @JoinColumn(name = "board_id")
     private Board board;
 
+    /**
+     * 문제 해결:
+     * 태그 기반 목록/카운트는 `tag -> post` 방향 탐색이 핵심인데,
+     * 기존 PK `(post_id, tag_id)` 만으로는 `tag_id` 선행 탐색이 비효율적이었다.
+     * `tag_id, post_id` 인덱스를 추가해 post_tags full scan 성격을 줄인다.
+     */
     @ManyToMany(fetch = FetchType.LAZY)
     @JoinTable(name = "post_tags",
                joinColumns = @JoinColumn(name = "post_id"),
-               inverseJoinColumns = @JoinColumn(name = "tag_id"))
+               inverseJoinColumns = @JoinColumn(name = "tag_id"),
+               indexes = {
+                   @Index(name = "idx_post_tags_tag_post", columnList = "tag_id, post_id")
+               })
     private Set<Tag> tags = new HashSet<>();
 
     /**
