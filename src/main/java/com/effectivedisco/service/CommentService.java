@@ -40,6 +40,7 @@ public class CommentService {
                 .author(user)
                 .build();
         CommentResponse response = new CommentResponse(commentRepository.save(comment));
+        postRepository.incrementCommentCount(postId);
         // 게시물 작성자에게 댓글 알림 (본인 댓글은 제외)
         notificationService.notifyComment(post, username);
         return response;
@@ -64,6 +65,7 @@ public class CommentService {
                 .parent(parent)
                 .build();
         CommentResponse response = new CommentResponse(commentRepository.save(reply));
+        postRepository.incrementCommentCount(postId);
         // 부모 댓글 작성자에게 대댓글 알림 (본인 댓글은 제외)
         notificationService.notifyReply(parent, username);
         return response;
@@ -81,7 +83,12 @@ public class CommentService {
     public void deleteComment(Long postId, Long commentId, String username) {
         Comment comment = findComment(commentId, postId);
         checkOwnership(comment.getAuthor().getUsername(), username);
+        // 댓글 + 대댓글 수만큼 카운트 차감
+        int count = 1 + comment.getReplies().size();
         commentRepository.delete(comment);
+        for (int i = 0; i < count; i++) {
+            postRepository.decrementCommentCount(postId);
+        }
     }
 
     /**
@@ -106,7 +113,12 @@ public class CommentService {
     public void adminDeleteComment(Long commentId) {
         Comment comment = commentRepository.findById(commentId)
                 .orElseThrow(() -> new IllegalArgumentException("Comment not found: " + commentId));
+        Long postId = comment.getPost().getId();
+        int count = 1 + comment.getReplies().size();
         commentRepository.delete(comment);
+        for (int i = 0; i < count; i++) {
+            postRepository.decrementCommentCount(postId);
+        }
     }
 
     private Comment findComment(Long commentId, Long postId) {

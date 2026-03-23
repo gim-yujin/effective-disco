@@ -6,7 +6,6 @@ import com.effectivedisco.domain.User;
 import com.effectivedisco.dto.response.PostResponse;
 import com.effectivedisco.dto.response.UserSummaryResponse;
 import com.effectivedisco.repository.FollowRepository;
-import com.effectivedisco.repository.PostLikeRepository;
 import com.effectivedisco.repository.PostRepository;
 import com.effectivedisco.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
@@ -35,7 +34,6 @@ public class FollowService {
     private final FollowRepository   followRepository;
     private final UserRepository     userRepository;
     private final PostRepository     postRepository;
-    private final PostLikeRepository postLikeRepository;
 
     /**
      * 팔로우를 토글한다.
@@ -140,7 +138,7 @@ public class FollowService {
 
         return postRepository
                 .findByAuthorInOrderByCreatedAtDesc(following, PageRequest.of(page, size))
-                .map(post -> new PostResponse(post, postLikeRepository.countByPost(post)));
+                .map(PostResponse::new);
     }
 
     private User findUser(String username) {

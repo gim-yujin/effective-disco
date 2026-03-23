@@ -6,6 +6,8 @@ import com.effectivedisco.dto.response.BoardResponse;
 import com.effectivedisco.repository.BoardRepository;
 import com.effectivedisco.repository.PostRepository;
 import lombok.RequiredArgsConstructor;
+import org.springframework.cache.annotation.CacheEvict;
+import org.springframework.cache.annotation.Cacheable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -27,6 +29,7 @@ public class BoardService {
      * 전체 게시판 목록을 이름 오름차순으로 반환한다.
      * 각 게시판의 게시물 수도 함께 제공한다 (홈 화면 표시용).
      */
+    @Cacheable("boards")
     public List<BoardResponse> getAllBoards() {
         return boardRepository.findAllByOrderByNameAsc().stream()
                 .map(board -> new BoardResponse(board, postRepository.countByBoardAndDraftFalse(board)))
@@ -46,6 +49,7 @@ public class BoardService {
      * 새 게시판을 생성한다.
      * 슬러그 중복 시 IllegalArgumentException을 던진다.
      */
+    @CacheEvict(value = "boards", allEntries = true)
     @Transactional
     public BoardResponse createBoard(BoardCreateRequest request) {
         if (boardRepository.existsBySlug(request.getSlug())) {
@@ -63,6 +67,7 @@ public class BoardService {
      * 게시판 정보를 수정한다 (이름·설명만 변경 가능, 슬러그는 변경 불가).
      * 슬러그는 URL 경로로 사용되므로 변경하면 외부 링크가 깨진다.
      */
+    @CacheEvict(value = "boards", allEntries = true)
     @Transactional
     public BoardResponse updateBoard(String slug, BoardCreateRequest request) {
         Board board = boardRepository.findBySlug(slug)
@@ -75,6 +80,7 @@ public class BoardService {
      * 게시판을 삭제한다.
      * 해당 게시판에 속한 게시물은 미분류(board = null)로 전환되어 보존된다.
      */
+    @CacheEvict(value = "boards", allEntries = true)
     @Transactional
     public void deleteBoard(String slug) {
         Board board = boardRepository.findBySlug(slug)

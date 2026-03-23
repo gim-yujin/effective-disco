@@ -5,7 +5,6 @@ import com.effectivedisco.domain.Post;
 import com.effectivedisco.domain.User;
 import com.effectivedisco.dto.response.PostResponse;
 import com.effectivedisco.repository.BookmarkRepository;
-import com.effectivedisco.repository.PostLikeRepository;
 import com.effectivedisco.repository.PostRepository;
 import com.effectivedisco.repository.UserRepository;
 import org.junit.jupiter.api.Test;
@@ -30,7 +29,6 @@ class BookmarkServiceTest {
 
     @Mock BookmarkRepository bookmarkRepository;
     @Mock PostRepository     postRepository;
-    @Mock PostLikeRepository postLikeRepository;
     @Mock UserRepository     userRepository;
 
     @InjectMocks BookmarkService bookmarkService;
@@ -109,13 +107,12 @@ class BookmarkServiceTest {
         Bookmark bookmark = new Bookmark(user, post);
         given(userRepository.findByUsername("alice")).willReturn(Optional.of(user));
         given(bookmarkRepository.findByUserOrderByCreatedAtDesc(user)).willReturn(List.of(bookmark));
-        given(postLikeRepository.countByPost(post)).willReturn(3L);
 
         List<PostResponse> result = bookmarkService.getBookmarks("alice");
 
         assertThat(result).hasSize(1);
         assertThat(result.get(0).getTitle()).isEqualTo("Post 1");
-        assertThat(result.get(0).getLikeCount()).isEqualTo(3L);
+        assertThat(result.get(0).getLikeCount()).isEqualTo(0L);
     }
 
     // ── helpers ───────────────────────────────────────────────

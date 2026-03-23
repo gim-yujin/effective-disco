@@ -12,7 +12,10 @@ import java.util.List;
 import java.util.Set;
 
 @Entity
-@Table(name = "posts")
+@Table(name = "posts", indexes = {
+        @Index(name = "idx_post_board_draft", columnList = "board_id, draft"),
+        @Index(name = "idx_post_user", columnList = "user_id")
+})
 @Getter
 @NoArgsConstructor
 public class Post {
@@ -39,8 +42,17 @@ public class Post {
     @OneToMany(mappedBy = "post", cascade = CascadeType.ALL, orphanRemoval = true)
     private List<Comment> comments = new ArrayList<>();
 
+    @Version
+    private Long version;
+
     @Column(nullable = false, columnDefinition = "integer default 0")
     private int viewCount = 0;
+
+    @Column(nullable = false, columnDefinition = "integer default 0")
+    private int likeCount = 0;
+
+    @Column(nullable = false, columnDefinition = "integer default 0")
+    private int commentCount = 0;
 
     /** 관리자가 게시판 상단에 고정한 공지 게시물 여부 */
     @Column(nullable = false, columnDefinition = "boolean default false")

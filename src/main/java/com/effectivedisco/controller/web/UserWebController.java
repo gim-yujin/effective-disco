@@ -11,6 +11,7 @@ import com.effectivedisco.service.UserService;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpSession;
 import lombok.RequiredArgsConstructor;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.stereotype.Controller;
@@ -75,7 +76,11 @@ public class UserWebController {
     @PostMapping("/users/{username}/follow")
     public String toggleFollow(@PathVariable String username,
                                @AuthenticationPrincipal UserDetails userDetails) {
-        followService.toggle(userDetails.getUsername(), username);
+        try {
+            followService.toggle(userDetails.getUsername(), username);
+        } catch (DataIntegrityViolationException ignored) {
+            // 동시 요청으로 UNIQUE 제약 위반 — 무시하고 리다이렉트
+        }
         return "redirect:/users/" + username;
     }
 
@@ -86,7 +91,11 @@ public class UserWebController {
     @PostMapping("/users/{username}/block")
     public String toggleBlock(@PathVariable String username,
                               @AuthenticationPrincipal UserDetails userDetails) {
-        blockService.toggle(userDetails.getUsername(), username);
+        try {
+            blockService.toggle(userDetails.getUsername(), username);
+        } catch (DataIntegrityViolationException ignored) {
+            // 동시 요청으로 UNIQUE 제약 위반 — 무시하고 리다이렉트
+        }
         return "redirect:/users/" + username;
     }
 

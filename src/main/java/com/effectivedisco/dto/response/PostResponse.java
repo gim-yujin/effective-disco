@@ -85,8 +85,8 @@ public class PostResponse {
         this.author = post.getAuthor().getUsername();
         this.createdAt = post.getCreatedAt();
         this.updatedAt = post.getUpdatedAt();
-        this.commentCount = post.getComments().size();
-        this.likeCount = likeCount;
+        this.commentCount = post.getCommentCount();
+        this.likeCount = post.getLikeCount();
         this.viewCount = post.getViewCount();
         this.tags = post.getTags().stream()
                 .map(t -> t.getName())

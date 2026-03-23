@@ -20,6 +20,8 @@ import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 import org.springframework.web.servlet.mvc.support.RedirectAttributes;
 
+import org.springframework.dao.DataIntegrityViolationException;
+
 import java.util.Collections;
 import java.util.HashSet;
 import java.util.List;
@@ -285,7 +287,11 @@ public class BoardWebController {
     @PostMapping("/posts/{id}/like")
     public String toggleLike(@PathVariable Long id,
                              @AuthenticationPrincipal UserDetails userDetails) {
-        postService.toggleLike(id, userDetails.getUsername());
+        try {
+            postService.toggleLike(id, userDetails.getUsername());
+        } catch (DataIntegrityViolationException ignored) {
+            // 동시 요청으로 UNIQUE 제약 위반 — 무시하고 리다이렉트
+        }
         return "redirect:/posts/" + id;
     }
 
@@ -293,7 +299,11 @@ public class BoardWebController {
     @PostMapping("/posts/{id}/bookmark")
     public String toggleBookmark(@PathVariable Long id,
                                  @AuthenticationPrincipal UserDetails userDetails) {
-        bookmarkService.toggle(userDetails.getUsername(), id);
+        try {
+            bookmarkService.toggle(userDetails.getUsername(), id);
+        } catch (DataIntegrityViolationException ignored) {
+            // 동시 요청으로 UNIQUE 제약 위반 — 무시하고 리다이렉트
+        }
         return "redirect:/posts/" + id;
     }
 

@@ -5,7 +5,6 @@ import com.effectivedisco.domain.Post;
 import com.effectivedisco.domain.User;
 import com.effectivedisco.dto.response.PostResponse;
 import com.effectivedisco.repository.FollowRepository;
-import com.effectivedisco.repository.PostLikeRepository;
 import com.effectivedisco.repository.PostRepository;
 import com.effectivedisco.repository.UserRepository;
 import org.junit.jupiter.api.Test;
@@ -34,7 +33,6 @@ class FollowServiceTest {
     @Mock FollowRepository   followRepository;
     @Mock UserRepository     userRepository;
     @Mock PostRepository     postRepository;
-    @Mock PostLikeRepository postLikeRepository;
 
     @InjectMocks FollowService followService;
 
@@ -132,13 +130,12 @@ class FollowServiceTest {
         given(postRepository.findByAuthorInOrderByCreatedAtDesc(
                 List.of(bob), PageRequest.of(0, 10)))
                 .willReturn(new PageImpl<>(List.of(post)));
-        given(postLikeRepository.countByPost(post)).willReturn(5L);
 
         Page<PostResponse> result = followService.getFeed("alice", 0, 10);
 
         assertThat(result.getContent()).hasSize(1);
         assertThat(result.getContent().get(0).getTitle()).isEqualTo("Hello");
-        assertThat(result.getContent().get(0).getLikeCount()).isEqualTo(5L);
+        assertThat(result.getContent().get(0).getLikeCount()).isEqualTo(0L);
     }
 
     @Test

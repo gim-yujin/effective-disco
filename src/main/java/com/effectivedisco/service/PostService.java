@@ -15,6 +15,8 @@ import com.effectivedisco.repository.PostRepository;
 import com.effectivedisco.repository.TagRepository;
 import com.effectivedisco.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
+import org.springframework.cache.annotation.CacheEvict;
+import org.springframework.cache.annotation.Cacheable;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.security.access.AccessDeniedException;
@@ -95,7 +97,7 @@ public class PostService {
             };
         }
 
-        return posts.map(post -> new PostResponse(post, postLikeRepository.countByPost(post)));
+        return posts.map(PostResponse::new);
     }
 
     /**
@@ -109,8 +111,7 @@ public class PostService {
 
     /** 단일 게시물 조회 */
     public PostResponse getPost(Long id) {
-        Post post = findPost(id);
-        return new PostResponse(post, postLikeRepository.countByPost(post));
+        return new PostResponse(findPost(id));
     }
 
     /**
@@ -125,7 +126,7 @@ public class PostService {
         User user = findUser(username);
         return postRepository
                 .findByAuthorAndDraftFalseOrderByCreatedAtDesc(user, PageRequest.of(page, size))
-                .map(post -> new PostResponse(post, postLikeRepository.countByPost(post)));
+                .map(PostResponse::new);
     }
 
     /**
@@ -140,7 +141,7 @@ public class PostService {
         User user = findUser(username);
         return postRepository
                 .findByAuthorAndDraftTrueOrderByCreatedAtDesc(user, PageRequest.of(page, size))
-                .map(post -> new PostResponse(post, postLikeRepository.countByPost(post)));
+                .map(PostResponse::new);
     }
 
     /** 전체 태그 이름 목록 (태그 필터 바 렌더링용) */
@@ -151,6 +152,7 @@ public class PostService {
     }
 
     /** 인기 태그 이름 목록 (사용 빈도 내림차순, 최대 15개) */
+    @Cacheable("popularTags")
     public List<String> getPopularTagNames(int limit) {
         return postRepository.findPopularTagNames(PageRequest.of(0, limit));
     }
@@ -159,6 +161,7 @@ public class PostService {
      * 게시물 생성.
      * request.boardSlug 가 있으면 해당 게시판에 속하도록 지정한다.
      */
+    @CacheEvict(value = "popularTags", allEntries = true)
     @Transactional
     public PostResponse createPost(PostRequest request, String username) {
         User user = findUser(username);
@@ -195,6 +198,7 @@ public class PostService {
      * 작성자 본인만 수정 가능하다.
      * 태그는 기존 태그를 모두 지우고 새로 지정한다.
      */
+    @CacheEvict(value = "popularTags", allEntries = true)
     @Transactional
     public PostResponse updatePost(Long id, PostRequest request, String username) {
         Post post = findPost(id);
@@ -221,13 +225,14 @@ public class PostService {
             post.publish();
         }
 
-        return new PostResponse(post, postLikeRepository.countByPost(post));
+        return new PostResponse(post);
     }
 
     /**
      * 게시물 삭제.
      * 작성자 본인만 삭제 가능하다.
      */
+    @CacheEvict(value = "popularTags", allEntries = true)
     @Transactional
     public void deletePost(Long id, String username) {
         Post post = findPost(id);
@@ -238,6 +243,7 @@ public class PostService {
     /**
      * 관리자 전용 강제 삭제.
      */
+    @CacheEvict(value = "popularTags", allEntries = true)
     @Transactional
     public void adminDeletePost(Long id) {
         postRepository.delete(findPost(id));
@@ -265,7 +271,7 @@ public class PostService {
         Board board = boardRepository.findBySlug(boardSlug).orElse(null);
         if (board == null) return List.of();
         return postRepository.findByBoardAndPinnedTrueAndDraftFalseOrderByCreatedAtDesc(board).stream()
-                .map(p -> new PostResponse(p, postLikeRepository.countByPost(p)))
+                .map(PostResponse::new)
                 .toList();
     }
 
@@ -292,7 +298,7 @@ public class PostService {
      */
     @Transactional
     public void incrementViewCount(Long id) {
-        findPost(id).incrementViewCount();
+        postRepository.incrementViewCount(id);
     }
 
     /**
@@ -309,14 +315,16 @@ public class PostService {
         boolean wasLiked = postLikeRepository.existsByPostAndUser(post, user);
         if (wasLiked) {
             postLikeRepository.deleteByPostAndUser(post, user);
+            postRepository.decrementLikeCount(postId);
         } else {
             postLikeRepository.save(new PostLike(post, user));
-            // 좋아요 추가 시에만 알림 생성 (취소 시에는 알림 없음)
+            postRepository.incrementLikeCount(postId);
             notificationService.notifyLike(post, username);
         }
 
-        long count  = postLikeRepository.countByPost(post);
-        boolean liked = postLikeRepository.existsByPostAndUser(post, user);
+        boolean liked = !wasLiked;
+        long count = post.getLikeCount() + (liked ? 1 : -1);
+        if (count < 0) count = 0;
         return new LikeResponse(liked, count);
     }
 

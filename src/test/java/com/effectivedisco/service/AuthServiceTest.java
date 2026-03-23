@@ -40,14 +40,14 @@ class AuthServiceTest {
         given(userRepository.existsByUsername("user1")).willReturn(false);
         given(userRepository.existsByEmail("user1@test.com")).willReturn(false);
         given(passwordEncoder.encode("pass123")).willReturn("encoded");
-        given(userRepository.save(any(User.class))).willAnswer(inv -> inv.getArgument(0));
+        given(userRepository.saveAndFlush(any(User.class))).willAnswer(inv -> inv.getArgument(0));
         given(jwtTokenProvider.generateToken("user1")).willReturn("jwt-token");
 
         AuthResponse response = authService.signup(request);
 
         assertThat(response.getToken()).isEqualTo("jwt-token");
         assertThat(response.getUsername()).isEqualTo("user1");
-        verify(userRepository).save(any(User.class));
+        verify(userRepository).saveAndFlush(any(User.class));
     }
 
     @Test

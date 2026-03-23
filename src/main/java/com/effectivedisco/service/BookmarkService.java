@@ -5,7 +5,6 @@ import com.effectivedisco.domain.Post;
 import com.effectivedisco.domain.User;
 import com.effectivedisco.dto.response.PostResponse;
 import com.effectivedisco.repository.BookmarkRepository;
-import com.effectivedisco.repository.PostLikeRepository;
 import com.effectivedisco.repository.PostRepository;
 import com.effectivedisco.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
@@ -21,7 +20,6 @@ public class BookmarkService {
 
     private final BookmarkRepository bookmarkRepository;
     private final PostRepository     postRepository;
-    private final PostLikeRepository postLikeRepository;
     private final UserRepository     userRepository;
 
     /**
@@ -57,8 +55,7 @@ public class BookmarkService {
     public List<PostResponse> getBookmarks(String username) {
         User user = findUser(username);
         return bookmarkRepository.findByUserOrderByCreatedAtDesc(user).stream()
-                .map(b -> new PostResponse(b.getPost(),
-                        postLikeRepository.countByPost(b.getPost())))
+                .map(b -> new PostResponse(b.getPost()))
                 .toList();
     }
 

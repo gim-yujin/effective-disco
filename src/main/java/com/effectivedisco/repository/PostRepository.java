@@ -130,35 +130,45 @@ public interface PostRepository extends JpaRepository<Post, Long> {
     // 정렬 쿼리 (draft = false)
     // ══════════════════════════════════════════════════════
 
-    /**
-     * 전체 공개 게시물을 좋아요 수 내림차순으로 페이징 조회.
-     * LEFT JOIN으로 좋아요가 없는 게시물도 포함한다.
-     */
-    @Query("SELECT p FROM Post p LEFT JOIN PostLike pl ON pl.post = p " +
-           "WHERE p.draft = false " +
-           "GROUP BY p ORDER BY COUNT(pl) DESC, p.createdAt DESC")
+    /** 전체 공개 게시물을 좋아요 수 내림차순으로 페이징 조회 (비정규화 카운트 사용) */
+    @Query("SELECT p FROM Post p WHERE p.draft = false ORDER BY p.likeCount DESC, p.createdAt DESC")
     Page<Post> findAllOrderByLikeCountDesc(Pageable pageable);
 
-    /**
-     * 전체 공개 게시물을 댓글 수 내림차순으로 페이징 조회.
-     * LEFT JOIN으로 댓글이 없는 게시물도 포함한다.
-     */
-    @Query("SELECT p FROM Post p LEFT JOIN Comment c ON c.post = p " +
-           "WHERE p.draft = false " +
-           "GROUP BY p ORDER BY COUNT(c) DESC, p.createdAt DESC")
+    /** 전체 공개 게시물을 댓글 수 내림차순으로 페이징 조회 (비정규화 카운트 사용) */
+    @Query("SELECT p FROM Post p WHERE p.draft = false ORDER BY p.commentCount DESC, p.createdAt DESC")
     Page<Post> findAllOrderByCommentCountDesc(Pageable pageable);
 
     /** 특정 게시판의 공개 게시물을 좋아요 수 내림차순으로 페이징 조회 */
-    @Query("SELECT p FROM Post p LEFT JOIN PostLike pl ON pl.post = p " +
-           "WHERE p.board = :board AND p.draft = false " +
-           "GROUP BY p ORDER BY COUNT(pl) DESC, p.createdAt DESC")
+    @Query("SELECT p FROM Post p WHERE p.board = :board AND p.draft = false ORDER BY p.likeCount DESC, p.createdAt DESC")
     Page<Post> findByBoardOrderByLikeCountDesc(@Param("board") Board board, Pageable pageable);
 
     /** 특정 게시판의 공개 게시물을 댓글 수 내림차순으로 페이징 조회 */
-    @Query("SELECT p FROM Post p LEFT JOIN Comment c ON c.post = p " +
-           "WHERE p.board = :board AND p.draft = false " +
-           "GROUP BY p ORDER BY COUNT(c) DESC, p.createdAt DESC")
+    @Query("SELECT p FROM Post p WHERE p.board = :board AND p.draft = false ORDER BY p.commentCount DESC, p.createdAt DESC")
     Page<Post> findByBoardOrderByCommentCountDesc(@Param("board") Board board, Pageable pageable);
+
+    // ══════════════════════════════════════════════════════
+    // 원자적 카운트 UPDATE (동시성 안전)
+    // ══════════════════════════════════════════════════════
+
+    @Modifying
+    @Query("UPDATE Post p SET p.viewCount = p.viewCount + 1 WHERE p.id = :id")
+    void incrementViewCount(@Param("id") Long id);
+
+    @Modifying
+    @Query("UPDATE Post p SET p.likeCount = p.likeCount + 1 WHERE p.id = :id")
+    void incrementLikeCount(@Param("id") Long id);
+
+    @Modifying
+    @Query("UPDATE Post p SET p.likeCount = p.likeCount - 1 WHERE p.id = :id AND p.likeCount > 0")
+    void decrementLikeCount(@Param("id") Long id);
+
+    @Modifying
+    @Query("UPDATE Post p SET p.commentCount = p.commentCount + 1 WHERE p.id = :id")
+    void incrementCommentCount(@Param("id") Long id);
+
+    @Modifying
+    @Query("UPDATE Post p SET p.commentCount = p.commentCount - 1 WHERE p.id = :id AND p.commentCount > 0")
+    void decrementCommentCount(@Param("id") Long id);
 
     // ══════════════════════════════════════════════════════
     // 관리 / 유지보수 쿼리

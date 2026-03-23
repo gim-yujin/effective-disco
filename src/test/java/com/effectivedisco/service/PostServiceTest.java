@@ -166,8 +166,6 @@ class PostServiceTest {
         given(boardRepository.findBySlug("free")).willReturn(Optional.of(board));
         given(postRepository.findByBoardAndPinnedTrueAndDraftFalseOrderByCreatedAtDesc(board))
                 .willReturn(List.of(post));
-        given(postLikeRepository.countByPost(post)).willReturn(2L);
-
         List<PostResponse> result = postService.getPinnedPosts("free");
 
         assertThat(result).hasSize(1);
@@ -214,7 +212,6 @@ class PostServiceTest {
         ReflectionTestUtils.setField(post, "draft", true);
 
         given(postRepository.findById(1L)).willReturn(Optional.of(post));
-        given(postLikeRepository.countByPost(post)).willReturn(0L);
 
         PostRequest request = makePostRequest("New Title", "New Content");
         request.setDraft(false); // 공개 저장 → publish() 호출
@@ -237,7 +234,6 @@ class PostServiceTest {
         given(userRepository.findByUsername("author")).willReturn(Optional.of(author));
         given(postRepository.findByAuthorAndDraftTrueOrderByCreatedAtDesc(
                 any(User.class), any())).willReturn(new PageImpl<>(List.of(draft)));
-        given(postLikeRepository.countByPost(draft)).willReturn(0L);
 
         Page<PostResponse> result = postService.getDrafts("author", 0, 20);
 

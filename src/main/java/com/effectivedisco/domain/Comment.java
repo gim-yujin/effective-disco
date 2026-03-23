@@ -10,7 +10,9 @@ import java.util.ArrayList;
 import java.util.List;
 
 @Entity
-@Table(name = "comments")
+@Table(name = "comments", indexes = {
+        @Index(name = "idx_comment_post", columnList = "post_id")
+})
 @Getter
 @NoArgsConstructor
 public class Comment {

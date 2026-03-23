@@ -7,6 +7,7 @@ import com.effectivedisco.dto.response.AuthResponse;
 import com.effectivedisco.repository.UserRepository;
 import com.effectivedisco.security.JwtTokenProvider;
 import lombok.RequiredArgsConstructor;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.security.authentication.AuthenticationManager;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.crypto.password.PasswordEncoder;
@@ -35,7 +36,11 @@ public class AuthService {
                 .email(request.getEmail())
                 .password(passwordEncoder.encode(request.getPassword()))
                 .build();
-        userRepository.save(user);
+        try {
+            userRepository.saveAndFlush(user);
+        } catch (DataIntegrityViolationException e) {
+            throw new IllegalArgumentException("Username or email already in use");
+        }
         String token = jwtTokenProvider.generateToken(user.getUsername());
         return new AuthResponse(token, user.getUsername());
     }
