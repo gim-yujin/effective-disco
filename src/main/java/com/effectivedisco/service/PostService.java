@@ -52,6 +52,7 @@ public class PostService {
      * @param tag       null이면 태그 필터 미적용
      * @param sort      정렬 기준: "latest"(최신순, 기본), "likes"(좋아요순), "comments"(댓글순)
      */
+    @Transactional(readOnly = true)
     public Page<PostResponse> getPosts(int page, int size,
                                        String keyword, String tag,
                                        String boardSlug, String sort) {
@@ -97,13 +98,14 @@ public class PostService {
             };
         }
 
-        return posts.map(PostResponse::new);
+        return toPostResponsePage(posts);
     }
 
     /**
      * 정렬 기준 없이 게시물 목록을 조회한다 (하위 호환용 — 최신순 기본값 적용).
      * REST API 컨트롤러 등 sort 파라미터를 명시하지 않는 기존 호출에서 사용한다.
      */
+    @Transactional(readOnly = true)
     public Page<PostResponse> getPosts(int page, int size,
                                        String keyword, String tag, String boardSlug) {
         return getPosts(page, size, keyword, tag, boardSlug, "latest");
@@ -122,11 +124,13 @@ public class PostService {
      * 특정 사용자의 공개 게시물을 최신순으로 페이징 반환 (초안 제외).
      * 프로필 페이지의 "작성한 게시물" 섹션에 사용한다.
      */
+    @Transactional(readOnly = true)
     public Page<PostResponse> getPostsByAuthor(String username, int page, int size) {
         User user = findUser(username);
-        return postRepository
-                .findByAuthorAndDraftFalseOrderByCreatedAtDesc(user, PageRequest.of(page, size))
-                .map(PostResponse::new);
+        Page<Post> posts = postRepository.findByAuthorAndDraftFalseOrderByCreatedAtDesc(
+                user, PageRequest.of(page, size)
+        );
+        return toPostResponsePage(posts);
     }
 
     /**
@@ -137,11 +141,13 @@ public class PostService {
      * @param page 페이지 번호 (0부터)
      * @param size 페이지 크기
      */
+    @Transactional(readOnly = true)
     public Page<PostResponse> getDrafts(String username, int page, int size) {
         User user = findUser(username);
-        return postRepository
-                .findByAuthorAndDraftTrueOrderByCreatedAtDesc(user, PageRequest.of(page, size))
-                .map(PostResponse::new);
+        Page<Post> posts = postRepository.findByAuthorAndDraftTrueOrderByCreatedAtDesc(
+                user, PageRequest.of(page, size)
+        );
+        return toPostResponsePage(posts);
     }
 
     /** 전체 태그 이름 목록 (태그 필터 바 렌더링용) */
@@ -266,13 +272,42 @@ public class PostService {
     }
 
     /** 특정 게시판의 고정 공개 게시물 목록 (관리자 고정, 최신순, 초안 제외) */
+    @Transactional(readOnly = true)
     public List<PostResponse> getPinnedPosts(String boardSlug) {
         if (boardSlug == null || boardSlug.isBlank()) return List.of();
         Board board = boardRepository.findBySlug(boardSlug).orElse(null);
         if (board == null) return List.of();
-        return postRepository.findByBoardAndPinnedTrueAndDraftFalseOrderByCreatedAtDesc(board).stream()
+        return toPostResponseList(postRepository.findByBoardAndPinnedTrueAndDraftFalseOrderByCreatedAtDesc(board));
+    }
+
+    private Page<PostResponse> toPostResponsePage(Page<Post> posts) {
+        preloadListRelations(posts.getContent());
+        return posts.map(PostResponse::new);
+    }
+
+    private List<PostResponse> toPostResponseList(List<Post> posts) {
+        preloadListRelations(posts);
+        return posts.stream()
                 .map(PostResponse::new)
                 .toList();
+    }
+
+    private void preloadListRelations(List<Post> posts) {
+        if (posts.isEmpty()) {
+            return;
+        }
+
+        List<Long> postIds = posts.stream()
+                .map(Post::getId)
+                .toList();
+
+        // 문제 해결:
+        // PostResponse 목록 변환은 author/board/tags/images를 모두 접근한다.
+        // 페이지 본문 쿼리만 실행하면 각 게시물마다 LAZY 컬렉션 select가 추가로 발생해
+        // post.list 에서 N+1이 터진다. 현재 페이지 ID만 모아 tags/images를 한 번씩 preload 하면
+        // DTO 매핑 시점의 SQL 수를 "게시물 수 비례"가 아니라 "페이지당 상수"로 묶을 수 있다.
+        postRepository.findAllWithTagsByIdIn(postIds);
+        postRepository.findAllWithImagesByIdIn(postIds);
     }
 
     /**

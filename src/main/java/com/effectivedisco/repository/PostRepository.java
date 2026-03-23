@@ -3,6 +3,7 @@ package com.effectivedisco.repository;
 import com.effectivedisco.domain.Board;
 import com.effectivedisco.domain.Post;
 import com.effectivedisco.domain.User;
+import org.springframework.data.jpa.repository.EntityGraph;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
@@ -25,6 +26,7 @@ public interface PostRepository extends JpaRepository<Post, Long> {
     // ══════════════════════════════════════════════════════
 
     /** 공개 게시물을 최신순으로 페이징 조회 */
+    @EntityGraph(attributePaths = {"author", "board"})
     Page<Post> findByDraftFalseOrderByCreatedAtDesc(Pageable pageable);
 
     /**
@@ -36,11 +38,13 @@ public interface PostRepository extends JpaRepository<Post, Long> {
            "LOWER(p.content) LIKE LOWER(CONCAT('%', :keyword, '%')) OR " +
            "LOWER(p.author.username) LIKE LOWER(CONCAT('%', :keyword, '%'))) " +
            "ORDER BY p.createdAt DESC")
+    @EntityGraph(attributePaths = {"author", "board"})
     Page<Post> searchByKeyword(@Param("keyword") String keyword, Pageable pageable);
 
     /** 전체 공개 게시물에서 특정 태그로 필터링 */
     @Query("SELECT p FROM Post p JOIN p.tags t WHERE p.draft = false AND t.name = :tagName " +
            "ORDER BY p.createdAt DESC")
+    @EntityGraph(attributePaths = {"author", "board"})
     Page<Post> findByTagName(@Param("tagName") String tagName, Pageable pageable);
 
     // ══════════════════════════════════════════════════════
@@ -48,9 +52,11 @@ public interface PostRepository extends JpaRepository<Post, Long> {
     // ══════════════════════════════════════════════════════
 
     /** 특정 게시판의 공개 게시물을 최신순으로 페이징 조회 */
+    @EntityGraph(attributePaths = {"author", "board"})
     Page<Post> findByBoardAndDraftFalseOrderByCreatedAtDesc(Board board, Pageable pageable);
 
     /** 특정 게시판의 고정(공지) 공개 게시물 목록 */
+    @EntityGraph(attributePaths = {"author", "board"})
     List<Post> findByBoardAndPinnedTrueAndDraftFalseOrderByCreatedAtDesc(Board board);
 
     /**
@@ -62,6 +68,7 @@ public interface PostRepository extends JpaRepository<Post, Long> {
            "LOWER(p.content) LIKE LOWER(CONCAT('%', :keyword, '%')) OR " +
            "LOWER(p.author.username) LIKE LOWER(CONCAT('%', :keyword, '%'))) " +
            "ORDER BY p.createdAt DESC")
+    @EntityGraph(attributePaths = {"author", "board"})
     Page<Post> searchByKeywordInBoard(@Param("board") Board board,
                                       @Param("keyword") String keyword,
                                       Pageable pageable);
@@ -70,6 +77,7 @@ public interface PostRepository extends JpaRepository<Post, Long> {
     @Query("SELECT p FROM Post p JOIN p.tags t " +
            "WHERE p.board = :board AND p.draft = false AND t.name = :tagName " +
            "ORDER BY p.createdAt DESC")
+    @EntityGraph(attributePaths = {"author", "board"})
     Page<Post> findByBoardAndTagName(@Param("board") Board board,
                                      @Param("tagName") String tagName,
                                      Pageable pageable);
@@ -88,6 +96,7 @@ public interface PostRepository extends JpaRepository<Post, Long> {
      * 특정 사용자의 공개 게시물을 최신순으로 페이징 조회.
      * 프로필 페이지의 "작성한 게시물" 목록에 사용한다 (초안 제외).
      */
+    @EntityGraph(attributePaths = {"author", "board"})
     Page<Post> findByAuthorAndDraftFalseOrderByCreatedAtDesc(User author, Pageable pageable);
 
     /**
@@ -99,6 +108,7 @@ public interface PostRepository extends JpaRepository<Post, Long> {
      * 특정 사용자의 초안(미공개) 게시물을 최신순으로 페이징 조회.
      * 본인의 초안 목록(/drafts) 페이지에 사용한다.
      */
+    @EntityGraph(attributePaths = {"author", "board"})
     Page<Post> findByAuthorAndDraftTrueOrderByCreatedAtDesc(User author, Pageable pageable);
 
     // ══════════════════════════════════════════════════════
@@ -111,6 +121,7 @@ public interface PostRepository extends JpaRepository<Post, Long> {
      */
     @Query("SELECT p FROM Post p WHERE p.draft = false AND p.author IN :authors " +
            "ORDER BY p.createdAt DESC")
+    @EntityGraph(attributePaths = {"author", "board"})
     Page<Post> findByAuthorInOrderByCreatedAtDesc(
             @Param("authors") List<User> authors, Pageable pageable);
 
@@ -132,19 +143,29 @@ public interface PostRepository extends JpaRepository<Post, Long> {
 
     /** 전체 공개 게시물을 좋아요 수 내림차순으로 페이징 조회 (비정규화 카운트 사용) */
     @Query("SELECT p FROM Post p WHERE p.draft = false ORDER BY p.likeCount DESC, p.createdAt DESC")
+    @EntityGraph(attributePaths = {"author", "board"})
     Page<Post> findAllOrderByLikeCountDesc(Pageable pageable);
 
     /** 전체 공개 게시물을 댓글 수 내림차순으로 페이징 조회 (비정규화 카운트 사용) */
     @Query("SELECT p FROM Post p WHERE p.draft = false ORDER BY p.commentCount DESC, p.createdAt DESC")
+    @EntityGraph(attributePaths = {"author", "board"})
     Page<Post> findAllOrderByCommentCountDesc(Pageable pageable);
 
     /** 특정 게시판의 공개 게시물을 좋아요 수 내림차순으로 페이징 조회 */
     @Query("SELECT p FROM Post p WHERE p.board = :board AND p.draft = false ORDER BY p.likeCount DESC, p.createdAt DESC")
+    @EntityGraph(attributePaths = {"author", "board"})
     Page<Post> findByBoardOrderByLikeCountDesc(@Param("board") Board board, Pageable pageable);
 
     /** 특정 게시판의 공개 게시물을 댓글 수 내림차순으로 페이징 조회 */
     @Query("SELECT p FROM Post p WHERE p.board = :board AND p.draft = false ORDER BY p.commentCount DESC, p.createdAt DESC")
+    @EntityGraph(attributePaths = {"author", "board"})
     Page<Post> findByBoardOrderByCommentCountDesc(@Param("board") Board board, Pageable pageable);
+
+    @Query("SELECT DISTINCT p FROM Post p LEFT JOIN FETCH p.tags WHERE p.id IN :postIds")
+    List<Post> findAllWithTagsByIdIn(@Param("postIds") List<Long> postIds);
+
+    @Query("SELECT DISTINCT p FROM Post p LEFT JOIN FETCH p.images WHERE p.id IN :postIds")
+    List<Post> findAllWithImagesByIdIn(@Param("postIds") List<Long> postIds);
 
     // ══════════════════════════════════════════════════════
     // 원자적 카운트 UPDATE (동시성 안전)

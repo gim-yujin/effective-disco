@@ -90,6 +90,13 @@
 - `duplicateKeyConflicts=0`, 관계 중복 row `0`, SQL mismatch `0` 으로 정합성 불변식은 경계 구간에서도 유지됐다.
 - 현재 시스템의 보수적 안정 구간은 `1.25x`, 실질 경계 구간은 `1.5x`, 명확한 실패 구간은 `1.75x` 로 판단한다.
 
+## 관련 최적화 기록
+
+- 2026-03-24 `post.list` N+1 최적화를 적용했다.
+- 병목 프로파일 기준 `averageSqlStatementCount = 54.84 -> 4.80`, `averageWallTimeMs = 91.81 -> 19.35` 로 줄었다.
+- 이번 변경은 정합성 로직 변경이 아니라 DB pool 포화 원인 제거 목적의 읽기 경로 최적화다.
+- 상세 원인, 조치, 전후 수치는 [loadtest-optimization.md](loadtest-optimization.md) 에 기록한다.
+
 ## 1차에서 보장한 불변식
 
 ### 관계형 쓰기 경로
