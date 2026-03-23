@@ -5,6 +5,7 @@ BASE_URL="${BASE_URL:-http://localhost:18080}"
 RESULT_DIR="${RESULT_DIR:-loadtest/results}"
 STAGE_FACTORS="${STAGE_FACTORS:-1,1.25,1.5,1.75,2,2.25,2.5,3}"
 STOP_ON_HTTP_P99_MS="${STOP_ON_HTTP_P99_MS:-300}"
+STOP_ON_K6_THRESHOLD="${STOP_ON_K6_THRESHOLD:-1}"
 EXIT_ON_LIMIT_REACHED="${EXIT_ON_LIMIT_REACHED:-0}"
 SUITE_TIMESTAMP="$(date +%Y%m%d-%H%M%S)"
 SUITE_ID="$(date +%m%d%H%M%S)"
@@ -102,6 +103,7 @@ printf -- '- executed_at: %s\n' "$SUITE_TIMESTAMP" >>"$SUMMARY_REPORT_FILE"
 printf -- '- base_url: `%s`\n' "$BASE_URL" >>"$SUMMARY_REPORT_FILE"
 printf -- '- stage_factors: `%s`\n' "$STAGE_FACTORS" >>"$SUMMARY_REPORT_FILE"
 printf -- '- stop_on_http_p99_ms: `%s`\n' "$STOP_ON_HTTP_P99_MS" >>"$SUMMARY_REPORT_FILE"
+printf -- '- stop_on_k6_threshold: `%s`\n' "$STOP_ON_K6_THRESHOLD" >>"$SUMMARY_REPORT_FILE"
 printf -- '- database: `%s:%s/%s`\n\n' "$PGHOST" "$PGPORT" "$PGDATABASE" >>"$SUMMARY_REPORT_FILE"
 printf '| stage | factor | status | stop reason | http p95 | http p99 | unexpected | dup-key | pool timeout | max active | max waiting | relation dup | like mismatch | comment mismatch | unread mismatch |\n' >>"$SUMMARY_REPORT_FILE"
 printf '| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |\n' >>"$SUMMARY_REPORT_FILE"
@@ -242,7 +244,7 @@ for index in "${!stage_factor_list[@]}"; do
     status="LIMIT"
   fi
 
-  if (( k6_exit_code == 99 )) && [[ "$status" == "PASS" ]]; then
+  if (( k6_exit_code == 99 )) && [[ "$status" == "PASS" ]] && (( STOP_ON_K6_THRESHOLD > 0 )); then
     stop_reason="$(append_reason "$stop_reason" "k6-threshold")"
     status="LIMIT"
   fi

@@ -62,6 +62,34 @@
 - `dbPoolTimeouts=0` 으로 timeout은 없었지만, `maxActiveConnections=20` 과 `maxThreadsAwaitingConnection=176` 으로 DB connection pool은 이미 포화 구간에 진입했다.
 - 이번 2차는 "정합성은 유지되지만 현재 풀 크기 기준으로 대기열이 크게 생긴다"는 점을 확인한 검증이다.
 
+## 3차 결과
+
+상태: 완료
+
+검증 날짜:
+
+- 2026-03-24
+
+검증 범위:
+
+- mixed scenario를 포함한 반복 ramp-up 경계점 탐색 5회
+- 게시판 목록/핫 게시물/검색/게시물 작성/댓글 작성 혼합 부하
+- 멱등 좋아요 등록/해제 경쟁
+- 북마크 등록/해제 혼합 경쟁
+- 팔로우/언팔로우 혼합 경쟁
+- 차단/해제 혼합 경쟁
+- 알림 생성 vs 전체 읽음 혼합 경쟁
+- `unexpected_response_rate`, `dbPoolTimeouts`, 전체 `http_req_duration p99` 경계점 측정
+
+핵심 결론:
+
+- `1.0x` 와 `1.25x` 는 `5/5 PASS` 였다.
+- `1.5x` 는 `3/5 PASS`, `2/5 FAIL` 로 반복 런 기준 안정 구간이 아니었다.
+- `1.75x` 는 도달한 `3/3` 런 모두 `LIMIT/FAIL` 이었다.
+- 최초 실패 신호는 `duplicate-key` 나 관계 row 정합성 깨짐이 아니라 `unexpected_response_rate > 0`, `dbPoolTimeouts > 0`, 전체 `p99` 급등이었다.
+- `duplicateKeyConflicts=0`, 관계 중복 row `0`, SQL mismatch `0` 으로 정합성 불변식은 경계 구간에서도 유지됐다.
+- 현재 시스템의 보수적 안정 구간은 `1.25x`, 실질 경계 구간은 `1.5x`, 명확한 실패 구간은 `1.75x` 로 판단한다.
+
 ## 1차에서 보장한 불변식
 
 ### 관계형 쓰기 경로
@@ -166,6 +194,19 @@
 - 짧은 단위 테스트를 넘어 실제 혼합 부하에서도 1차에서 정의한 정합성 불변식이 유지되는지 확인
 - 정합성은 유지하되, 현재 운영 설정에서 DB pool 병목이 언제 드러나는지 함께 기록
 
+## 3차에서 추가 확인한 불변식
+
+### 반복 경계점 상황의 정합성 유지
+
+- `unexpected_response_rate` 와 `dbPoolTimeouts` 가 발생한 경계 구간에서도 `duplicateKeyConflicts=0`
+- 경계 구간에서도 `post_likes`, `bookmarks`, `follows`, `blocks` 의 관계 중복 row `0`
+- 경계 구간에서도 `Post.likeCount`, `Post.commentCount`, `User.unreadNotificationCount` 와 실제 row 수 mismatch `0`
+
+의도:
+
+- 한계점 근처에서 먼저 깨지는 것이 정합성인지, 아니면 리소스 포화인지 구분
+- 현재 경계점은 쓰기 정합성 붕괴가 아니라 DB pool 포화에서 시작된다는 근거 확보
+
 ## 실행 기록
 
 동시성 집중 검증:
@@ -229,6 +270,39 @@ curl -fsS http://localhost:18080/internal/load-test/metrics > "$SERVER_FILE"
   [k6-stress-summary-20260324-013824.json](/home/admin0/effective-disco/loadtest/results/k6-stress-summary-20260324-013824.json)
   [k6-stress-server-metrics-20260324-013824.json](/home/admin0/effective-disco/loadtest/results/k6-stress-server-metrics-20260324-013824.json)
 
+반복 경계점 검증:
+
+```bash
+for run in 1 2 3 4 5
+do
+  STOP_ON_K6_THRESHOLD=0 \
+  STOP_ON_HTTP_P99_MS=800 \
+  STAGE_FACTORS=1,1.25,1.5,1.75,2,2.25,2.5,3,3.5,4 \
+  BROWSE_DURATION=12s HOT_POST_DURATION=12s SEARCH_DURATION=12s \
+  WRITE_STAGE_ONE_DURATION=8s WRITE_STAGE_TWO_DURATION=8s \
+  LIKE_ADD_DURATION=12s LIKE_REMOVE_DURATION=12s \
+  BOOKMARK_MIXED_DURATION=12s FOLLOW_MIXED_DURATION=12s \
+  BLOCK_MIXED_DURATION=12s NOTIFICATION_MIXED_DURATION=12s \
+  BASE_URL=http://localhost:18080 \
+  ./loadtest/run-bbs-ramp-up.sh
+done
+```
+
+결과:
+
+- 반복 결과 디렉터리:
+  `loadtest/results/boundary-repeat-20260324-022932`
+- `1.0x`: `5/5 PASS`, 전체 `p99=409.75ms~443.98ms`
+- `1.25x`: `5/5 PASS`, 전체 `p99=533.37ms~559.26ms`
+- `1.5x`: `3/5 PASS`, `2/5 FAIL`
+- `1.75x`: 도달한 `3/3` 모두 `LIMIT/FAIL`
+- `1.5x` 실패 런:
+  `unexpected_response_rate=0.0006~0.0021`, `dbPoolTimeouts=8~46`, 전체 `p99=714.22ms~1270.79ms`
+- `1.75x` 실패/제한 런:
+  `unexpected_response_rate=0.0000~0.0049`, `dbPoolTimeouts=0~85`, 전체 `p99=925.58ms~1075.05ms`
+- 전체 반복 런에서 `maxActiveConnections=20`, `maxThreadsAwaitingConnection=190~200`
+- 전체 반복 런에서 `duplicateKeyConflicts=0`, 관계 중복 row `0`, SQL mismatch `0`
+
 ## 아직 남은 리스크
 
 ### 분산 환경
@@ -239,8 +313,9 @@ curl -fsS http://localhost:18080/internal/load-test/metrics > "$SERVER_FILE"
 ### 장시간/대규모 스트레스
 
 - 2차 스트레스 런으로 단기 혼합 부하 검증은 완료
-- 다만 장시간 soak test 와 더 높은 worker 수에서 deadlock/timeout 패턴은 추가 검증 가능
-- 현재 수치상 DB pool은 timeout 직전의 포화 구간에 들어가므로, 더 높은 부하에서는 timeout 발생 지점을 따로 확인할 필요가 있음
+- 3차 반복 ramp-up 으로 경계점은 `1.5x~1.75x` 구간으로 좁혔음
+- 다만 장시간 soak test 에서 counter drift, connection leak, slow creep, deadlock 여부는 아직 별도 확인이 필요
+- 현재는 "어디서 깨지는가"만 찾았고 "왜 그 지점에서 깨지는가"는 쿼리/트랜잭션 분석이 남아 있음
 
 ### 대용량 데이터
 
