@@ -208,10 +208,20 @@ public class NotificationService {
     }
 
     private long markAllUnreadNotificationsRead(User user, String username) {
-        if (user.getUnreadNotificationCount() > 0) {
+        boolean hasUnreadNotifications = user.getUnreadNotificationCount() > 0;
+        if (!hasUnreadNotifications) {
             // 문제 해결:
-            // 이미 unread 가 0 인 사용자는 bulk UPDATE 를 다시 날릴 이유가 없다.
-            // 직렬화된 User 엔티티의 비정규화 카운터를 기준으로 필요한 경우에만 읽음 처리를 수행한다.
+            // unread counter 는 hot path 최적화를 위한 비정규화 값이라, 테스트 fixture 나 과거 데이터처럼
+            // counter=0 이지만 실제 unread row 가 남아 있는 drift 상태를 완전히 배제할 수 없다.
+            // counter 가 0 일 때만 실제 unread row 존재 여부를 한 번 확인해
+            // 알림 페이지 방문이 "보이는 알림을 읽음 처리하지 못하는" 상태로 끝나지 않게 보정한다.
+            hasUnreadNotifications = notificationRepository.existsByRecipientAndIsReadFalse(user);
+        }
+
+        if (hasUnreadNotifications) {
+            // 문제 해결:
+            // 평상시에는 비정규화 counter 로 빠르게 판단하고,
+            // drift 가 감지된 경우에만 fallback 존재 확인 뒤 bulk UPDATE 를 수행한다.
             notificationRepository.markAllAsRead(user);
             user.resetUnreadNotificationCount();
         }

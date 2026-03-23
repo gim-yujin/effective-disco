@@ -201,11 +201,38 @@ class NotificationServiceTest {
 
         given(userRepository.findByUsernameForUpdate("alice")).willReturn(Optional.of(user));
         given(notificationRepository.findResponseByRecipientOrderByCreatedAtDesc(user)).willReturn(List.of(notification));
+        given(notificationRepository.existsByRecipientAndIsReadFalse(user)).willReturn(false);
 
         List<NotificationResponse> result = notificationService.getAndMarkAllRead("alice");
 
         assertThat(result).hasSize(1);
+        verify(notificationRepository).existsByRecipientAndIsReadFalse(user);
         verify(notificationRepository, never()).markAllAsRead(user);
+        verify(sseEmitterService).sendCount("alice", 0L);
+    }
+
+    @Test
+    void getAndMarkAllRead_whenCounterDriftExists_fallsBackToUnreadRowExistenceCheck() {
+        User user = makeUser("alice");
+        NotificationResponse notification = new NotificationResponse(
+                3L,
+                NotificationType.COMMENT,
+                "counter drift",
+                "/posts/1",
+                false,
+                LocalDateTime.now()
+        );
+
+        given(userRepository.findByUsernameForUpdate("alice")).willReturn(Optional.of(user));
+        given(notificationRepository.findResponseByRecipientOrderByCreatedAtDesc(user)).willReturn(List.of(notification));
+        given(notificationRepository.existsByRecipientAndIsReadFalse(user)).willReturn(true);
+
+        List<NotificationResponse> result = notificationService.getAndMarkAllRead("alice");
+
+        assertThat(result).hasSize(1);
+        verify(notificationRepository).existsByRecipientAndIsReadFalse(user);
+        verify(notificationRepository).markAllAsRead(user);
+        assertThat(user.getUnreadNotificationCount()).isZero();
         verify(sseEmitterService).sendCount("alice", 0L);
     }
 
