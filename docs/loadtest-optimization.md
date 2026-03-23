@@ -479,3 +479,37 @@ RUNS=1 STAGE_FACTORS=0.75,0.9 STOP_ON_HTTP_P99_MS=1200 \
 - `RUNS=5` 이상으로 `0.75 / 0.85 / 0.9 / 0.95 / 1.0` 반복 탐색을 돌려 실제 `highest stable factor` 를 확정해야 한다.
 - 확정된 factor 로 `30분 -> 1시간 -> 2시간` soak 를 재개해야 한다.
 - PostgreSQL wait/slow-query 스냅샷에서 의미 있는 `Lock`, `LWLock`, 장기 active query 가 관측되면 그 경로를 다음 최적화 대상으로 삼아야 한다.
+
+## 2026-03-24 `sub-1.0` 반복 측정 결과
+
+상태: 완료
+
+### 실행 조건
+
+- `APP_LOAD_TEST_DB_POOL_MAX_SIZE=28`
+- `RUNS=5`
+- `STAGE_FACTORS=0.75,0.85,0.9,0.95,1.0`
+- `STOP_ON_HTTP_P99_MS=800`
+- 결과 디렉터리: `loadtest/results/sub-stability-20260324-062311`
+
+### 결과
+
+- [sub-stability-20260324-062311.md](/home/admin0/effective-disco/loadtest/results/sub-stability-20260324-062311.md) 기준 `highest stable factor = n/a`
+- `0.75`: `4 PASS / 0 LIMIT / 1 FAIL`
+- `0.85`: `1 PASS / 2 LIMIT / 1 FAIL`
+- `0.9`: `0 PASS / 0 LIMIT / 1 FAIL`
+- `0.75` 실패 런은 `unexpected_response_rate=0.0033`, `dbPoolTimeouts=144`, `p99=1350.56ms`
+- `0.85` 는 `db-pool-timeout` LIMIT 와 `unexpected-response` FAIL 이 섞여 있었고, 최대 `p99=980.46ms`, 최대 `dbPoolTimeouts=11`
+- 모든 run 에서 `duplicateKeyConflicts=0`, 관계 중복 row `0`, `postLike/comment/unread` mismatch `0`
+
+### 해석
+
+- `pool=28` 로 올린 뒤에도 현재 로컬 환경에서는 `0.75~1.0` 구간에 재현성 있게 안정적인 factor 가 없다.
+- 따라서 지금 문제는 단순히 "pool 값을 더 키울지" 가 아니라, 짧은 시간에도 간헐적으로 `dbPoolTimeouts` 와 `unexpected_response_rate` 를 폭증시키는 환경 변동성 또는 남은 connection 점유 경로를 더 파는 것이다.
+- 특히 `0.75` 에서조차 한 번은 실패했기 때문에, 이 결과는 soak 기준 factor 를 아직 정하지 못했다는 뜻이다.
+
+### 남은 과제
+
+- `0.5 / 0.6 / 0.7` 구간으로 더 내려가 실제 안정 기준선을 다시 찾는다.
+- 같은 반복 측정 중 `postgresSnapshot` 을 더 길게 저장해 `wait_event`, `longestQueryMs`, `slowActiveQueries` 가 실패 런에서 어떻게 튀는지 비교한다.
+- 안정 factor 가 확정되기 전까지 `30분 -> 1시간 -> 2시간` soak 는 보류한다.

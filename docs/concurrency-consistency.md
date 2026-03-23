@@ -169,6 +169,37 @@
 - `duplicateKeyConflicts=0`, 관계 중복 row `0`, SQL mismatch `0` 으로 정합성 불변식은 이번 재측정에서도 유지됐다.
 - 결론적으로 `comment.create` / `notification.store` 최적화는 로컬 write path 비용은 줄였지만, 현재 반복 ramp-up 기준 전체 보수적 안정 구간을 `1.25x` 이상으로 밀어 올리지는 못했다.
 
+## 6차 결과
+
+상태: 완료
+
+검증 날짜:
+
+- 2026-03-24
+
+검증 범위:
+
+- `pool=28` 기준 `sub-1.0` 안정 구간 반복 탐색 5회
+- stage factor `0.75 / 0.85 / 0.9 / 0.95 / 1.0`
+- mixed scenario를 포함한 게시판 목록/핫 게시물/검색/게시물 작성/댓글 작성 혼합 부하
+- 멱등 좋아요 등록/해제 경쟁
+- 북마크 등록/해제 혼합 경쟁
+- 팔로우/언팔로우 혼합 경쟁
+- 차단/해제 혼합 경쟁
+- 알림 생성 vs 전체 읽음 혼합 경쟁
+- `unexpected_response_rate`, `dbPoolTimeouts`, 전체 `http_req_duration p99` 재측정
+
+핵심 결론:
+
+- [sub-stability-20260324-062311.md](/home/admin0/effective-disco/loadtest/results/sub-stability-20260324-062311.md) 기준 `highest stable factor` 는 `n/a` 였다.
+- `0.75` 는 `4/5 PASS`, `1/5 FAIL` 이었다.
+- `0.85` 는 `1/4 PASS`, `2/4 LIMIT`, `1/4 FAIL` 이었다.
+- `0.9` 는 도달한 `1/1` 런이 `FAIL` 이었다.
+- `0.75` 실패 런에서는 `unexpected_response_rate=0.0033`, `dbPoolTimeouts=144`, `p99=1350.56ms` 가 관측됐다.
+- `0.85` 는 `db-pool-timeout` LIMIT 와 `unexpected-response` FAIL 이 함께 나왔고, `p99` 는 최대 `980.46ms` 였다.
+- 모든 측정에서 `duplicateKeyConflicts=0`, 관계 중복 row `0`, SQL mismatch `0` 으로 정합성 불변식은 계속 유지됐다.
+- 결론적으로 현재 로컬 환경과 현재 workload 에서는 `sub-1.0` 구간에서도 재현성 있게 안정적인 factor 를 아직 확보하지 못했다.
+
 ## 1차에서 보장한 불변식
 
 ### 관계형 쓰기 경로
