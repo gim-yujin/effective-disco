@@ -1,0 +1,439 @@
+package com.effectivedisco.repository;
+
+import com.effectivedisco.domain.Board;
+import jakarta.persistence.EntityManager;
+import jakarta.persistence.Query;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageImpl;
+import org.springframework.data.domain.Pageable;
+import org.springframework.jdbc.core.ConnectionCallback;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.stereotype.Repository;
+import org.springframework.transaction.annotation.Transactional;
+
+import javax.sql.DataSource;
+import java.sql.Timestamp;
+import java.time.LocalDateTime;
+import java.util.List;
+import java.util.Locale;
+
+@Repository
+@Transactional(readOnly = true)
+public class PostRepositoryImpl implements PostRepositoryCustom {
+
+    private static final String POSTGRES_GLOBAL_KEYWORD_SQL = """
+            SELECT
+                p.id,
+                p.title,
+                p.content,
+                p.created_at,
+                p.updated_at,
+                p.comment_count,
+                p.like_count,
+                p.view_count,
+                p.pinned,
+                p.draft,
+                p.image_url,
+                a.username,
+                b.name,
+                b.slug
+            FROM posts p
+            JOIN users a ON a.id = p.user_id
+            LEFT JOIN boards b ON b.id = p.board_id
+            WHERE p.draft = false
+              AND (
+                to_tsvector('simple', coalesce(p.title, '') || ' ' || coalesce(p.content, ''))
+                    @@ plainto_tsquery('simple', :keyword)
+                OR lower(a.username) LIKE ('%%' || lower(:keyword) || '%%')
+              )
+            ORDER BY p.created_at DESC
+            """;
+    private static final String POSTGRES_GLOBAL_KEYWORD_COUNT_SQL = """
+            SELECT COUNT(*)
+            FROM posts p
+            JOIN users a ON a.id = p.user_id
+            WHERE p.draft = false
+              AND (
+                to_tsvector('simple', coalesce(p.title, '') || ' ' || coalesce(p.content, ''))
+                    @@ plainto_tsquery('simple', :keyword)
+                OR lower(a.username) LIKE ('%%' || lower(:keyword) || '%%')
+              )
+            """;
+    private static final String POSTGRES_BOARD_KEYWORD_SQL = """
+            SELECT
+                p.id,
+                p.title,
+                p.content,
+                p.created_at,
+                p.updated_at,
+                p.comment_count,
+                p.like_count,
+                p.view_count,
+                p.pinned,
+                p.draft,
+                p.image_url,
+                a.username,
+                b.name,
+                b.slug
+            FROM posts p
+            JOIN users a ON a.id = p.user_id
+            LEFT JOIN boards b ON b.id = p.board_id
+            WHERE p.board_id = :boardId
+              AND p.draft = false
+              AND (
+                to_tsvector('simple', coalesce(p.title, '') || ' ' || coalesce(p.content, ''))
+                    @@ plainto_tsquery('simple', :keyword)
+                OR lower(a.username) LIKE ('%%' || lower(:keyword) || '%%')
+              )
+            ORDER BY p.created_at DESC
+            """;
+    private static final String POSTGRES_BOARD_KEYWORD_COUNT_SQL = """
+            SELECT COUNT(*)
+            FROM posts p
+            JOIN users a ON a.id = p.user_id
+            WHERE p.board_id = :boardId
+              AND p.draft = false
+              AND (
+                to_tsvector('simple', coalesce(p.title, '') || ' ' || coalesce(p.content, ''))
+                    @@ plainto_tsquery('simple', :keyword)
+                OR lower(a.username) LIKE ('%%' || lower(:keyword) || '%%')
+              )
+            """;
+    private static final String FALLBACK_GLOBAL_KEYWORD_SQL = """
+            SELECT
+                p.id,
+                p.title,
+                p.content,
+                p.created_at,
+                p.updated_at,
+                p.comment_count,
+                p.like_count,
+                p.view_count,
+                p.pinned,
+                p.draft,
+                p.image_url,
+                a.username,
+                b.name,
+                b.slug
+            FROM posts p
+            JOIN users a ON a.id = p.user_id
+            LEFT JOIN boards b ON b.id = p.board_id
+            WHERE p.draft = false
+              AND (
+                lower(p.title) LIKE concat('%%', lower(:keyword), '%%')
+                OR lower(p.content) LIKE concat('%%', lower(:keyword), '%%')
+                OR lower(a.username) LIKE concat('%%', lower(:keyword), '%%')
+              )
+            ORDER BY p.created_at DESC
+            """;
+    private static final String FALLBACK_GLOBAL_KEYWORD_COUNT_SQL = """
+            SELECT COUNT(*)
+            FROM posts p
+            JOIN users a ON a.id = p.user_id
+            WHERE p.draft = false
+              AND (
+                lower(p.title) LIKE concat('%%', lower(:keyword), '%%')
+                OR lower(p.content) LIKE concat('%%', lower(:keyword), '%%')
+                OR lower(a.username) LIKE concat('%%', lower(:keyword), '%%')
+              )
+            """;
+    private static final String FALLBACK_BOARD_KEYWORD_SQL = """
+            SELECT
+                p.id,
+                p.title,
+                p.content,
+                p.created_at,
+                p.updated_at,
+                p.comment_count,
+                p.like_count,
+                p.view_count,
+                p.pinned,
+                p.draft,
+                p.image_url,
+                a.username,
+                b.name,
+                b.slug
+            FROM posts p
+            JOIN users a ON a.id = p.user_id
+            LEFT JOIN boards b ON b.id = p.board_id
+            WHERE p.board_id = :boardId
+              AND p.draft = false
+              AND (
+                lower(p.title) LIKE concat('%%', lower(:keyword), '%%')
+                OR lower(p.content) LIKE concat('%%', lower(:keyword), '%%')
+                OR lower(a.username) LIKE concat('%%', lower(:keyword), '%%')
+              )
+            ORDER BY p.created_at DESC
+            """;
+    private static final String FALLBACK_BOARD_KEYWORD_COUNT_SQL = """
+            SELECT COUNT(*)
+            FROM posts p
+            JOIN users a ON a.id = p.user_id
+            WHERE p.board_id = :boardId
+              AND p.draft = false
+              AND (
+                lower(p.title) LIKE concat('%%', lower(:keyword), '%%')
+                OR lower(p.content) LIKE concat('%%', lower(:keyword), '%%')
+                OR lower(a.username) LIKE concat('%%', lower(:keyword), '%%')
+              )
+            """;
+
+    private final EntityManager entityManager;
+    private final JdbcTemplate jdbcTemplate;
+    private volatile Boolean postgresDatabase;
+
+    public PostRepositoryImpl(EntityManager entityManager, JdbcTemplate jdbcTemplate) {
+        this.entityManager = entityManager;
+        this.jdbcTemplate = jdbcTemplate;
+    }
+
+    @Override
+    public Page<PostRepository.PostListRow> searchPublicPostListRows(String keyword, Pageable pageable) {
+        return executeKeywordSearch(keyword, pageable, null);
+    }
+
+    @Override
+    public Page<PostRepository.PostListRow> searchPublicPostListRowsInBoard(Board board,
+                                                                            String keyword,
+                                                                            Pageable pageable) {
+        return executeKeywordSearch(keyword, pageable, board.getId());
+    }
+
+    private Page<PostRepository.PostListRow> executeKeywordSearch(String rawKeyword,
+                                                                  Pageable pageable,
+                                                                  Long boardId) {
+        String keyword = rawKeyword == null ? "" : rawKeyword.trim();
+        SearchSqlSet sqlSet = selectSqlSet(boardId != null, isPostgresDatabase());
+
+        Query contentQuery = entityManager.createNativeQuery(sqlSet.contentSql());
+        Query countQuery = entityManager.createNativeQuery(sqlSet.countSql());
+
+        bindParameters(contentQuery, keyword, boardId);
+        bindParameters(countQuery, keyword, boardId);
+
+        // 문제 해결:
+        // 검색 hot path 는 PostgreSQL 에서만 FTS/pg_trgm native SQL 을 써야 하지만,
+        // H2 테스트 프로필까지 같은 SQL 로 고정하면 CI 가 깨진다.
+        // DB 종류별 query strategy 를 분기해 PostgreSQL 은 FTS+trgm, H2 는 substring fallback 으로 유지한다.
+        if (pageable.isPaged()) {
+            contentQuery.setFirstResult((int) pageable.getOffset());
+            contentQuery.setMaxResults(pageable.getPageSize());
+        }
+
+        @SuppressWarnings("unchecked")
+        List<Object[]> rows = contentQuery.getResultList();
+        List<PostRepository.PostListRow> content = rows.stream()
+                .map(this::mapPostListRow)
+                .toList();
+
+        Number total = (Number) countQuery.getSingleResult();
+        return new PageImpl<>(content, pageable, total.longValue());
+    }
+
+    private void bindParameters(Query query, String keyword, Long boardId) {
+        query.setParameter("keyword", keyword);
+        if (boardId != null) {
+            query.setParameter("boardId", boardId);
+        }
+    }
+
+    private SearchSqlSet selectSqlSet(boolean boardSearch, boolean postgres) {
+        if (postgres) {
+            return boardSearch
+                    ? new SearchSqlSet(POSTGRES_BOARD_KEYWORD_SQL, POSTGRES_BOARD_KEYWORD_COUNT_SQL)
+                    : new SearchSqlSet(POSTGRES_GLOBAL_KEYWORD_SQL, POSTGRES_GLOBAL_KEYWORD_COUNT_SQL);
+        }
+        return boardSearch
+                ? new SearchSqlSet(FALLBACK_BOARD_KEYWORD_SQL, FALLBACK_BOARD_KEYWORD_COUNT_SQL)
+                : new SearchSqlSet(FALLBACK_GLOBAL_KEYWORD_SQL, FALLBACK_GLOBAL_KEYWORD_COUNT_SQL);
+    }
+
+    private boolean isPostgresDatabase() {
+        Boolean cached = postgresDatabase;
+        if (cached != null) {
+            return cached;
+        }
+
+        synchronized (this) {
+            if (postgresDatabase == null) {
+                postgresDatabase = detectDatabaseProduct()
+                        .toLowerCase(Locale.ROOT)
+                        .contains("postgres");
+            }
+            return postgresDatabase;
+        }
+    }
+
+    private String detectDatabaseProduct() {
+        return jdbcTemplate.execute((ConnectionCallback<String>) connection ->
+                connection.getMetaData().getDatabaseProductName()
+        );
+    }
+
+    private PostRepository.PostListRow mapPostListRow(Object[] row) {
+        return new NativePostListRow(
+                toLong(row[0]),
+                (String) row[1],
+                (String) row[2],
+                toLocalDateTime(row[3]),
+                toLocalDateTime(row[4]),
+                toInt(row[5]),
+                toLong(row[6]),
+                toInt(row[7]),
+                toBoolean(row[8]),
+                toBoolean(row[9]),
+                (String) row[10],
+                (String) row[11],
+                (String) row[12],
+                (String) row[13]
+        );
+    }
+
+    private LocalDateTime toLocalDateTime(Object value) {
+        if (value == null) {
+            return null;
+        }
+        if (value instanceof LocalDateTime localDateTime) {
+            return localDateTime;
+        }
+        return ((Timestamp) value).toLocalDateTime();
+    }
+
+    private long toLong(Object value) {
+        return value instanceof Number number ? number.longValue() : 0L;
+    }
+
+    private int toInt(Object value) {
+        return value instanceof Number number ? number.intValue() : 0;
+    }
+
+    private boolean toBoolean(Object value) {
+        if (value instanceof Boolean bool) {
+            return bool;
+        }
+        if (value instanceof Number number) {
+            return number.intValue() != 0;
+        }
+        return false;
+    }
+
+    private record SearchSqlSet(String contentSql, String countSql) {
+    }
+
+    private static final class NativePostListRow implements PostRepository.PostListRow {
+        private final Long id;
+        private final String title;
+        private final String content;
+        private final LocalDateTime createdAt;
+        private final LocalDateTime updatedAt;
+        private final int commentCount;
+        private final long likeCount;
+        private final int viewCount;
+        private final boolean pinned;
+        private final boolean draft;
+        private final String legacyImageUrl;
+        private final String authorUsername;
+        private final String boardName;
+        private final String boardSlug;
+
+        private NativePostListRow(Long id,
+                                  String title,
+                                  String content,
+                                  LocalDateTime createdAt,
+                                  LocalDateTime updatedAt,
+                                  int commentCount,
+                                  long likeCount,
+                                  int viewCount,
+                                  boolean pinned,
+                                  boolean draft,
+                                  String legacyImageUrl,
+                                  String authorUsername,
+                                  String boardName,
+                                  String boardSlug) {
+            this.id = id;
+            this.title = title;
+            this.content = content;
+            this.createdAt = createdAt;
+            this.updatedAt = updatedAt;
+            this.commentCount = commentCount;
+            this.likeCount = likeCount;
+            this.viewCount = viewCount;
+            this.pinned = pinned;
+            this.draft = draft;
+            this.legacyImageUrl = legacyImageUrl;
+            this.authorUsername = authorUsername;
+            this.boardName = boardName;
+            this.boardSlug = boardSlug;
+        }
+
+        @Override
+        public Long getId() {
+            return id;
+        }
+
+        @Override
+        public String getTitle() {
+            return title;
+        }
+
+        @Override
+        public String getContent() {
+            return content;
+        }
+
+        @Override
+        public LocalDateTime getCreatedAt() {
+            return createdAt;
+        }
+
+        @Override
+        public LocalDateTime getUpdatedAt() {
+            return updatedAt;
+        }
+
+        @Override
+        public int getCommentCount() {
+            return commentCount;
+        }
+
+        @Override
+        public long getLikeCount() {
+            return likeCount;
+        }
+
+        @Override
+        public int getViewCount() {
+            return viewCount;
+        }
+
+        @Override
+        public boolean isPinned() {
+            return pinned;
+        }
+
+        @Override
+        public boolean isDraft() {
+            return draft;
+        }
+
+        @Override
+        public String getLegacyImageUrl() {
+            return legacyImageUrl;
+        }
+
+        @Override
+        public String getAuthorUsername() {
+            return authorUsername;
+        }
+
+        @Override
+        public String getBoardName() {
+            return boardName;
+        }
+
+        @Override
+        public String getBoardSlug() {
+            return boardSlug;
+        }
+    }
+}

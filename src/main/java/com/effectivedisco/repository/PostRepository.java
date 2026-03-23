@@ -21,7 +21,7 @@ import java.util.Optional;
  * 공개 목록 조회 메서드는 모두 draft = false 조건을 포함한다.
  * 초안은 작성자 전용 메서드(findByAuthorAndDraftTrue*)를 통해서만 접근한다.
  */
-public interface PostRepository extends JpaRepository<Post, Long> {
+public interface PostRepository extends JpaRepository<Post, Long>, PostRepositoryCustom {
 
     interface CommentNotificationTarget {
         Long getId();
@@ -92,55 +92,6 @@ public interface PostRepository extends JpaRepository<Post, Long> {
             WHERE p.draft = false
             """)
     Page<PostListRow> findPublicPostListRowsOrderByCreatedAtDesc(Pageable pageable);
-
-    /**
-     * 문제 해결:
-     * keyword search 의 Page count 가 users join 을 그대로 타면 본문과 비슷한 비용의 count(*) 가 추가된다.
-     * countQuery 는 EXISTS 서브쿼리로 author 조건만 확인해 count join 비용을 줄인다.
-     */
-    @Query(value = """
-            SELECT
-                p.id AS id,
-                p.title AS title,
-                p.content AS content,
-                p.createdAt AS createdAt,
-                p.updatedAt AS updatedAt,
-                p.commentCount AS commentCount,
-                p.likeCount AS likeCount,
-                p.viewCount AS viewCount,
-                p.pinned AS pinned,
-                p.draft AS draft,
-                p.imageUrl AS legacyImageUrl,
-                a.username AS authorUsername,
-                b.name AS boardName,
-                b.slug AS boardSlug
-            FROM Post p
-            JOIN p.author a
-            LEFT JOIN p.board b
-            WHERE p.draft = false
-              AND (
-                LOWER(p.title) LIKE LOWER(CONCAT('%', :keyword, '%'))
-                OR LOWER(p.content) LIKE LOWER(CONCAT('%', :keyword, '%'))
-                OR LOWER(a.username) LIKE LOWER(CONCAT('%', :keyword, '%'))
-              )
-            ORDER BY p.createdAt DESC
-            """,
-            countQuery = """
-            SELECT COUNT(p)
-            FROM Post p
-            WHERE p.draft = false
-              AND (
-                LOWER(p.title) LIKE LOWER(CONCAT('%', :keyword, '%'))
-                OR LOWER(p.content) LIKE LOWER(CONCAT('%', :keyword, '%'))
-                OR EXISTS (
-                    SELECT 1
-                    FROM User u
-                    WHERE u = p.author
-                      AND LOWER(u.username) LIKE LOWER(CONCAT('%', :keyword, '%'))
-                )
-              )
-            """)
-    Page<PostListRow> searchPublicPostListRows(@Param("keyword") String keyword, Pageable pageable);
 
     /**
      * 문제 해결:
@@ -215,54 +166,6 @@ public interface PostRepository extends JpaRepository<Post, Long> {
               AND p.draft = false
             """)
     Page<PostListRow> findPublicPostListRowsByBoardOrderByCreatedAtDesc(@Param("board") Board board, Pageable pageable);
-
-    @Query(value = """
-            SELECT
-                p.id AS id,
-                p.title AS title,
-                p.content AS content,
-                p.createdAt AS createdAt,
-                p.updatedAt AS updatedAt,
-                p.commentCount AS commentCount,
-                p.likeCount AS likeCount,
-                p.viewCount AS viewCount,
-                p.pinned AS pinned,
-                p.draft AS draft,
-                p.imageUrl AS legacyImageUrl,
-                a.username AS authorUsername,
-                b.name AS boardName,
-                b.slug AS boardSlug
-            FROM Post p
-            JOIN p.author a
-            LEFT JOIN p.board b
-            WHERE p.board = :board
-              AND p.draft = false
-              AND (
-                LOWER(p.title) LIKE LOWER(CONCAT('%', :keyword, '%'))
-                OR LOWER(p.content) LIKE LOWER(CONCAT('%', :keyword, '%'))
-                OR LOWER(a.username) LIKE LOWER(CONCAT('%', :keyword, '%'))
-              )
-            ORDER BY p.createdAt DESC
-            """,
-            countQuery = """
-            SELECT COUNT(p)
-            FROM Post p
-            WHERE p.board = :board
-              AND p.draft = false
-              AND (
-                LOWER(p.title) LIKE LOWER(CONCAT('%', :keyword, '%'))
-                OR LOWER(p.content) LIKE LOWER(CONCAT('%', :keyword, '%'))
-                OR EXISTS (
-                    SELECT 1
-                    FROM User u
-                    WHERE u = p.author
-                      AND LOWER(u.username) LIKE LOWER(CONCAT('%', :keyword, '%'))
-                )
-              )
-            """)
-    Page<PostListRow> searchPublicPostListRowsInBoard(@Param("board") Board board,
-                                                      @Param("keyword") String keyword,
-                                                      Pageable pageable);
 
     @Query(value = """
             SELECT

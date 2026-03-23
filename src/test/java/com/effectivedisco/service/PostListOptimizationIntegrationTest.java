@@ -142,4 +142,39 @@ class PostListOptimizationIntegrationTest {
                 .as("문제 해결 검증: board+keyword search 는 board lookup + page query + count query + tag/image batch 로 고정되어야 한다")
                 .isLessThanOrEqualTo(5L);
     }
+
+    @Test
+    void getPosts_keywordSearchStillMatchesAuthorUsername() {
+        String tagPrefix = "author-search";
+        Board board = boardRepository.save(Board.builder()
+                .name("작성자검색게시판")
+                .slug("author-" + tagPrefix)
+                .description("작성자 검색 회귀 테스트")
+                .build());
+
+        User author = userRepository.save(User.builder()
+                .username("fts-search-author")
+                .email("fts-search-author@example.com")
+                .password("encoded-password")
+                .build());
+
+        Post post = Post.builder()
+                .title("title without keyword")
+                .content("content without keyword")
+                .author(author)
+                .board(board)
+                .build();
+        postRepository.save(post);
+
+        entityManager.flush();
+        entityManager.clear();
+
+        Page<PostResponse> result = postService.getPosts(0, 10, "search-author", null, null, "latest");
+
+        assertThat(result.getContent()).hasSize(1);
+        assertThat(result.getContent().getFirst().getAuthor()).isEqualTo("fts-search-author");
+        assertThat(result.getTotalElements())
+                .as("문제 해결 검증: FTS 도입 후에도 작성자 username 검색 의미는 substring 기반으로 유지되어야 한다")
+                .isEqualTo(1);
+    }
 }

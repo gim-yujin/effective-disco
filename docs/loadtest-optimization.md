@@ -726,3 +726,23 @@ PostgreSQL wait 타임라인:
 - `post_tags(tag_id, post_id)` 인덱스를 추가해 태그 count/list 의 full scan 성격을 줄인다.
 - `%keyword%` 검색을 유지할 계획이면 `pg_trgm` 또는 full-text search 방향을 별도로 검토한다.
 - 목록/검색 응답에서 `content` 칼럼이 정말 필요한지 다시 검토한다.
+
+## 2026-03-24 PostgreSQL `FTS + pg_trgm` 도입 설계
+
+상태: 완료
+
+요약:
+
+- 검색 병목은 `title/content/username` 을 모두 `%keyword%` 로 처리하는 현재 query shape 에 있었다.
+- `title/content` 는 문서 검색에 가까워 FTS 가 맞고, `username` 은 substring semantics 유지가 중요해 trigram-backed LIKE 가 더 적합했다.
+- 따라서 `FTS only` 나 `trigram only` 가 아니라 `FTS + pg_trgm` 하이브리드를 채택했다.
+
+구현 포인트:
+
+- PostgreSQL 에서는 [PostRepositoryImpl](/home/admin0/effective-disco/src/main/java/com/effectivedisco/repository/PostRepositoryImpl.java) 이 native SQL 로 `title/content` FTS + `username` LIKE 를 수행한다.
+- H2 테스트 프로필에서는 같은 의미의 fallback SQL 로 동작시켜 CI 회귀 검증을 유지한다.
+- 인프라 초기화는 [PostgresSearchInfrastructureInitializer](/home/admin0/effective-disco/src/main/java/com/effectivedisco/config/PostgresSearchInfrastructureInitializer.java) 가 맡는다.
+
+상세 근거:
+
+- 별도 설계 문서 [postgres-search-strategy.md](/home/admin0/effective-disco/docs/postgres-search-strategy.md) 참조
