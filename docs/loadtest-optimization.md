@@ -513,3 +513,48 @@ RUNS=1 STAGE_FACTORS=0.75,0.9 STOP_ON_HTTP_P99_MS=1200 \
 - `0.5 / 0.6 / 0.7` 구간으로 더 내려가 실제 안정 기준선을 다시 찾는다.
 - 같은 반복 측정 중 `postgresSnapshot` 을 더 길게 저장해 `wait_event`, `longestQueryMs`, `slowActiveQueries` 가 실패 런에서 어떻게 튀는지 비교한다.
 - 안정 factor 가 확정되기 전까지 `30분 -> 1시간 -> 2시간` soak 는 보류한다.
+
+## 2026-03-24 `0.5~0.7` 반복 측정 + PostgreSQL wait 원인 수집
+
+상태: 완료
+
+### 실행 조건
+
+- `APP_LOAD_TEST_DB_POOL_MAX_SIZE=28`
+- `RUNS=5`
+- `STAGE_FACTORS=0.5,0.6,0.7`
+- 결과 디렉터리: `loadtest/results/sub-stability-20260324-064643`
+- 추가 focused run:
+  - `SOAK_FACTOR=0.7`
+  - `SOAK_DURATION=30s`
+  - `WARMUP_DURATION=5s`
+  - `SAMPLE_INTERVAL_SECONDS=2`
+  - artifact: `loadtest/results/soak-20260324-070318-metrics.jsonl`
+
+### 결과
+
+- [sub-stability-20260324-064643.md](/home/admin0/effective-disco/loadtest/results/sub-stability-20260324-064643.md) 기준 `highest stable factor = 0.6`
+- `0.5`: `5 PASS / 0 LIMIT / 0 FAIL`
+- `0.6`: `5 PASS / 0 LIMIT / 0 FAIL`
+- `0.7`: `3 PASS / 1 LIMIT / 1 FAIL`
+- `0.7` LIMIT 런은 `db-pool-timeout`, FAIL 런은 `unexpected-response` 였고, `dbPoolTimeouts=1~3`, `p99=677.19ms~685.37ms`
+- 모든 run 에서 `duplicateKeyConflicts=0`, 관계 중복 row `0`, `postLike/comment/unread` mismatch `0`
+
+### PostgreSQL wait 관찰
+
+- focused `0.7` 런 [soak-20260324-070318.md](/home/admin0/effective-disco/loadtest/results/soak-20260324-070318.md) 은 최종 스냅샷만 보면 `dbPoolTimeouts=0` 이지만, 타임라인 [soak-20260324-070318-metrics.jsonl](/home/admin0/effective-disco/loadtest/results/soak-20260324-070318-metrics.jsonl) 에서는 런 중 피크가 분명했다.
+- 피크 구간에서 `currentActiveConnections=28`, `currentThreadsAwaitingConnection=177~185`, `waitingSessions=12`, `lockWaitingSessions=8`, `longestTransactionMs=101`, `longestQueryMs=47`
+- 관측된 주요 wait 는 `Lock/transactionid`, `Lock/tuple`, `LWLock/WALWrite`, `IO/WALSync`, `ClientRead`
+- `slowActiveQueries` 는 대부분 `posts + users` 목록 조회 쿼리와 `count(*) from posts ...` 검색/목록 count 쿼리였다.
+
+### 해석
+
+- `0.6` 이 현재 로컬 환경에서 첫 재현성 있는 안정 factor 다.
+- `0.7` 부근부터는 정합성 문제가 아니라, read path 와 write path 가 함께 몰릴 때 PostgreSQL 내부의 lock/WAL pressure 가 생기고, 이 압력이 Hikari 대기열 증가로 바로 전파된다.
+- 특히 `post.list` 자체는 이미 N+1 을 줄였지만, 아직도 wall time 이 가장 큰 profile 이고, 여기에 검색/목록 count 쿼리가 겹치면서 `0.7` 부근에서 한계가 나타난다.
+
+### 남은 과제
+
+- `0.6` 기준으로 `30분 -> 1시간 -> 2시간` soak 를 시작한다.
+- 다음 최적화 대상은 `posts + users` 목록 조회의 남은 wall time 과 검색/목록 `count(*)` 경로다.
+- lock/WAL pressure 가 실제로 어디서 시작되는지 보려면 PostgreSQL 쪽 `pg_stat_statements` 또는 더 긴 timeline 비교를 추가하는 것이 좋다.

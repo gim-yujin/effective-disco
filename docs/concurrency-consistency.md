@@ -200,6 +200,37 @@
 - 모든 측정에서 `duplicateKeyConflicts=0`, 관계 중복 row `0`, SQL mismatch `0` 으로 정합성 불변식은 계속 유지됐다.
 - 결론적으로 현재 로컬 환경과 현재 workload 에서는 `sub-1.0` 구간에서도 재현성 있게 안정적인 factor 를 아직 확보하지 못했다.
 
+## 7차 결과
+
+상태: 완료
+
+검증 날짜:
+
+- 2026-03-24
+
+검증 범위:
+
+- `pool=28` 기준 `sub-1.0` 하위 구간 반복 탐색 5회
+- stage factor `0.5 / 0.6 / 0.7`
+- mixed scenario를 포함한 게시판 목록/핫 게시물/검색/게시물 작성/댓글 작성 혼합 부하
+- 멱등 좋아요 등록/해제 경쟁
+- 북마크 등록/해제 혼합 경쟁
+- 팔로우/언팔로우 혼합 경쟁
+- 차단/해제 혼합 경쟁
+- 알림 생성 vs 전체 읽음 혼합 경쟁
+- `postgresSnapshot` 기반 PostgreSQL wait/slow-query 원인 수집
+
+핵심 결론:
+
+- [sub-stability-20260324-064643.md](/home/admin0/effective-disco/loadtest/results/sub-stability-20260324-064643.md) 기준 `highest stable factor` 는 `0.6` 이었다.
+- `0.5` 는 `5/5 PASS`, `0.6` 도 `5/5 PASS` 였다.
+- `0.7` 은 `3/5 PASS`, `1/5 LIMIT`, `1/5 FAIL` 이었다.
+- `0.7` LIMIT/FAIL 런에서도 `duplicateKeyConflicts=0`, 관계 중복 row `0`, SQL mismatch `0` 으로 정합성 불변식은 계속 유지됐다.
+- `0.7` 에서 관측된 실패 신호는 `dbPoolTimeouts=1~3`, `unexpected_response_rate` 발생, `p99` 최대 `685.37ms` 였다.
+- focused `0.7` wait 수집 런 [soak-20260324-070318.md](/home/admin0/effective-disco/loadtest/results/soak-20260324-070318.md) 기준 런 중 피크는 `activeConnections=28`, `threadsAwaitingConnection=177~185`, `waitingSessions` 최대 `12`, `lockWaitingSessions` 최대 `8` 이었다.
+- 같은 런의 `postgresSnapshot` 에서는 `Lock/transactionid`, `Lock/tuple`, `LWLock/WALWrite`, `IO/WALSync` wait 가 관측됐고, `slowActiveQueries` 는 주로 `posts + users` 목록 조회와 `count(*)` 검색/목록 count 쿼리였다.
+- 결론적으로 현재 로컬 환경에서 soak 기준 안정 factor 는 `0.6` 이고, `0.7` 부근부터는 정합성 깨짐이 아니라 read pressure + lock/WAL pressure 로 인해 pool 대기와 응답 지연이 먼저 증가한다.
+
 ## 1차에서 보장한 불변식
 
 ### 관계형 쓰기 경로
