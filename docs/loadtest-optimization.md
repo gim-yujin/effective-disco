@@ -212,3 +212,38 @@ SOAK_FACTOR=1 SOAK_DURATION=10s WARMUP_DURATION=5s SAMPLE_INTERVAL_SECONDS=2 \
 
 - 같은 조건으로 반복 ramp-up 을 다시 돌려 `comment.create` / `notification.store` 최적화가 전체 안정 구간을 실제로 밀어 올렸는지 측정
 - 여전히 `1.5x` 경계가 유지되면 다음 병목을 `comment.create`, `notification.store` 외의 쓰기 경로 또는 pool 설정/DB 플랜에서 찾아야 한다
+
+### 후속 경계점 재측정
+
+실행 날짜:
+
+- 2026-03-24
+
+실행 조건:
+
+- 결과 디렉터리: `loadtest/results/boundary-repeat-write-opt-20260324-042009`
+- 반복 횟수: `5회`
+- `STOP_ON_K6_THRESHOLD=0`
+- `STOP_ON_HTTP_P99_MS=800`
+- `STAGE_FACTORS=1,1.25,1.5,1.75,2,2.25,2.5,3,3.5,4`
+- `BROWSE_DURATION=12s`, `HOT_POST_DURATION=12s`, `SEARCH_DURATION=12s`
+- `WRITE_STAGE_ONE_DURATION=8s`, `WRITE_STAGE_TWO_DURATION=8s`
+
+재측정 결과:
+
+- `1.0x`: `5/5 PASS`
+- `1.25x`: `3/5 PASS`, `2/5 LIMIT`
+- `1.25x` LIMIT 는 모두 `http-p99-threshold`
+- `1.25x` 전체 `p99`: `774.08ms~961.15ms`
+- `1.5x`: 도달한 `3/3` 모두 `FAIL`
+- `1.5x` 전체 `p99`: `1046.84ms~1581.89ms`
+- `1.5x` 실패 런에서는 `unexpected_response_rate=0.0003~0.0056`, `dbPoolTimeouts=4~79`
+- 전체 반복 런에서 `maxActiveConnections=20`, `maxThreadsAwaitingConnection=191~200`
+- 전체 반복 런에서 `duplicateKeyConflicts=0`, 관계 중복 row `0`, SQL mismatch `0`
+
+해석:
+
+- `comment.create` 와 `notification.store` 자체의 SQL fan-out 은 줄었지만, mixed ramp-up 기준 전체 한계점은 올라가지 않았다.
+- 오히려 이번 반복 샘플 기준으로는 `1.25x` 도 `5/5 PASS` 를 유지하지 못해, 보수적으로는 `1.0x 안정 / 1.25x 경계 / 1.5x 실패` 로 보는 편이 맞다.
+- 즉 이번 최적화는 hot path 하나하나를 가볍게 만들었지만, 시스템 전체 병목은 여전히 DB pool 포화와 다른 혼합 경로 경합에 묶여 있다.
+- 다음 단계는 `pool 포화를 유발하는 남은 경로` 를 다시 좁히는 것이다. 특히 `write_posts_and_comments` 와 mixed race 전체에서 어떤 경로가 커넥션을 오래 점유하는지 재계측이 필요하다.

@@ -98,6 +98,7 @@
 - 2026-03-24 `comment.create` / `notification.store` 쓰기 경로 최적화를 적용했다.
 - 병목 프로파일 기준 `comment.create averageSqlStatementCount = 4.95 -> 4.00`, `notification.store averageSqlStatementCount = 3.00 -> 2.00` 으로 줄었다.
 - `notification.store averageWallTimeMs = 4.23 -> 1.95` 로 낮아졌고, short soak에서도 `duplicateKeyConflicts=0`, `dbPoolTimeouts=0`, SQL mismatch `0` 이 유지됐다.
+- 이후 반복 ramp-up 재측정에서는 `1.0x = 5/5 PASS`, `1.25x = 3/5 PASS`, `1.5x = 3/3 FAIL` 로, write path 최적화만으로 전체 경계점이 올라가지는 않았다.
 - 상세 원인, 조치, 전후 수치는 [loadtest-optimization.md](loadtest-optimization.md) 에 기록한다.
 
 ## 4차 결과
@@ -127,6 +128,36 @@
 - `1.5x` 전체 `p99` 는 `868.06ms~963.63ms`, 평균 `904.64ms` 였다.
 - `duplicateKeyConflicts=0`, 관계 중복 row `0`, SQL mismatch `0` 으로 정합성 불변식은 최적화 후에도 계속 유지됐다.
 - 결론적으로 `post.list` 최적화는 국소 병목은 줄였지만, 시스템 전체 보수적 안정 구간은 아직 `1.25x` 다.
+
+## 5차 결과
+
+상태: 완료
+
+검증 날짜:
+
+- 2026-03-24
+
+검증 범위:
+
+- `comment.create` / `notification.store` 최적화 이후 반복 ramp-up 경계점 재측정 5회
+- mixed scenario를 포함한 게시판 목록/핫 게시물/검색/게시물 작성/댓글 작성 혼합 부하
+- 멱등 좋아요 등록/해제 경쟁
+- 북마크 등록/해제 혼합 경쟁
+- 팔로우/언팔로우 혼합 경쟁
+- 차단/해제 혼합 경쟁
+- 알림 생성 vs 전체 읽음 혼합 경쟁
+- `unexpected_response_rate`, `dbPoolTimeouts`, 전체 `http_req_duration p99` 재측정
+
+핵심 결론:
+
+- `1.0x` 는 `5/5 PASS` 였다.
+- `1.25x` 는 `3/5 PASS`, `2/5 LIMIT` 이었다.
+- `1.5x` 는 도달한 `3/3` 런 모두 `FAIL` 이었다.
+- `1.25x` LIMIT 는 모두 `http-p99-threshold` 였고, `1.5x` FAIL 은 모두 `unexpected-response` 와 `dbPoolTimeouts` 를 동반했다.
+- `1.25x` 전체 `p99` 는 `774.08ms~961.15ms`, `1.5x` 전체 `p99` 는 `1046.84ms~1581.89ms` 였다.
+- `1.5x` 실패 런의 `dbPoolTimeouts` 는 `4~79`, `maxActiveConnections` 는 매번 `20`, `maxThreadsAwaitingConnection` 은 `191~200` 이었다.
+- `duplicateKeyConflicts=0`, 관계 중복 row `0`, SQL mismatch `0` 으로 정합성 불변식은 이번 재측정에서도 유지됐다.
+- 결론적으로 `comment.create` / `notification.store` 최적화는 로컬 write path 비용은 줄였지만, 현재 반복 ramp-up 기준 전체 보수적 안정 구간을 `1.25x` 이상으로 밀어 올리지는 못했다.
 
 ## 1차에서 보장한 불변식
 
