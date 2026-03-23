@@ -5,7 +5,12 @@ import com.effectivedisco.domain.Comment;
 import com.effectivedisco.domain.Post;
 import com.effectivedisco.domain.User;
 import com.effectivedisco.repository.BoardRepository;
+import com.effectivedisco.repository.BlockRepository;
+import com.effectivedisco.repository.BookmarkRepository;
 import com.effectivedisco.repository.CommentRepository;
+import com.effectivedisco.repository.FollowRepository;
+import com.effectivedisco.repository.NotificationRepository;
+import com.effectivedisco.repository.PostLikeRepository;
 import com.effectivedisco.repository.PostRepository;
 import com.effectivedisco.repository.UserRepository;
 import org.junit.jupiter.api.BeforeEach;
@@ -44,6 +49,11 @@ class BoardWebControllerTest {
     @Autowired WebApplicationContext context;
     @Autowired UserRepository        userRepository;
     @Autowired PostRepository        postRepository;
+    @Autowired PostLikeRepository    postLikeRepository;
+    @Autowired BookmarkRepository    bookmarkRepository;
+    @Autowired FollowRepository      followRepository;
+    @Autowired BlockRepository       blockRepository;
+    @Autowired NotificationRepository notificationRepository;
     @Autowired BoardRepository       boardRepository;
     @Autowired CommentRepository     commentRepository;
     @Autowired PasswordEncoder       passwordEncoder;
@@ -60,6 +70,15 @@ class BoardWebControllerTest {
                 .apply(SecurityMockMvcConfigurers.springSecurity())
                 .build();
 
+        // 문제 해결:
+        // 좋아요/북마크/알림이 남아 있으면 post/user 삭제가 FK로 막히므로
+        // 하위 테이블부터 지워 테스트 간 상태 누수를 끊는다.
+        postLikeRepository.deleteAll();
+        bookmarkRepository.deleteAll();
+        blockRepository.deleteAll();
+        followRepository.deleteAll();
+        notificationRepository.deleteAll();
+        commentRepository.deleteAll();
         postRepository.deleteAll();
         userRepository.deleteAll();
 
@@ -318,13 +337,13 @@ class BoardWebControllerTest {
                 .andExpect(status().isForbidden());
     }
 
-    // ── 좋아요 토글 ───────────────────────────────────────────
+    // ── 좋아요 등록/해제 ──────────────────────────────────────
 
     /**
      * 인증된 사용자가 좋아요를 누르면 게시물 상세 페이지로 리다이렉트된다.
      */
     @Test
-    void toggleLike_withAuth_redirectsToPost() throws Exception {
+    void likePost_withAuth_redirectsToPost() throws Exception {
         Post post = postRepository.save(Post.builder()
                 .title("좋아요 테스트").content("내용").author(testUser).board(board).build());
 
@@ -340,7 +359,7 @@ class BoardWebControllerTest {
      * SecurityConfig: POST /posts/** → anyRequest().authenticated()
      */
     @Test
-    void toggleLike_withoutAuth_redirectsToLogin() throws Exception {
+    void likePost_withoutAuth_redirectsToLogin() throws Exception {
         Post post = postRepository.save(Post.builder()
                 .title("좋아요 테스트").content("내용").author(testUser).board(board).build());
 
@@ -350,17 +369,41 @@ class BoardWebControllerTest {
                 .andExpect(redirectedUrl("/login"));
     }
 
-    // ── 북마크 토글 ───────────────────────────────────────────
+    @Test
+    void unlikePost_withAuth_redirectsToPost() throws Exception {
+        Post post = postRepository.save(Post.builder()
+                .title("좋아요 해제 테스트").content("내용").author(testUser).board(board).build());
+
+        mockMvc.perform(post("/posts/{id}/unlike", post.getId())
+                        .with(csrf())
+                        .with(user("otheruser")))
+                .andExpect(status().is3xxRedirection())
+                .andExpect(redirectedUrl("/posts/" + post.getId()));
+    }
+
+    // ── 북마크 등록/해제 ──────────────────────────────────────
 
     /**
      * 인증된 사용자가 북마크를 클릭하면 게시물 상세 페이지로 리다이렉트된다.
      */
     @Test
-    void toggleBookmark_withAuth_redirectsToPost() throws Exception {
+    void bookmarkPost_withAuth_redirectsToPost() throws Exception {
         Post post = postRepository.save(Post.builder()
                 .title("북마크 테스트").content("내용").author(testUser).board(board).build());
 
         mockMvc.perform(post("/posts/{id}/bookmark", post.getId())
+                        .with(csrf())
+                        .with(user("otheruser")))
+                .andExpect(status().is3xxRedirection())
+                .andExpect(redirectedUrl("/posts/" + post.getId()));
+    }
+
+    @Test
+    void unbookmarkPost_withAuth_redirectsToPost() throws Exception {
+        Post post = postRepository.save(Post.builder()
+                .title("북마크 해제 테스트").content("내용").author(testUser).board(board).build());
+
+        mockMvc.perform(post("/posts/{id}/unbookmark", post.getId())
                         .with(csrf())
                         .with(user("otheruser")))
                 .andExpect(status().is3xxRedirection())

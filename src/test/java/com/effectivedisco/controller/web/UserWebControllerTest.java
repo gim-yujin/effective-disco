@@ -2,6 +2,11 @@ package com.effectivedisco.controller.web;
 
 import com.effectivedisco.domain.Follow;
 import com.effectivedisco.domain.User;
+import com.effectivedisco.repository.BlockRepository;
+import com.effectivedisco.repository.BookmarkRepository;
+import com.effectivedisco.repository.NotificationRepository;
+import com.effectivedisco.repository.PostLikeRepository;
+import com.effectivedisco.repository.PostRepository;
 import com.effectivedisco.repository.FollowRepository;
 import com.effectivedisco.repository.UserRepository;
 import org.junit.jupiter.api.BeforeEach;
@@ -30,8 +35,10 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  *   POST /settings/password           비밀번호 변경 (성공·불일치·현재비밀번호오류)
  *   GET  /users/{username}/followers  팔로워 목록 (공개)
  *   GET  /users/{username}/following  팔로잉 목록 (공개)
- *   POST /users/{username}/follow     팔로우 토글 (인증 필요)
- *   POST /users/{username}/block      차단 토글 (인증 필요)
+ *   POST /users/{username}/follow     팔로우 등록 (인증 필요)
+ *   POST /users/{username}/unfollow   팔로우 해제 (인증 필요)
+ *   POST /users/{username}/block      차단 등록 (인증 필요)
+ *   POST /users/{username}/unblock    차단 해제 (인증 필요)
  *
  * 인증: SecurityMockMvcRequestPostProcessors.user() 로 세션 인증을 시뮬레이션한다.
  * CSRF: 웹 FilterChain은 CSRF가 활성화되므로 POST에 .with(csrf()) 를 추가해야 한다.
@@ -44,6 +51,11 @@ class UserWebControllerTest {
     @Autowired WebApplicationContext context;
     @Autowired UserRepository        userRepository;
     @Autowired FollowRepository      followRepository;
+    @Autowired BlockRepository       blockRepository;
+    @Autowired BookmarkRepository    bookmarkRepository;
+    @Autowired PostRepository        postRepository;
+    @Autowired PostLikeRepository    postLikeRepository;
+    @Autowired NotificationRepository notificationRepository;
     @Autowired PasswordEncoder       passwordEncoder;
 
     MockMvc mockMvc;
@@ -56,6 +68,14 @@ class UserWebControllerTest {
                 .webAppContextSetup(context)
                 .apply(SecurityMockMvcConfigurers.springSecurity())
                 .build();
+
+        postLikeRepository.deleteAll();
+        bookmarkRepository.deleteAll();
+        notificationRepository.deleteAll();
+        blockRepository.deleteAll();
+        followRepository.deleteAll();
+        postRepository.deleteAll();
+        userRepository.deleteAll();
 
         testUser  = userRepository.save(User.builder()
                 .username("webuser").email("webuser@test.com")
@@ -215,14 +235,14 @@ class UserWebControllerTest {
                 .andExpect(model().attributeExists("followers"));
     }
 
-    // ── 팔로우 토글 ──────────────────────────────────────────
+    // ── 팔로우 등록/해제 ─────────────────────────────────────
 
     /**
      * 인증된 사용자가 타인 프로필에서 팔로우를 클릭하면
      * 해당 사용자 프로필로 리다이렉트되어야 한다.
      */
     @Test
-    void toggleFollow_authenticated_redirectsToProfile() throws Exception {
+    void follow_authenticated_redirectsToProfile() throws Exception {
         mockMvc.perform(post("/users/{u}/follow", otherUser.getUsername())
                         .with(csrf())
                         .with(user(testUser.getUsername())))
@@ -235,21 +255,39 @@ class UserWebControllerTest {
      * SecurityConfig: POST /users/{username}/follow → authenticated()
      */
     @Test
-    void toggleFollow_unauthenticated_redirectsToLogin() throws Exception {
+    void follow_unauthenticated_redirectsToLogin() throws Exception {
         mockMvc.perform(post("/users/{u}/follow", otherUser.getUsername())
                         .with(csrf()))
                 .andExpect(status().is3xxRedirection())
                 .andExpect(redirectedUrl("/login"));
     }
 
-    // ── 차단 토글 ────────────────────────────────────────────
+    @Test
+    void unfollow_authenticated_redirectsToProfile() throws Exception {
+        mockMvc.perform(post("/users/{u}/unfollow", otherUser.getUsername())
+                        .with(csrf())
+                        .with(user(testUser.getUsername())))
+                .andExpect(status().is3xxRedirection())
+                .andExpect(redirectedUrl("/users/" + otherUser.getUsername()));
+    }
+
+    // ── 차단 등록/해제 ───────────────────────────────────────
 
     /**
      * 인증된 사용자가 차단을 누르면 해당 사용자 프로필로 리다이렉트되어야 한다.
      */
     @Test
-    void toggleBlock_authenticated_redirectsToProfile() throws Exception {
+    void block_authenticated_redirectsToProfile() throws Exception {
         mockMvc.perform(post("/users/{u}/block", otherUser.getUsername())
+                        .with(csrf())
+                        .with(user(testUser.getUsername())))
+                .andExpect(status().is3xxRedirection())
+                .andExpect(redirectedUrl("/users/" + otherUser.getUsername()));
+    }
+
+    @Test
+    void unblock_authenticated_redirectsToProfile() throws Exception {
+        mockMvc.perform(post("/users/{u}/unblock", otherUser.getUsername())
                         .with(csrf())
                         .with(user(testUser.getUsername())))
                 .andExpect(status().is3xxRedirection())

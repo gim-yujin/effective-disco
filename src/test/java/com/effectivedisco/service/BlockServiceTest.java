@@ -29,50 +29,72 @@ class BlockServiceTest {
 
     @InjectMocks BlockService blockService;
 
-    // ── toggle ────────────────────────────────────────────
+    // ── block / unblock ───────────────────────────────────
 
     @Test
-    void toggle_notBlocking_createsBlockAndReturnsTrue() {
+    void block_notBlocking_createsBlock() {
         User blocker = makeUser("alice");
         User blocked = makeUser("bob");
 
-        given(userRepository.findByUsername("alice")).willReturn(Optional.of(blocker));
+        given(userRepository.findByUsernameForUpdate("alice")).willReturn(Optional.of(blocker));
         given(userRepository.findByUsername("bob")).willReturn(Optional.of(blocked));
-        // 기존 차단 없음 → 새로 차단
-        given(blockRepository.findByBlockerAndBlocked(blocker, blocked)).willReturn(Optional.empty());
+        given(blockRepository.existsByBlockerAndBlocked(blocker, blocked)).willReturn(false);
 
-        boolean result = blockService.toggle("alice", "bob");
+        blockService.block("alice", "bob");
 
-        assertThat(result).isTrue();
         verify(blockRepository).save(any(Block.class));
     }
 
     @Test
-    void toggle_alreadyBlocking_deletesBlockAndReturnsFalse() {
+    void block_alreadyBlocking_isIdempotent() {
         User blocker = makeUser("alice");
         User blocked = makeUser("bob");
-        Block existing = new Block(blocker, blocked);
 
-        given(userRepository.findByUsername("alice")).willReturn(Optional.of(blocker));
+        given(userRepository.findByUsernameForUpdate("alice")).willReturn(Optional.of(blocker));
         given(userRepository.findByUsername("bob")).willReturn(Optional.of(blocked));
-        // 이미 차단 중 → 차단 해제
-        given(blockRepository.findByBlockerAndBlocked(blocker, blocked)).willReturn(Optional.of(existing));
+        given(blockRepository.existsByBlockerAndBlocked(blocker, blocked)).willReturn(true);
 
-        boolean result = blockService.toggle("alice", "bob");
+        blockService.block("alice", "bob");
 
-        assertThat(result).isFalse();
-        verify(blockRepository).delete(existing);
         verify(blockRepository, never()).save(any());
     }
 
     @Test
-    void toggle_selfBlock_throwsIllegalArgumentException() {
+    void block_selfBlock_throwsIllegalArgumentException() {
         // 자기 자신을 차단하려 할 때 예외 발생 — repository 호출 없음
-        assertThatThrownBy(() -> blockService.toggle("alice", "alice"))
+        assertThatThrownBy(() -> blockService.block("alice", "alice"))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("자기 자신을 차단할 수 없습니다");
 
         verify(blockRepository, never()).save(any());
+    }
+
+    @Test
+    void unblock_existingBlock_deletesRelation() {
+        User blocker = makeUser("alice");
+        User blocked = makeUser("bob");
+
+        given(userRepository.findByUsernameForUpdate("alice")).willReturn(Optional.of(blocker));
+        given(userRepository.findByUsername("bob")).willReturn(Optional.of(blocked));
+        given(blockRepository.deleteByBlockerAndBlocked(blocker, blocked)).willReturn(1L);
+
+        blockService.unblock("alice", "bob");
+
+        verify(blockRepository).deleteByBlockerAndBlocked(blocker, blocked);
+    }
+
+    @Test
+    void unblock_missingBlock_isIdempotent() {
+        User blocker = makeUser("alice");
+        User blocked = makeUser("bob");
+
+        given(userRepository.findByUsernameForUpdate("alice")).willReturn(Optional.of(blocker));
+        given(userRepository.findByUsername("bob")).willReturn(Optional.of(blocked));
+        given(blockRepository.deleteByBlockerAndBlocked(blocker, blocked)).willReturn(0L);
+
+        blockService.unblock("alice", "bob");
+
+        verify(blockRepository).deleteByBlockerAndBlocked(blocker, blocked);
     }
 
     // ── isBlocking ────────────────────────────────────────

@@ -20,8 +20,6 @@ import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 import org.springframework.web.servlet.mvc.support.RedirectAttributes;
 
-import org.springframework.dao.DataIntegrityViolationException;
-
 import java.util.Collections;
 import java.util.HashSet;
 import java.util.List;
@@ -38,7 +36,8 @@ import java.util.Set;
  *   /posts/{id}                    게시물 상세
  *   /posts/{id}/edit               게시물 수정 폼
  *   /posts/{id}/delete             게시물 삭제
- *   /posts/{id}/like               좋아요 토글
+ *   /posts/{id}/like               좋아요 등록
+ *   /posts/{id}/unlike             좋아요 해제
  *   /posts/{postId}/comments/**    댓글·대댓글 CRUD
  */
 @Controller
@@ -283,27 +282,35 @@ public class BoardWebController {
                 : "redirect:/";
     }
 
-    /** 좋아요 토글 */
+    /** 좋아요 등록 */
     @PostMapping("/posts/{id}/like")
-    public String toggleLike(@PathVariable Long id,
-                             @AuthenticationPrincipal UserDetails userDetails) {
-        try {
-            postService.toggleLike(id, userDetails.getUsername());
-        } catch (DataIntegrityViolationException ignored) {
-            // 동시 요청으로 UNIQUE 제약 위반 — 무시하고 리다이렉트
-        }
+    public String likePost(@PathVariable Long id,
+                           @AuthenticationPrincipal UserDetails userDetails) {
+        postService.likePost(id, userDetails.getUsername());
         return "redirect:/posts/" + id;
     }
 
-    /** 북마크 토글 */
+    /** 좋아요 해제 */
+    @PostMapping("/posts/{id}/unlike")
+    public String unlikePost(@PathVariable Long id,
+                             @AuthenticationPrincipal UserDetails userDetails) {
+        postService.unlikePost(id, userDetails.getUsername());
+        return "redirect:/posts/" + id;
+    }
+
+    /** 북마크 등록 */
     @PostMapping("/posts/{id}/bookmark")
-    public String toggleBookmark(@PathVariable Long id,
+    public String bookmarkPost(@PathVariable Long id,
+                               @AuthenticationPrincipal UserDetails userDetails) {
+        bookmarkService.bookmark(userDetails.getUsername(), id);
+        return "redirect:/posts/" + id;
+    }
+
+    /** 북마크 해제 */
+    @PostMapping("/posts/{id}/unbookmark")
+    public String unbookmarkPost(@PathVariable Long id,
                                  @AuthenticationPrincipal UserDetails userDetails) {
-        try {
-            bookmarkService.toggle(userDetails.getUsername(), id);
-        } catch (DataIntegrityViolationException ignored) {
-            // 동시 요청으로 UNIQUE 제약 위반 — 무시하고 리다이렉트
-        }
+        bookmarkService.unbookmark(userDetails.getUsername(), id);
         return "redirect:/posts/" + id;
     }
 

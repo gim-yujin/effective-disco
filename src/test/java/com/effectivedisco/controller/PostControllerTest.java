@@ -2,6 +2,11 @@ package com.effectivedisco.controller;
 
 import com.effectivedisco.domain.Post;
 import com.effectivedisco.domain.User;
+import com.effectivedisco.repository.BlockRepository;
+import com.effectivedisco.repository.BookmarkRepository;
+import com.effectivedisco.repository.FollowRepository;
+import com.effectivedisco.repository.NotificationRepository;
+import com.effectivedisco.repository.PostLikeRepository;
 import com.effectivedisco.repository.PostRepository;
 import com.effectivedisco.repository.UserRepository;
 import com.effectivedisco.security.JwtTokenProvider;
@@ -34,6 +39,11 @@ class PostControllerTest {
     @Autowired JwtTokenProvider jwtTokenProvider;
     @Autowired UserRepository userRepository;
     @Autowired PostRepository postRepository;
+    @Autowired PostLikeRepository postLikeRepository;
+    @Autowired NotificationRepository notificationRepository;
+    @Autowired BookmarkRepository bookmarkRepository;
+    @Autowired FollowRepository followRepository;
+    @Autowired BlockRepository blockRepository;
     @Autowired PasswordEncoder passwordEncoder;
 
     MockMvc mockMvc;
@@ -49,6 +59,14 @@ class PostControllerTest {
                 .apply(SecurityMockMvcConfigurers.springSecurity())
                 .build();
 
+        // 문제 해결:
+        // MockMvc 요청이 만든 관계 row는 다음 테스트 setUp까지 남을 수 있으므로
+        // 부모 엔티티(posts/users)를 지우기 전에 연관 테이블을 먼저 비운다.
+        postLikeRepository.deleteAll();
+        bookmarkRepository.deleteAll();
+        blockRepository.deleteAll();
+        followRepository.deleteAll();
+        notificationRepository.deleteAll();
         postRepository.deleteAll();
         userRepository.deleteAll();
 
@@ -162,6 +180,46 @@ class PostControllerTest {
 
         mockMvc.perform(delete("/api/posts/{id}", post.getId()))
                 .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void likePost_repeatedRequests_remainLiked() throws Exception {
+        Post post = postRepository.save(
+                Post.builder().title("Like").content("Content").author(testUser).build());
+
+        mockMvc.perform(post("/api/posts/{id}/like", post.getId())
+                        .header("Authorization", "Bearer " + otherUserToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.liked").value(true))
+                .andExpect(jsonPath("$.likeCount").value(1));
+
+        mockMvc.perform(post("/api/posts/{id}/like", post.getId())
+                        .header("Authorization", "Bearer " + otherUserToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.liked").value(true))
+                .andExpect(jsonPath("$.likeCount").value(1));
+    }
+
+    @Test
+    void unlikePost_repeatedRequests_remainUnliked() throws Exception {
+        Post post = postRepository.save(
+                Post.builder().title("Like").content("Content").author(testUser).build());
+
+        mockMvc.perform(post("/api/posts/{id}/like", post.getId())
+                        .header("Authorization", "Bearer " + otherUserToken))
+                .andExpect(status().isOk());
+
+        mockMvc.perform(delete("/api/posts/{id}/like", post.getId())
+                        .header("Authorization", "Bearer " + otherUserToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.liked").value(false))
+                .andExpect(jsonPath("$.likeCount").value(0));
+
+        mockMvc.perform(delete("/api/posts/{id}/like", post.getId())
+                        .header("Authorization", "Bearer " + otherUserToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.liked").value(false))
+                .andExpect(jsonPath("$.likeCount").value(0));
     }
 
     // ── 초안 가시성 ───────────────────────────────────────────

@@ -11,10 +11,13 @@ import org.springframework.data.repository.query.Param;
 public interface PostLikeRepository extends JpaRepository<PostLike, Long> {
 
     boolean existsByPostAndUser(Post post, User user);
-    void deleteByPostAndUser(Post post, User user);
+    long deleteByPostAndUser(Post post, User user);
 
     /** 특정 게시물의 좋아요 수 */
     long countByPost(Post post);
+
+    /** 특정 사용자의 특정 게시물 좋아요 수 (0 또는 1) */
+    long countByPostAndUser(Post post, User user);
 
     /**
      * 특정 사용자가 작성한 모든 게시물에 달린 좋아요 총합.

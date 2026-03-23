@@ -53,9 +53,9 @@
                     <!-- 차단한 날짜 -->
                     <td class="col-date"
                         th:text="${#temporals.format(block.createdAt, 'yy/MM/dd')}">날짜</td>
-                    <!-- 차단 해제 버튼: 동일한 /block 토글 엔드포인트 사용 -->
+                    <!-- 문제 해결: 토글 대신 unblock 전용 엔드포인트를 호출해 중복 해제 요청을 no-op로 만든다. -->
                     <td>
-                        <form th:action="@{/users/{u}/block(u=${block.blocked.username})}"
+                        <form th:action="@{/users/{u}/unblock(u=${block.blocked.username})}"
                               method="post" style="display:inline;"
                               onsubmit="return confirm('차단을 해제하시겠습니까?')">
                             <input type="hidden" th:name="${_csrf.parameterName}" th:value="${_csrf.token}">

@@ -66,14 +66,20 @@
         <div class="like-bar">
             <span class="like-count">&#x2665; <span th:text="${post.likeCount}">0</span></span>
             <sec:authorize access="isAuthenticated()">
-                <form th:action="@{/posts/{id}/like(id=${post.id})}" method="post" style="display:inline">
+                <form th:action="${liked}
+                                 ? @{/posts/{id}/unlike(id=${post.id})}
+                                 : @{/posts/{id}/like(id=${post.id})}"
+                      method="post" style="display:inline">
                     <input type="hidden" th:name="${_csrf.parameterName}" th:value="${_csrf.token}">
                     <button type="submit" class="btn btn-like"
                             th:classappend="${liked} ? ' liked' : ''"
                             th:text="${liked} ? '♥ 좋아요 취소' : '♡ 좋아요'">♡ 좋아요</button>
                 </form>
                 <!-- 북마크 버튼 -->
-                <form th:action="@{/posts/{id}/bookmark(id=${post.id})}" method="post" style="display:inline">
+                <form th:action="${bookmarked}
+                                 ? @{/posts/{id}/unbookmark(id=${post.id})}
+                                 : @{/posts/{id}/bookmark(id=${post.id})}"
+                      method="post" style="display:inline">
                     <input type="hidden" th:name="${_csrf.parameterName}" th:value="${_csrf.token}">
                     <button type="submit" class="btn btn-sm"
                             th:text="${bookmarked} ? '★ 북마크 해제' : '☆ 북마크'">☆ 북마크</button>

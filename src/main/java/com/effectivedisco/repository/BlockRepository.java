@@ -14,9 +14,13 @@ public interface BlockRepository extends JpaRepository<Block, Long> {
 
     /**
      * blocker-blocked 쌍으로 차단 관계를 조회한다.
-     * 차단 해제(toggle) 시 삭제할 엔티티를 가져오는 데 사용한다.
+     * 기존 코드와 테스트에서 차단 상태를 직접 확인할 때 사용한다.
      */
     Optional<Block> findByBlockerAndBlocked(User blocker, User blocked);
+
+    long deleteByBlockerAndBlocked(User blocker, User blocked);
+
+    long countByBlockerAndBlocked(User blocker, User blocked);
 
     /**
      * blocker가 차단한 전체 목록을 최신순으로 반환한다.

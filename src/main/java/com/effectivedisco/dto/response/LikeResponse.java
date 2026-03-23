@@ -4,7 +4,7 @@ import io.swagger.v3.oas.annotations.media.Schema;
 import lombok.AllArgsConstructor;
 import lombok.Getter;
 
-@Schema(description = "좋아요 토글 응답 DTO")
+@Schema(description = "좋아요 상태 응답 DTO")
 @Getter
 @AllArgsConstructor
 public class LikeResponse {

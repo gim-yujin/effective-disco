@@ -11,7 +11,6 @@ import com.effectivedisco.service.UserService;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpSession;
 import lombok.RequiredArgsConstructor;
-import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.stereotype.Controller;
@@ -69,33 +68,35 @@ public class UserWebController {
         return "users/profile";
     }
 
-    /**
-     * 팔로우 토글 — 팔로우/언팔로우 처리 후 프로필 페이지로 리다이렉트.
-     * 자기 자신에 대한 요청은 FollowService에서 예외로 처리한다.
-     */
+    /** 팔로우 등록 후 프로필 페이지로 리다이렉트한다. */
     @PostMapping("/users/{username}/follow")
-    public String toggleFollow(@PathVariable String username,
-                               @AuthenticationPrincipal UserDetails userDetails) {
-        try {
-            followService.toggle(userDetails.getUsername(), username);
-        } catch (DataIntegrityViolationException ignored) {
-            // 동시 요청으로 UNIQUE 제약 위반 — 무시하고 리다이렉트
-        }
+    public String follow(@PathVariable String username,
+                         @AuthenticationPrincipal UserDetails userDetails) {
+        followService.follow(userDetails.getUsername(), username);
         return "redirect:/users/" + username;
     }
 
-    /**
-     * 차단 토글 — 차단/차단 해제 처리 후 프로필 페이지로 리다이렉트.
-     * 자기 자신에 대한 요청은 BlockService에서 예외로 처리한다.
-     */
+    /** 팔로우 해제 후 프로필 페이지로 리다이렉트한다. */
+    @PostMapping("/users/{username}/unfollow")
+    public String unfollow(@PathVariable String username,
+                           @AuthenticationPrincipal UserDetails userDetails) {
+        followService.unfollow(userDetails.getUsername(), username);
+        return "redirect:/users/" + username;
+    }
+
+    /** 차단 등록 후 프로필 페이지로 리다이렉트한다. */
     @PostMapping("/users/{username}/block")
-    public String toggleBlock(@PathVariable String username,
-                              @AuthenticationPrincipal UserDetails userDetails) {
-        try {
-            blockService.toggle(userDetails.getUsername(), username);
-        } catch (DataIntegrityViolationException ignored) {
-            // 동시 요청으로 UNIQUE 제약 위반 — 무시하고 리다이렉트
-        }
+    public String block(@PathVariable String username,
+                        @AuthenticationPrincipal UserDetails userDetails) {
+        blockService.block(userDetails.getUsername(), username);
+        return "redirect:/users/" + username;
+    }
+
+    /** 차단 해제 후 프로필 페이지로 리다이렉트한다. */
+    @PostMapping("/users/{username}/unblock")
+    public String unblock(@PathVariable String username,
+                          @AuthenticationPrincipal UserDetails userDetails) {
+        blockService.unblock(userDetails.getUsername(), username);
         return "redirect:/users/" + username;
     }
 

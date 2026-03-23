@@ -48,8 +48,12 @@
                           style="margin-top:8px;display:inline-flex;gap:6px;flex-wrap:wrap;">
                         <a class="btn btn-sm"
                            th:href="@{/messages/compose(to=${profile.username})}">&#9993; 쪽지</a>
-                        <!-- 팔로우 토글 폼 -->
-                        <form th:action="@{/users/{u}/follow(u=${profile.username})}" method="post"
+                        <!-- 문제 해결: 현재 상태에 따라 서로 다른 엔드포인트를 호출해
+                             같은 요청 재시도가 상태를 뒤집는 토글 경쟁 상태를 없앤다. -->
+                        <form th:action="${isFollowing}
+                                         ? @{/users/{u}/unfollow(u=${profile.username})}
+                                         : @{/users/{u}/follow(u=${profile.username})}"
+                              method="post"
                               style="display:inline;">
                             <input type="hidden" th:name="${_csrf.parameterName}" th:value="${_csrf.token}">
                             <button class="btn btn-sm"
@@ -57,8 +61,11 @@
                                     type="submit"
                                     th:text="${isFollowing} ? '팔로우 중 ✓' : '+ 팔로우'">팔로우</button>
                         </form>
-                        <!-- 차단 토글 폼 — 차단 중이면 btn-danger 스타일 적용 -->
-                        <form th:action="@{/users/{u}/block(u=${profile.username})}" method="post"
+                        <!-- 차단도 동일하게 block/unblock을 분리해 멱등하게 처리한다. -->
+                        <form th:action="${isBlocking}
+                                         ? @{/users/{u}/unblock(u=${profile.username})}
+                                         : @{/users/{u}/block(u=${profile.username})}"
+                              method="post"
                               style="display:inline;"
                               th:onsubmit="${isBlocking} ? 'return confirm(\'차단을 해제하시겠습니까?\')' : 'return confirm(\'이 사용자를 차단하시겠습니까? 차단하면 이 사용자의 게시물과 댓글이 숨겨집니다.\')'">
                             <input type="hidden" th:name="${_csrf.parameterName}" th:value="${_csrf.token}">

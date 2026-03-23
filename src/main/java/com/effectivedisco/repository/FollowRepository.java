@@ -17,6 +17,10 @@ public interface FollowRepository extends JpaRepository<Follow, Long> {
     /** 팔로우 관계 단건 조회 (언팔로우 시 삭제 대상 조회용) */
     Optional<Follow> findByFollowerAndFollowing(User follower, User following);
 
+    long deleteByFollowerAndFollowing(User follower, User following);
+
+    long countByFollowerAndFollowing(User follower, User following);
+
     /** 특정 사용자의 팔로워 수 (내가 팔로우를 받은 횟수) */
     long countByFollowing(User following);
 

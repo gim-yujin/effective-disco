@@ -33,45 +33,68 @@ class BookmarkServiceTest {
 
     @InjectMocks BookmarkService bookmarkService;
 
-    // ── toggle ────────────────────────────────────────────────
+    // ── bookmark / unbookmark ─────────────────────────────────
 
     @Test
-    void toggle_notBookmarked_savesAndReturnsTrue() {
+    void bookmark_notBookmarked_saves() {
         User user = makeUser("alice");
         Post post = makePost(1L, user);
-        given(userRepository.findByUsername("alice")).willReturn(Optional.of(user));
+        given(userRepository.findByUsernameForUpdate("alice")).willReturn(Optional.of(user));
         given(postRepository.findById(1L)).willReturn(Optional.of(post));
         given(bookmarkRepository.existsByUserAndPost(user, post)).willReturn(false);
 
-        boolean result = bookmarkService.toggle("alice", 1L);
+        bookmarkService.bookmark("alice", 1L);
 
-        assertThat(result).isTrue();
         verify(bookmarkRepository).save(any(Bookmark.class));
     }
 
     @Test
-    void toggle_alreadyBookmarked_deletesAndReturnsFalse() {
+    void bookmark_alreadyBookmarked_isIdempotent() {
         User user = makeUser("alice");
         Post post = makePost(1L, user);
-        given(userRepository.findByUsername("alice")).willReturn(Optional.of(user));
+        given(userRepository.findByUsernameForUpdate("alice")).willReturn(Optional.of(user));
         given(postRepository.findById(1L)).willReturn(Optional.of(post));
         given(bookmarkRepository.existsByUserAndPost(user, post)).willReturn(true);
 
-        boolean result = bookmarkService.toggle("alice", 1L);
+        bookmarkService.bookmark("alice", 1L);
 
-        assertThat(result).isFalse();
-        verify(bookmarkRepository).deleteByUserAndPost(user, post);
         verify(bookmarkRepository, never()).save(any());
     }
 
     @Test
-    void toggle_postNotFound_throwsException() {
+    void bookmark_postNotFound_throwsException() {
         User user = makeUser("alice");
-        given(userRepository.findByUsername("alice")).willReturn(Optional.of(user));
+        given(userRepository.findByUsernameForUpdate("alice")).willReturn(Optional.of(user));
         given(postRepository.findById(99L)).willReturn(Optional.empty());
 
-        assertThatThrownBy(() -> bookmarkService.toggle("alice", 99L))
+        assertThatThrownBy(() -> bookmarkService.bookmark("alice", 99L))
                 .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void unbookmark_existingBookmark_deletesRelation() {
+        User user = makeUser("alice");
+        Post post = makePost(1L, user);
+        given(userRepository.findByUsernameForUpdate("alice")).willReturn(Optional.of(user));
+        given(postRepository.findById(1L)).willReturn(Optional.of(post));
+        given(bookmarkRepository.deleteByUserAndPost(user, post)).willReturn(1L);
+
+        bookmarkService.unbookmark("alice", 1L);
+
+        verify(bookmarkRepository).deleteByUserAndPost(user, post);
+    }
+
+    @Test
+    void unbookmark_missingBookmark_isIdempotent() {
+        User user = makeUser("alice");
+        Post post = makePost(1L, user);
+        given(userRepository.findByUsernameForUpdate("alice")).willReturn(Optional.of(user));
+        given(postRepository.findById(1L)).willReturn(Optional.of(post));
+        given(bookmarkRepository.deleteByUserAndPost(user, post)).willReturn(0L);
+
+        bookmarkService.unbookmark("alice", 1L);
+
+        verify(bookmarkRepository).deleteByUserAndPost(user, post);
     }
 
     // ── isBookmarked ──────────────────────────────────────────

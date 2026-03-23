@@ -302,30 +302,44 @@ public class PostService {
     }
 
     /**
-     * 좋아요 토글.
-     * 이미 좋아요 상태이면 취소, 아니면 추가한다.
-     *
-     * @return 토글 후의 좋아요 상태와 총 개수
+     * 게시물에 좋아요를 건다.
+     * 이미 좋아요 상태이면 그대로 성공 처리한다.
      */
     @Transactional
-    public LikeResponse toggleLike(Long postId, String username) {
+    public LikeResponse likePost(Long postId, String username) {
         Post post = findPost(postId);
-        User user = findUser(username);
+        User user = findUserForUpdate(username);
 
-        boolean wasLiked = postLikeRepository.existsByPostAndUser(post, user);
-        if (wasLiked) {
-            postLikeRepository.deleteByPostAndUser(post, user);
-            postRepository.decrementLikeCount(postId);
-        } else {
+        // 문제 해결:
+        // 토글 방식은 같은 사용자의 중복 요청이 동시에 들어오면
+        // exists() 둘 다 false -> insert 두 번 시도로 이어질 수 있다.
+        // 요청 주체 User 행을 먼저 잠그고 "좋아요 상태 보장" 연산으로 바꾸면
+        // 같은 요청이 여러 번 와도 상태가 뒤집히지 않고 한 번만 반영된다.
+        if (!postLikeRepository.existsByPostAndUser(post, user)) {
             postLikeRepository.save(new PostLike(post, user));
             postRepository.incrementLikeCount(postId);
             notificationService.notifyLike(post, username);
         }
+        return buildLikeResponse(postId, true);
+    }
 
-        boolean liked = !wasLiked;
-        long count = post.getLikeCount() + (liked ? 1 : -1);
-        if (count < 0) count = 0;
-        return new LikeResponse(liked, count);
+    /**
+     * 게시물 좋아요를 해제한다.
+     * 이미 해제된 상태이면 그대로 성공 처리한다.
+     */
+    @Transactional
+    public LikeResponse unlikePost(Long postId, String username) {
+        Post post = findPost(postId);
+        User user = findUserForUpdate(username);
+
+        // 문제 해결:
+        // delete 결과 행 수로 실제 상태 변경 여부를 판단하면
+        // 동일한 "좋아요 해제" 요청이 여러 번 와도 likeCount를 한 번만 줄일 수 있다.
+        long deleted = postLikeRepository.deleteByPostAndUser(post, user);
+        if (deleted > 0) {
+            postRepository.decrementLikeCount(postId);
+        }
+        return buildLikeResponse(postId, false);
     }
 
     /** 현재 사용자가 특정 게시물에 좋아요를 눌렀는지 확인 */
@@ -369,6 +383,15 @@ public class PostService {
     private User findUser(String username) {
         return userRepository.findByUsername(username)
                 .orElseThrow(() -> new UsernameNotFoundException("사용자를 찾을 수 없습니다: " + username));
+    }
+
+    private User findUserForUpdate(String username) {
+        return userRepository.findByUsernameForUpdate(username)
+                .orElseThrow(() -> new UsernameNotFoundException("사용자를 찾을 수 없습니다: " + username));
+    }
+
+    private LikeResponse buildLikeResponse(Long postId, boolean liked) {
+        return new LikeResponse(liked, postRepository.findLikeCountById(postId));
     }
 
     private void checkOwnership(String ownerUsername, String requestUsername) {

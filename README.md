@@ -165,7 +165,8 @@ controller/
 | POST | `/api/posts` | 필요 | 게시물 작성 |
 | PUT | `/api/posts/{id}` | 필요 | 게시물 수정 (본인만) |
 | DELETE | `/api/posts/{id}` | 필요 | 게시물 삭제 (본인만) |
-| POST | `/api/posts/{id}/like` | 필요 | 좋아요 토글 |
+| POST | `/api/posts/{id}/like` | 필요 | 좋아요 등록(멱등) |
+| DELETE | `/api/posts/{id}/like` | 필요 | 좋아요 해제(멱등) |
 | GET | `/api/boards` | — | 게시판 목록 |
 
 Swagger UI: `http://localhost:8080/swagger-ui.html`

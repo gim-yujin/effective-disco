@@ -22,7 +22,7 @@ import java.util.List;
  * 팔로우/팔로잉 기능 서비스.
  *
  * 주요 기능:
- * - 팔로우 토글 (팔로우/언팔로우)
+ * - 팔로우 등록 / 해제 (멱등)
  * - 팔로우 여부 조회
  * - 팔로워/팔로잉 수 조회
  * - 팔로우 피드 (팔로잉한 사용자의 최신 게시물 모음)
@@ -36,33 +36,48 @@ public class FollowService {
     private final PostRepository     postRepository;
 
     /**
-     * 팔로우를 토글한다.
-     * 이미 팔로우 중이면 언팔로우(삭제), 아니면 팔로우(저장)한다.
+     * 팔로우 관계를 생성한다.
+     * 이미 팔로우 중이면 그대로 성공 처리한다.
      *
      * @param followerUsername  팔로우를 거는 사람 (현재 로그인 사용자)
      * @param followingUsername 팔로우 대상 (프로필 페이지의 사용자)
-     * @return true = 팔로우 됨, false = 언팔로우 됨
      * @throws IllegalArgumentException 자기 자신을 팔로우하려 할 때
      */
     @Transactional
-    public boolean toggle(String followerUsername, String followingUsername) {
+    public void follow(String followerUsername, String followingUsername) {
         if (followerUsername.equals(followingUsername)) {
             throw new IllegalArgumentException("자기 자신을 팔로우할 수 없습니다.");
         }
-        User follower  = findUser(followerUsername);
+        User follower  = findUserForUpdate(followerUsername);
         User following = findUser(followingUsername);
 
-        return followRepository.findByFollowerAndFollowing(follower, following)
-                .map(follow -> {
-                    // 이미 팔로우 중 → 언팔로우
-                    followRepository.delete(follow);
-                    return false;
-                })
-                .orElseGet(() -> {
-                    // 팔로우 중 아님 → 팔로우
-                    followRepository.save(new Follow(follower, following));
-                    return true;
-                });
+        // 문제 해결:
+        // 토글은 동일 요청 재시도 시 상태를 뒤집어 버린다.
+        // "팔로우 상태 보장" + 요청 주체 잠금으로 바꾸면 중복 요청이 모두 no-op가 된다.
+        if (!followRepository.existsByFollowerAndFollowing(follower, following)) {
+            followRepository.save(new Follow(follower, following));
+        }
+    }
+
+    /**
+     * 팔로우 관계를 해제한다.
+     * 이미 언팔로우 상태이면 그대로 성공 처리한다.
+     */
+    @Transactional
+    public void unfollow(String followerUsername, String followingUsername) {
+        if (followerUsername.equals(followingUsername)) {
+            throw new IllegalArgumentException("자기 자신을 언팔로우할 수 없습니다.");
+        }
+        User follower  = findUserForUpdate(followerUsername);
+        User following = findUser(followingUsername);
+
+        // 문제 해결:
+        // 삭제된 행 수에 따라 실제 변경 여부를 판단하면 동일한 언팔로우 요청 재시도가
+        // 시스템 상태를 더 이상 바꾸지 않는 멱등 연산이 된다.
+        long deleted = followRepository.deleteByFollowerAndFollowing(follower, following);
+        if (deleted == 0) {
+            return;
+        }
     }
 
     /**
@@ -143,6 +158,11 @@ public class FollowService {
 
     private User findUser(String username) {
         return userRepository.findByUsername(username)
+                .orElseThrow(() -> new UsernameNotFoundException("사용자를 찾을 수 없습니다: " + username));
+    }
+
+    private User findUserForUpdate(String username) {
+        return userRepository.findByUsernameForUpdate(username)
                 .orElseThrow(() -> new UsernameNotFoundException("사용자를 찾을 수 없습니다: " + username));
     }
 }

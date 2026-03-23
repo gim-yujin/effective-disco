@@ -36,50 +36,72 @@ class FollowServiceTest {
 
     @InjectMocks FollowService followService;
 
-    // ── toggle ────────────────────────────────────────────
+    // ── follow / unfollow ─────────────────────────────────
 
     @Test
-    void toggle_notFollowing_savesFollowAndReturnsTrue() {
+    void follow_notFollowing_savesFollow() {
         User follower  = makeUser("alice");
         User following = makeUser("bob");
 
-        given(userRepository.findByUsername("alice")).willReturn(Optional.of(follower));
+        given(userRepository.findByUsernameForUpdate("alice")).willReturn(Optional.of(follower));
         given(userRepository.findByUsername("bob")).willReturn(Optional.of(following));
-        // 팔로우 관계 없음 → 새로 팔로우
-        given(followRepository.findByFollowerAndFollowing(follower, following)).willReturn(Optional.empty());
+        given(followRepository.existsByFollowerAndFollowing(follower, following)).willReturn(false);
 
-        boolean result = followService.toggle("alice", "bob");
+        followService.follow("alice", "bob");
 
-        assertThat(result).isTrue();
         verify(followRepository).save(any(Follow.class));
     }
 
     @Test
-    void toggle_alreadyFollowing_deletesFollowAndReturnsFalse() {
+    void follow_alreadyFollowing_isIdempotent() {
         User follower  = makeUser("alice");
         User following = makeUser("bob");
-        Follow existing = new Follow(follower, following);
 
-        given(userRepository.findByUsername("alice")).willReturn(Optional.of(follower));
+        given(userRepository.findByUsernameForUpdate("alice")).willReturn(Optional.of(follower));
         given(userRepository.findByUsername("bob")).willReturn(Optional.of(following));
-        // 이미 팔로우 중 → 언팔로우
-        given(followRepository.findByFollowerAndFollowing(follower, following)).willReturn(Optional.of(existing));
+        given(followRepository.existsByFollowerAndFollowing(follower, following)).willReturn(true);
 
-        boolean result = followService.toggle("alice", "bob");
+        followService.follow("alice", "bob");
 
-        assertThat(result).isFalse();
-        verify(followRepository).delete(existing);
         verify(followRepository, never()).save(any());
     }
 
     @Test
-    void toggle_selfFollow_throwsIllegalArgumentException() {
+    void follow_selfFollow_throwsIllegalArgumentException() {
         // 자기 자신을 팔로우하려 할 때 예외 발생
-        assertThatThrownBy(() -> followService.toggle("alice", "alice"))
+        assertThatThrownBy(() -> followService.follow("alice", "alice"))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("자기 자신을 팔로우할 수 없습니다");
 
         verify(followRepository, never()).save(any());
+    }
+
+    @Test
+    void unfollow_existingFollow_deletesRelation() {
+        User follower  = makeUser("alice");
+        User following = makeUser("bob");
+
+        given(userRepository.findByUsernameForUpdate("alice")).willReturn(Optional.of(follower));
+        given(userRepository.findByUsername("bob")).willReturn(Optional.of(following));
+        given(followRepository.deleteByFollowerAndFollowing(follower, following)).willReturn(1L);
+
+        followService.unfollow("alice", "bob");
+
+        verify(followRepository).deleteByFollowerAndFollowing(follower, following);
+    }
+
+    @Test
+    void unfollow_missingFollow_isIdempotent() {
+        User follower  = makeUser("alice");
+        User following = makeUser("bob");
+
+        given(userRepository.findByUsernameForUpdate("alice")).willReturn(Optional.of(follower));
+        given(userRepository.findByUsername("bob")).willReturn(Optional.of(following));
+        given(followRepository.deleteByFollowerAndFollowing(follower, following)).willReturn(0L);
+
+        followService.unfollow("alice", "bob");
+
+        verify(followRepository).deleteByFollowerAndFollowing(follower, following);
     }
 
     // ── isFollowing ───────────────────────────────────────

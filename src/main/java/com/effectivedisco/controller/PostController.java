@@ -110,16 +110,29 @@ public class PostController {
         return ResponseEntity.noContent().build();
     }
 
-    @Operation(summary = "좋아요 토글", security = @SecurityRequirement(name = "bearerAuth"))
+    @Operation(summary = "좋아요 등록", security = @SecurityRequirement(name = "bearerAuth"))
     @ApiResponses({
-        @ApiResponse(responseCode = "200", description = "좋아요/취소 성공"),
+        @ApiResponse(responseCode = "200", description = "좋아요 등록 또는 중복 요청 무시 성공"),
         @ApiResponse(responseCode = "400", description = "게시물을 찾을 수 없음"),
         @ApiResponse(responseCode = "401", description = "인증 토큰 없음 또는 만료")
     })
     @PostMapping("/{id}/like")
-    public ResponseEntity<LikeResponse> toggleLike(
+    public ResponseEntity<LikeResponse> likePost(
             @Parameter(description = "게시물 ID") @PathVariable Long id,
             @AuthenticationPrincipal UserDetails userDetails) {
-        return ResponseEntity.ok(postService.toggleLike(id, userDetails.getUsername()));
+        return ResponseEntity.ok(postService.likePost(id, userDetails.getUsername()));
+    }
+
+    @Operation(summary = "좋아요 해제", security = @SecurityRequirement(name = "bearerAuth"))
+    @ApiResponses({
+        @ApiResponse(responseCode = "200", description = "좋아요 해제 또는 중복 요청 무시 성공"),
+        @ApiResponse(responseCode = "400", description = "게시물을 찾을 수 없음"),
+        @ApiResponse(responseCode = "401", description = "인증 토큰 없음 또는 만료")
+    })
+    @DeleteMapping("/{id}/like")
+    public ResponseEntity<LikeResponse> unlikePost(
+            @Parameter(description = "게시물 ID") @PathVariable Long id,
+            @AuthenticationPrincipal UserDetails userDetails) {
+        return ResponseEntity.ok(postService.unlikePost(id, userDetails.getUsername()));
     }
 }

@@ -162,6 +162,10 @@ public interface PostRepository extends JpaRepository<Post, Long> {
     @Query("UPDATE Post p SET p.likeCount = p.likeCount - 1 WHERE p.id = :id AND p.likeCount > 0")
     void decrementLikeCount(@Param("id") Long id);
 
+    /** 좋아요 응답에는 stale entity 값 대신 DB의 최신 카운트를 사용한다. */
+    @Query("SELECT p.likeCount FROM Post p WHERE p.id = :id")
+    long findLikeCountById(@Param("id") Long id);
+
     @Modifying
     @Query("UPDATE Post p SET p.commentCount = p.commentCount + 1 WHERE p.id = :id")
     void incrementCommentCount(@Param("id") Long id);

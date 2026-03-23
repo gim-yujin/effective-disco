@@ -23,23 +23,38 @@ public class BookmarkService {
     private final UserRepository     userRepository;
 
     /**
-     * 북마크 토글.
-     * 이미 북마크된 경우 제거, 아닌 경우 추가.
-     *
-     * @return true면 북마크 추가, false면 북마크 제거
+     * 게시물을 북마크한다.
+     * 이미 북마크된 상태이면 그대로 성공 처리한다.
      */
     @Transactional
-    public boolean toggle(String username, Long postId) {
-        User user = findUser(username);
+    public void bookmark(String username, Long postId) {
+        User user = findUserForUpdate(username);
         Post post = postRepository.findById(postId)
                 .orElseThrow(() -> new IllegalArgumentException("게시물을 찾을 수 없습니다: " + postId));
 
-        if (bookmarkRepository.existsByUserAndPost(user, post)) {
-            bookmarkRepository.deleteByUserAndPost(user, post);
-            return false;
-        } else {
+        // 문제 해결:
+        // 토글을 "북마크 상태 보장"으로 바꾸고 요청 주체 User를 잠그면
+        // 같은 북마크 요청이 중복 도착해도 중복 row 생성 경쟁이 발생하지 않는다.
+        if (!bookmarkRepository.existsByUserAndPost(user, post)) {
             bookmarkRepository.save(new Bookmark(user, post));
-            return true;
+        }
+    }
+
+    /**
+     * 게시물 북마크를 해제한다.
+     * 이미 해제된 상태이면 그대로 성공 처리한다.
+     */
+    @Transactional
+    public void unbookmark(String username, Long postId) {
+        User user = findUserForUpdate(username);
+        Post post = postRepository.findById(postId)
+                .orElseThrow(() -> new IllegalArgumentException("게시물을 찾을 수 없습니다: " + postId));
+
+        // 문제 해결:
+        // delete 결과가 0이면 이미 해제된 상태이므로 그대로 no-op로 끝낸다.
+        long deleted = bookmarkRepository.deleteByUserAndPost(user, post);
+        if (deleted == 0) {
+            return;
         }
     }
 
@@ -61,6 +76,11 @@ public class BookmarkService {
 
     private User findUser(String username) {
         return userRepository.findByUsername(username)
+                .orElseThrow(() -> new UsernameNotFoundException(username));
+    }
+
+    private User findUserForUpdate(String username) {
+        return userRepository.findByUsernameForUpdate(username)
                 .orElseThrow(() -> new UsernameNotFoundException(username));
     }
 }

@@ -30,6 +30,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.BDDMockito.given;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 
 @ExtendWith(MockitoExtension.class)
@@ -127,6 +128,80 @@ class PostServiceTest {
 
         assertThatThrownBy(() -> postService.deletePost(1L, "other"))
                 .isInstanceOf(AccessDeniedException.class);
+    }
+
+    // ── like / unlike ────────────────────────────────────────
+
+    @Test
+    void likePost_whenNotLiked_createsLikeAndReturnsLatestCount() {
+        User user = makeUser("alice");
+        Post post = makePost(1L, "Title", "Content", makeUser("author"));
+
+        given(postRepository.findById(1L)).willReturn(Optional.of(post));
+        given(userRepository.findByUsernameForUpdate("alice")).willReturn(Optional.of(user));
+        given(postLikeRepository.existsByPostAndUser(post, user)).willReturn(false);
+        given(postRepository.findLikeCountById(1L)).willReturn(1L);
+
+        var response = postService.likePost(1L, "alice");
+
+        assertThat(response.isLiked()).isTrue();
+        assertThat(response.getLikeCount()).isEqualTo(1L);
+        verify(postLikeRepository).save(any());
+        verify(postRepository).incrementLikeCount(1L);
+        verify(notificationService).notifyLike(post, "alice");
+    }
+
+    @Test
+    void likePost_whenAlreadyLiked_isIdempotent() {
+        User user = makeUser("alice");
+        Post post = makePost(1L, "Title", "Content", makeUser("author"));
+
+        given(postRepository.findById(1L)).willReturn(Optional.of(post));
+        given(userRepository.findByUsernameForUpdate("alice")).willReturn(Optional.of(user));
+        given(postLikeRepository.existsByPostAndUser(post, user)).willReturn(true);
+        given(postRepository.findLikeCountById(1L)).willReturn(1L);
+
+        var response = postService.likePost(1L, "alice");
+
+        assertThat(response.isLiked()).isTrue();
+        assertThat(response.getLikeCount()).isEqualTo(1L);
+        verify(postLikeRepository, never()).save(any());
+        verify(postRepository, never()).incrementLikeCount(1L);
+        verify(notificationService, never()).notifyLike(any(), any());
+    }
+
+    @Test
+    void unlikePost_whenLiked_deletesLikeAndReturnsLatestCount() {
+        User user = makeUser("alice");
+        Post post = makePost(1L, "Title", "Content", makeUser("author"));
+
+        given(postRepository.findById(1L)).willReturn(Optional.of(post));
+        given(userRepository.findByUsernameForUpdate("alice")).willReturn(Optional.of(user));
+        given(postLikeRepository.deleteByPostAndUser(post, user)).willReturn(1L);
+        given(postRepository.findLikeCountById(1L)).willReturn(0L);
+
+        var response = postService.unlikePost(1L, "alice");
+
+        assertThat(response.isLiked()).isFalse();
+        assertThat(response.getLikeCount()).isZero();
+        verify(postRepository).decrementLikeCount(1L);
+    }
+
+    @Test
+    void unlikePost_whenAlreadyUnliked_isIdempotent() {
+        User user = makeUser("alice");
+        Post post = makePost(1L, "Title", "Content", makeUser("author"));
+
+        given(postRepository.findById(1L)).willReturn(Optional.of(post));
+        given(userRepository.findByUsernameForUpdate("alice")).willReturn(Optional.of(user));
+        given(postLikeRepository.deleteByPostAndUser(post, user)).willReturn(0L);
+        given(postRepository.findLikeCountById(1L)).willReturn(0L);
+
+        var response = postService.unlikePost(1L, "alice");
+
+        assertThat(response.isLiked()).isFalse();
+        assertThat(response.getLikeCount()).isZero();
+        verify(postRepository, never()).decrementLikeCount(1L);
     }
 
     // ── adminPinToggle ────────────────────────────────────────
