@@ -37,6 +37,31 @@
 - 알림 생성과 전체 읽음 처리 경쟁에서도 `unread counter == 실제 unread row 수`가 유지됐다.
 - 회원가입 유니크 제약 경합에서도 계정 row는 1개만 남았다.
 
+## 2차 결과
+
+상태: 완료
+
+검증 날짜:
+
+- 2026-03-24
+
+검증 범위:
+
+- 게시판 목록/정렬 읽기 부하
+- 핫 게시물 상세 조회 부하
+- 검색 부하
+- 게시물/댓글 쓰기 부하
+- 같은 사용자의 멱등 좋아요 등록 경쟁
+- 같은 사용자의 멱등 좋아요 해제 경쟁
+- DB pool 포화 징후와 `duplicate-key` 예외 계측
+
+핵심 결론:
+
+- 스트레스 런에서도 `unexpected_response_rate=0.0000` 으로 기능 오류 응답이 발생하지 않았다.
+- 멱등 좋아요 경쟁 시나리오에서도 `duplicateKeyConflicts=0` 이었고, 정합성 깨짐 징후가 관측되지 않았다.
+- `dbPoolTimeouts=0` 으로 timeout은 없었지만, `maxActiveConnections=20` 과 `maxThreadsAwaitingConnection=176` 으로 DB connection pool은 이미 포화 구간에 진입했다.
+- 이번 2차는 "정합성은 유지되지만 현재 풀 크기 기준으로 대기열이 크게 생긴다"는 점을 확인한 검증이다.
+
 ## 1차에서 보장한 불변식
 
 ### 관계형 쓰기 경로
@@ -128,6 +153,19 @@
 - 성공 1회, 실패 7회
 - 최종 계정 row 수 1개
 
+## 2차에서 추가 확인한 불변식
+
+### 스트레스 상황의 멱등 관계 쓰기
+
+- 같은 사용자의 `like` 등록 경쟁 중에도 동일 `(post, user)` 조합에 대한 중복 관계 row가 생기지 않음
+- 같은 사용자의 `like` 해제 경쟁 중에도 `likeCount` 가 음수가 되지 않음
+- 고부하 읽기/쓰기 혼합 상황에서도 애플리케이션은 5xx 나 예상 밖 응답률 증가 없이 요청을 처리함
+
+의도:
+
+- 짧은 단위 테스트를 넘어 실제 혼합 부하에서도 1차에서 정의한 정합성 불변식이 유지되는지 확인
+- 정합성은 유지하되, 현재 운영 설정에서 DB pool 병목이 언제 드러나는지 함께 기록
+
 ## 실행 기록
 
 동시성 집중 검증:
@@ -151,6 +189,46 @@ GRADLE_USER_HOME=/tmp/gradle-home ./gradlew test --no-daemon
 - 동시성 집중 검증 통과
 - 전체 테스트 통과
 
+스트레스 부하 검증:
+
+```bash
+TS=$(date +%Y%m%d-%H%M%S)
+K6_FILE="loadtest/results/k6-stress-summary-$TS.json"
+SERVER_FILE="loadtest/results/k6-stress-server-metrics-$TS.json"
+
+curl -fsS -X POST http://localhost:18080/internal/load-test/reset >/dev/null
+
+BASE_URL=http://localhost:18080 \
+BROWSE_RATE=80 BROWSE_DURATION=45s BROWSE_PRE_ALLOCATED_VUS=40 BROWSE_MAX_VUS=120 \
+HOT_POST_RATE=120 HOT_POST_DURATION=45s HOT_POST_PRE_ALLOCATED_VUS=50 HOT_POST_MAX_VUS=150 \
+SEARCH_RATE=40 SEARCH_DURATION=45s SEARCH_PRE_ALLOCATED_VUS=20 SEARCH_MAX_VUS=80 \
+WRITE_START_RATE=8 WRITE_STAGE_ONE_RATE=20 WRITE_STAGE_ONE_DURATION=30s WRITE_STAGE_TWO_RATE=35 WRITE_STAGE_TWO_DURATION=30s WRITE_PRE_ALLOCATED_VUS=20 WRITE_MAX_VUS=80 \
+LIKE_ADD_VUS=80 LIKE_ADD_DURATION=45s \
+LIKE_REMOVE_VUS=80 LIKE_REMOVE_DURATION=45s \
+k6 run --summary-trend-stats "avg,min,med,max,p(90),p(95),p(99)" \
+  --summary-export "$K6_FILE" \
+  loadtest/k6/bbs-load.js
+
+curl -fsS http://localhost:18080/internal/load-test/metrics > "$SERVER_FILE"
+```
+
+결과:
+
+- 전체 `http_req_duration`: `p95=147.37ms`, `p99=185.97ms`, `max=418.01ms`
+- `browse_board_feed`: `p95=94.20ms`, `p99=115.92ms`
+- `hot_post_details`: `p95=90.51ms`, `p99=115.75ms`
+- `search_catalog`: `p95=93.17ms`, `p99=118.31ms`
+- `create_post`: `p95=135.72ms`, `p99=171.95ms`
+- `create_comment`: `p95=187.64ms`, `p99=230.19ms`
+- `like_idempotent_add_race`: `p95=149.56ms`, `p99=188.64ms`
+- `like_idempotent_remove_race`: `p95=148.41ms`, `p99=186.11ms`
+- 총 `86,840` HTTP 요청, `81,918` iterations, peak `191` VUs
+- `unexpected_response_rate=0.0000`
+- 서버 계측: `duplicateKeyConflicts=0`, `dbPoolTimeouts=0`, `maxActiveConnections=20`, `maxThreadsAwaitingConnection=176`
+- 결과 파일:
+  [k6-stress-summary-20260324-013824.json](/home/admin0/effective-disco/loadtest/results/k6-stress-summary-20260324-013824.json)
+  [k6-stress-server-metrics-20260324-013824.json](/home/admin0/effective-disco/loadtest/results/k6-stress-server-metrics-20260324-013824.json)
+
 ## 아직 남은 리스크
 
 ### 분산 환경
@@ -160,8 +238,9 @@ GRADLE_USER_HOME=/tmp/gradle-home ./gradlew test --no-daemon
 
 ### 장시간/대규모 스트레스
 
-- 현재는 짧은 경쟁 테스트로 정합성 불변식 확인
-- 장시간 soak test 와 더 높은 worker 수에서 deadlock/timeout 패턴 추가 검증 가능
+- 2차 스트레스 런으로 단기 혼합 부하 검증은 완료
+- 다만 장시간 soak test 와 더 높은 worker 수에서 deadlock/timeout 패턴은 추가 검증 가능
+- 현재 수치상 DB pool은 timeout 직전의 포화 구간에 들어가므로, 더 높은 부하에서는 timeout 발생 지점을 따로 확인할 필요가 있음
 
 ### 대용량 데이터
 
@@ -184,3 +263,10 @@ GRADLE_USER_HOME=/tmp/gradle-home ./gradlew test --no-daemon
 - 멱등 write 경로 + 요청 주체 잠금 검증 완료
 - AFTER_COMMIT 알림 및 unread counter 정합성 검증 완료
 - 중복 회원가입 경합 검증 완료
+
+### Phase 2
+
+- 2026-03-24 스트레스 k6 런 완료
+- 읽기/쓰기/좋아요 경쟁 혼합 부하에서도 `unexpected_response_rate=0.0000` 확인
+- `duplicateKeyConflicts=0`, `dbPoolTimeouts=0` 확인
+- DB pool 최대 active `20`, 최대 대기 쓰레드 `176` 으로 포화 징후 확인
