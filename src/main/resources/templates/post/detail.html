@@ -172,7 +172,7 @@
                             <th:block th:if="${c.author == #authentication.name}">
                                 &nbsp;
                                 <button class="btn btn-sm" type="button"
-                                        th:onclick="'toggleCommentEdit(' + ${c.id} + ')'>[수정]</button>
+                                        th:onclick="'toggleCommentEdit(' + ${c.id} + ')'">[수정]</button>
                                 &nbsp;
                                 <form th:action="@{/posts/{postId}/comments/{id}/delete(postId=${post.id}, id=${c.id})}"
                                       method="post" style="display:inline">
@@ -263,7 +263,7 @@
                                 <th:block th:if="${r.author == #authentication.name}">
                                     &nbsp;
                                     <button class="btn btn-sm" type="button"
-                                            th:onclick="'toggleReplyEdit(' + ${r.id} + ')'>[수정]</button>
+                                            th:onclick="'toggleReplyEdit(' + ${r.id} + ')'">[수정]</button>
                                     &nbsp;
                                     <form th:action="@{/posts/{postId}/comments/{id}/delete(postId=${post.id}, id=${r.id})}"
                                           method="post" style="display:inline">

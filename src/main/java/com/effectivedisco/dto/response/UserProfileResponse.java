@@ -1,6 +1,7 @@
 package com.effectivedisco.dto.response;
 
 import com.effectivedisco.domain.User;
+import io.swagger.v3.oas.annotations.media.Schema;
 import lombok.Getter;
 
 import java.time.LocalDateTime;
@@ -9,31 +10,49 @@ import java.time.LocalDateTime;
  * 사용자 프로필 응답 DTO.
  * 기본 정보(username, 가입일)와 활동 통계, 팔로우 통계를 담는다.
  */
+@Schema(description = "사용자 프로필 응답 DTO")
 @Getter
 public class UserProfileResponse {
 
+    @Schema(description = "사용자명", example = "alice")
     private final String        username;
+
+    @Schema(description = "이메일 주소 (본인만 열람)", example = "alice@example.com")
     private final String        email;
+
+    @Schema(description = "자기소개", example = "안녕하세요!", nullable = true)
     private final String        bio;
+
     /** 가입 시각 (프로필 페이지에 "가입일" 로 표시) */
+    @Schema(description = "가입 시각")
     private final LocalDateTime createdAt;
 
     /** 작성한 게시물 총 수 */
+    @Schema(description = "작성한 게시물 총 수", example = "15")
     private final long postCount;
+
     /** 작성한 댓글·대댓글 총 수 */
+    @Schema(description = "작성한 댓글·대댓글 총 수", example = "42")
     private final long commentCount;
+
     /** 내 게시물에 달린 좋아요 총 수 */
+    @Schema(description = "내 게시물에 달린 좋아요 총 수", example = "128")
     private final long likesReceived;
 
     /** 이 사용자를 팔로우하는 사람 수 */
+    @Schema(description = "팔로워 수", example = "30")
     private final long followerCount;
+
     /** 이 사용자가 팔로우하는 사람 수 */
+    @Schema(description = "팔로잉 수", example = "20")
     private final long followingCount;
 
     /**
      * 프로필 이미지 URL.
      * null 이면 템플릿에서 이니셜 아바타를 렌더링한다.
      */
+    @Schema(description = "프로필 이미지 URL (null 이면 이니셜 아바타 표시)",
+            example = "/uploads/profile/alice.jpg", nullable = true)
     private final String profileImageUrl;
 
     public UserProfileResponse(User user, long postCount, long commentCount,

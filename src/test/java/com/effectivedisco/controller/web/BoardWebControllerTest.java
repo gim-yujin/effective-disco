@@ -1,9 +1,11 @@
 package com.effectivedisco.controller.web;
 
 import com.effectivedisco.domain.Board;
+import com.effectivedisco.domain.Comment;
 import com.effectivedisco.domain.Post;
 import com.effectivedisco.domain.User;
 import com.effectivedisco.repository.BoardRepository;
+import com.effectivedisco.repository.CommentRepository;
 import com.effectivedisco.repository.PostRepository;
 import com.effectivedisco.repository.UserRepository;
 import org.junit.jupiter.api.BeforeEach;
@@ -40,10 +42,11 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 class BoardWebControllerTest {
 
     @Autowired WebApplicationContext context;
-    @Autowired UserRepository userRepository;
-    @Autowired PostRepository postRepository;
-    @Autowired BoardRepository boardRepository;
-    @Autowired PasswordEncoder passwordEncoder;
+    @Autowired UserRepository        userRepository;
+    @Autowired PostRepository        postRepository;
+    @Autowired BoardRepository       boardRepository;
+    @Autowired CommentRepository     commentRepository;
+    @Autowired PasswordEncoder       passwordEncoder;
 
     MockMvc mockMvc;
     User testUser;
@@ -182,5 +185,274 @@ class BoardWebControllerTest {
                         .with(csrf()))
                 .andExpect(status().is3xxRedirection())
                 .andExpect(redirectedUrl("/login"));
+    }
+
+    // ── 홈 / 게시판 목록 ──────────────────────────────────────
+
+    /**
+     * GET / 는 인증 없이도 200을 반환해야 한다.
+     * 모델에 boards, popularTags 속성이 포함되고 뷰는 "boards/index" 여야 한다.
+     */
+    @Test
+    void homePage_returns200() throws Exception {
+        mockMvc.perform(get("/"))
+                .andExpect(status().isOk())
+                .andExpect(model().attributeExists("boards", "popularTags"))
+                .andExpect(view().name("boards/index"));
+    }
+
+    /**
+     * GET /boards/{slug} 는 인증 없이도 200을 반환해야 한다.
+     * 모델에 posts, board 속성이 포함되고 뷰는 "boards/list" 여야 한다.
+     */
+    @Test
+    void boardPostList_returns200() throws Exception {
+        mockMvc.perform(get("/boards/{slug}", "testboard"))
+                .andExpect(status().isOk())
+                .andExpect(model().attributeExists("posts", "board"))
+                .andExpect(view().name("boards/list"));
+    }
+
+    // ── 게시물 상세 ───────────────────────────────────────────
+
+    /**
+     * 공개 게시물 상세 조회는 인증 없이도 200을 반환해야 한다.
+     * 모델에 post, comments 속성이 포함되고 뷰는 "post/detail" 여야 한다.
+     */
+    @Test
+    void postDetail_public_returns200() throws Exception {
+        Post post = postRepository.save(Post.builder()
+                .title("공개 게시물").content("내용").author(testUser).board(board).build());
+
+        mockMvc.perform(get("/posts/{id}", post.getId()))
+                .andExpect(status().isOk())
+                .andExpect(model().attributeExists("post", "comments"))
+                .andExpect(view().name("post/detail"));
+    }
+
+    // ── 게시물 수정 폼 ────────────────────────────────────────
+
+    /**
+     * 작성자가 수정 폼에 접근하면 200과 함께 수정 폼을 받아야 한다.
+     * 모델에 postRequest 속성이 포함되고 뷰는 "post/form" 여야 한다.
+     */
+    @Test
+    void editPostForm_byOwner_returns200() throws Exception {
+        Post post = postRepository.save(Post.builder()
+                .title("수정할 글").content("내용").author(testUser).board(board).build());
+
+        mockMvc.perform(get("/posts/{id}/edit", post.getId())
+                        .with(user("testuser")))
+                .andExpect(status().isOk())
+                .andExpect(model().attributeExists("postRequest"))
+                .andExpect(view().name("post/form"));
+    }
+
+    /**
+     * 작성자가 아닌 사용자가 수정 폼에 접근하면 게시물 상세 페이지로 리다이렉트된다.
+     * BoardWebController: !post.getAuthor().equals(username) → redirect:/posts/{id}
+     */
+    @Test
+    void editPostForm_byNonOwner_redirectsToPost() throws Exception {
+        Post post = postRepository.save(Post.builder()
+                .title("수정할 글").content("내용").author(testUser).board(board).build());
+
+        mockMvc.perform(get("/posts/{id}/edit", post.getId())
+                        .with(user("otheruser")))
+                .andExpect(status().is3xxRedirection())
+                .andExpect(redirectedUrl("/posts/" + post.getId()));
+    }
+
+    // ── 게시물 수정 저장 ──────────────────────────────────────
+
+    /**
+     * 작성자가 게시물을 수정하면 게시물 상세 페이지로 리다이렉트된다.
+     * multipart 로 전송 (enctype="multipart/form-data", 파일 없이 텍스트만).
+     */
+    @Test
+    void updatePost_byOwner_redirectsToPost() throws Exception {
+        Post post = postRepository.save(Post.builder()
+                .title("수정 전 제목").content("수정 전 내용").author(testUser).board(board).build());
+
+        mockMvc.perform(multipart("/posts/{id}/edit", post.getId())
+                        .with(csrf())
+                        .with(user("testuser"))
+                        .param("title",     "수정 후 제목")
+                        .param("content",   "수정 후 내용")
+                        .param("boardSlug", "testboard"))
+                .andExpect(status().is3xxRedirection())
+                .andExpect(redirectedUrl("/posts/" + post.getId()));
+    }
+
+    // ── 게시물 삭제 ───────────────────────────────────────────
+
+    /**
+     * 작성자가 게시물을 삭제하면 해당 게시판 목록으로 리다이렉트된다.
+     * boardSlug 가 있으면 /boards/{slug}, 없으면 / 로 이동한다.
+     */
+    @Test
+    void deletePost_byOwner_redirectsToBoard() throws Exception {
+        Post post = postRepository.save(Post.builder()
+                .title("삭제할 글").content("내용").author(testUser).board(board).build());
+
+        mockMvc.perform(post("/posts/{id}/delete", post.getId())
+                        .with(csrf())
+                        .with(user("testuser")))
+                .andExpect(status().is3xxRedirection())
+                .andExpect(redirectedUrl("/boards/testboard"));
+    }
+
+    /**
+     * 작성자가 아닌 사용자가 게시물 삭제를 시도하면 403 Forbidden 이 반환된다.
+     * PostService.checkOwnership → AccessDeniedException →
+     * Spring Security 기본 처리 → 403
+     */
+    @Test
+    void deletePost_byNonOwner_returns403() throws Exception {
+        Post post = postRepository.save(Post.builder()
+                .title("삭제 시도할 글").content("내용").author(testUser).board(board).build());
+
+        mockMvc.perform(post("/posts/{id}/delete", post.getId())
+                        .with(csrf())
+                        .with(user("otheruser")))
+                .andExpect(status().isForbidden());
+    }
+
+    // ── 좋아요 토글 ───────────────────────────────────────────
+
+    /**
+     * 인증된 사용자가 좋아요를 누르면 게시물 상세 페이지로 리다이렉트된다.
+     */
+    @Test
+    void toggleLike_withAuth_redirectsToPost() throws Exception {
+        Post post = postRepository.save(Post.builder()
+                .title("좋아요 테스트").content("내용").author(testUser).board(board).build());
+
+        mockMvc.perform(post("/posts/{id}/like", post.getId())
+                        .with(csrf())
+                        .with(user("otheruser")))
+                .andExpect(status().is3xxRedirection())
+                .andExpect(redirectedUrl("/posts/" + post.getId()));
+    }
+
+    /**
+     * 미인증 사용자가 좋아요를 누르면 로그인 페이지로 리다이렉트된다.
+     * SecurityConfig: POST /posts/** → anyRequest().authenticated()
+     */
+    @Test
+    void toggleLike_withoutAuth_redirectsToLogin() throws Exception {
+        Post post = postRepository.save(Post.builder()
+                .title("좋아요 테스트").content("내용").author(testUser).board(board).build());
+
+        mockMvc.perform(post("/posts/{id}/like", post.getId())
+                        .with(csrf()))
+                .andExpect(status().is3xxRedirection())
+                .andExpect(redirectedUrl("/login"));
+    }
+
+    // ── 북마크 토글 ───────────────────────────────────────────
+
+    /**
+     * 인증된 사용자가 북마크를 클릭하면 게시물 상세 페이지로 리다이렉트된다.
+     */
+    @Test
+    void toggleBookmark_withAuth_redirectsToPost() throws Exception {
+        Post post = postRepository.save(Post.builder()
+                .title("북마크 테스트").content("내용").author(testUser).board(board).build());
+
+        mockMvc.perform(post("/posts/{id}/bookmark", post.getId())
+                        .with(csrf())
+                        .with(user("otheruser")))
+                .andExpect(status().is3xxRedirection())
+                .andExpect(redirectedUrl("/posts/" + post.getId()));
+    }
+
+    // ── 댓글 CRUD ─────────────────────────────────────────────
+
+    /**
+     * 인증된 사용자가 댓글을 작성하면 게시물 댓글 섹션으로 리다이렉트된다.
+     */
+    @Test
+    void addComment_withAuth_redirectsToComments() throws Exception {
+        Post post = postRepository.save(Post.builder()
+                .title("댓글 테스트").content("내용").author(testUser).board(board).build());
+
+        mockMvc.perform(post("/posts/{postId}/comments", post.getId())
+                        .with(csrf())
+                        .with(user("otheruser"))
+                        .param("content", "테스트 댓글 내용입니다."))
+                .andExpect(status().is3xxRedirection())
+                .andExpect(redirectedUrl("/posts/" + post.getId() + "#comments"));
+    }
+
+    /**
+     * 미인증 사용자가 댓글을 작성하려 하면 로그인 페이지로 리다이렉트된다.
+     */
+    @Test
+    void addComment_withoutAuth_redirectsToLogin() throws Exception {
+        Post post = postRepository.save(Post.builder()
+                .title("댓글 테스트").content("내용").author(testUser).board(board).build());
+
+        mockMvc.perform(post("/posts/{postId}/comments", post.getId())
+                        .with(csrf())
+                        .param("content", "무단 댓글"))
+                .andExpect(status().is3xxRedirection())
+                .andExpect(redirectedUrl("/login"));
+    }
+
+    /**
+     * 인증된 사용자가 댓글에 대댓글을 작성하면 부모 댓글 앵커로 리다이렉트된다.
+     */
+    @Test
+    void addReply_withAuth_redirectsToComment() throws Exception {
+        Post post = postRepository.save(Post.builder()
+                .title("대댓글 테스트").content("내용").author(testUser).board(board).build());
+        Comment parent = commentRepository.save(Comment.builder()
+                .content("부모 댓글").post(post).author(testUser).build());
+
+        mockMvc.perform(post("/posts/{postId}/comments/{id}/replies",
+                        post.getId(), parent.getId())
+                        .with(csrf())
+                        .with(user("otheruser"))
+                        .param("content", "대댓글 내용입니다."))
+                .andExpect(status().is3xxRedirection())
+                .andExpect(redirectedUrl("/posts/" + post.getId() + "#comment-" + parent.getId()));
+    }
+
+    /**
+     * 댓글 작성자가 본인 댓글을 삭제하면 댓글 섹션으로 리다이렉트된다.
+     */
+    @Test
+    void deleteComment_byOwner_redirectsToComments() throws Exception {
+        Post post = postRepository.save(Post.builder()
+                .title("댓글 삭제 테스트").content("내용").author(testUser).board(board).build());
+        Comment comment = commentRepository.save(Comment.builder()
+                .content("삭제할 댓글").post(post).author(testUser).build());
+
+        mockMvc.perform(post("/posts/{postId}/comments/{id}/delete",
+                        post.getId(), comment.getId())
+                        .with(csrf())
+                        .with(user("testuser")))
+                .andExpect(status().is3xxRedirection())
+                .andExpect(redirectedUrl("/posts/" + post.getId() + "#comments"));
+    }
+
+    /**
+     * 댓글 작성자가 본인 댓글을 수정하면 해당 댓글 앵커로 리다이렉트된다.
+     */
+    @Test
+    void editComment_byOwner_redirectsToComment() throws Exception {
+        Post post = postRepository.save(Post.builder()
+                .title("댓글 수정 테스트").content("내용").author(testUser).board(board).build());
+        Comment comment = commentRepository.save(Comment.builder()
+                .content("수정 전 댓글").post(post).author(testUser).build());
+
+        mockMvc.perform(post("/posts/{postId}/comments/{id}/edit",
+                        post.getId(), comment.getId())
+                        .with(csrf())
+                        .with(user("testuser"))
+                        .param("content", "수정 후 댓글"))
+                .andExpect(status().is3xxRedirection())
+                .andExpect(redirectedUrl("/posts/" + post.getId() + "#comment-" + comment.getId()));
     }
 }

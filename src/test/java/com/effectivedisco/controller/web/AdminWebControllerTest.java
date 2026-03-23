@@ -1,9 +1,12 @@
 package com.effectivedisco.controller.web;
 
+import com.effectivedisco.domain.Board;
+import com.effectivedisco.domain.Comment;
 import com.effectivedisco.domain.Post;
 import com.effectivedisco.domain.Report;
 import com.effectivedisco.domain.ReportTargetType;
 import com.effectivedisco.domain.User;
+import com.effectivedisco.repository.BoardRepository;
 import com.effectivedisco.repository.CommentRepository;
 import com.effectivedisco.repository.FollowRepository;
 import com.effectivedisco.repository.PostRepository;
@@ -53,6 +56,7 @@ class AdminWebControllerTest {
     @Autowired ReportRepository      reportRepository;
     @Autowired CommentRepository     commentRepository;
     @Autowired FollowRepository      followRepository;
+    @Autowired BoardRepository       boardRepository;
     @Autowired PasswordEncoder       passwordEncoder;
 
     MockMvc mockMvc;
@@ -241,6 +245,155 @@ class AdminWebControllerTest {
     @Test
     void adminDeletePost_success_redirectsToDashboard() throws Exception {
         mockMvc.perform(post("/admin/posts/{id}/delete", testPost.getId())
+                        .with(csrf())
+                        .with(user("testadmin").roles("ADMIN")))
+                .andExpect(status().is3xxRedirection())
+                .andExpect(redirectedUrl("/admin"));
+    }
+
+    // ── 계정 정지 관리 ────────────────────────────────────────
+
+    /**
+     * POST /admin/users/{id}/suspend 로 일반 사용자를 기간 정지하면 /admin 으로 리다이렉트된다.
+     * days=3 이면 현재 시각 + 3일이 suspendedUntil 로 설정된다.
+     */
+    @Test
+    void suspendUser_success_redirectsToDashboard() throws Exception {
+        mockMvc.perform(post("/admin/users/{id}/suspend", normalUser.getId())
+                        .with(csrf())
+                        .with(user("testadmin").roles("ADMIN"))
+                        .param("reason",          "부적절한 게시물 작성")
+                        .param("days",            "3")
+                        .param("currentUsername", "testadmin"))
+                .andExpect(status().is3xxRedirection())
+                .andExpect(redirectedUrl("/admin"));
+    }
+
+    /**
+     * 관리자가 자기 자신을 정지하려 하면 정지가 무시되고 /admin 으로 리다이렉트된다.
+     * AdminWebController: !target.getUsername().equals(currentUsername) → 조건 미충족 → 정지 skip
+     */
+    @Test
+    void suspendUser_selfSuspend_isIgnoredAndRedirects() throws Exception {
+        mockMvc.perform(post("/admin/users/{id}/suspend", adminUser.getId())
+                        .with(csrf())
+                        .with(user("testadmin").roles("ADMIN"))
+                        .param("reason",          "자기 정지 시도")
+                        .param("currentUsername", "testadmin"))
+                .andExpect(status().is3xxRedirection())
+                .andExpect(redirectedUrl("/admin"));
+    }
+
+    /**
+     * POST /admin/users/{id}/unsuspend 로 정지된 사용자를 복구하면 /admin 으로 리다이렉트된다.
+     */
+    @Test
+    void unsuspendUser_success_redirectsToDashboard() throws Exception {
+        // 먼저 정지 상태로 만들기
+        normalUser.suspend("테스트 정지", null); // 영구 정지
+        userRepository.save(normalUser);
+
+        mockMvc.perform(post("/admin/users/{id}/unsuspend", normalUser.getId())
+                        .with(csrf())
+                        .with(user("testadmin").roles("ADMIN")))
+                .andExpect(status().is3xxRedirection())
+                .andExpect(redirectedUrl("/admin"));
+    }
+
+    // ── 게시물 고정 핀 토글 ───────────────────────────────────
+
+    /**
+     * POST /admin/posts/{id}/pin 으로 게시물을 고정하면 해당 게시물 상세 페이지로 리다이렉트된다.
+     * returnTo 파라미터가 없을 때 기본 리다이렉트는 /posts/{id} 이다.
+     */
+    @Test
+    void pinPost_success_redirectsToPost() throws Exception {
+        mockMvc.perform(post("/admin/posts/{id}/pin", testPost.getId())
+                        .with(csrf())
+                        .with(user("testadmin").roles("ADMIN")))
+                .andExpect(status().is3xxRedirection())
+                .andExpect(redirectedUrl("/posts/" + testPost.getId()));
+    }
+
+    /**
+     * returnTo 파라미터가 있으면 해당 URL로 리다이렉트된다.
+     * 게시판 목록 페이지에서 핀 토글 후 해당 게시판으로 돌아가는 시나리오.
+     */
+    @Test
+    void pinPost_withReturnTo_redirectsToReturnTo() throws Exception {
+        mockMvc.perform(post("/admin/posts/{id}/pin", testPost.getId())
+                        .with(csrf())
+                        .with(user("testadmin").roles("ADMIN"))
+                        .param("returnTo", "/boards/free"))
+                .andExpect(status().is3xxRedirection())
+                .andExpect(redirectedUrl("/boards/free"));
+    }
+
+    // ── 댓글 강제 삭제 ───────────────────────────────────────
+
+    /**
+     * POST /admin/comments/{id}/delete 로 댓글을 강제 삭제하면
+     * 해당 게시물 상세 페이지로 리다이렉트된다.
+     */
+    @Test
+    void adminDeleteComment_success_redirectsToPost() throws Exception {
+        Comment comment = commentRepository.save(Comment.builder()
+                .content("강제 삭제할 댓글").post(testPost).author(normalUser).build());
+
+        mockMvc.perform(post("/admin/comments/{id}/delete", comment.getId())
+                        .with(csrf())
+                        .with(user("testadmin").roles("ADMIN"))
+                        .param("postId", testPost.getId().toString()))
+                .andExpect(status().is3xxRedirection())
+                .andExpect(redirectedUrl("/posts/" + testPost.getId()));
+    }
+
+    // ── 게시판 관리 ───────────────────────────────────────────
+
+    /**
+     * POST /admin/boards 로 새 게시판을 생성하면 /admin 으로 리다이렉트된다.
+     * BoardDataInitializer가 만든 게시판(free/dev/qna/notice)과 충돌하지 않는 슬러그를 사용한다.
+     */
+    @Test
+    void createBoard_success_redirectsToDashboard() throws Exception {
+        mockMvc.perform(post("/admin/boards")
+                        .with(csrf())
+                        .with(user("testadmin").roles("ADMIN"))
+                        .param("name",        "테스트 게시판")
+                        .param("slug",        "test-admin-board")
+                        .param("description", "테스트용 게시판입니다."))
+                .andExpect(status().is3xxRedirection())
+                .andExpect(redirectedUrl("/admin"));
+    }
+
+    /**
+     * POST /admin/boards/{slug}/update 로 게시판 정보를 수정하면 /admin 으로 리다이렉트된다.
+     * BoardDataInitializer가 생성한 "free" 게시판을 수정 대상으로 사용한다.
+     */
+    @Test
+    void updateBoard_success_redirectsToDashboard() throws Exception {
+        // BoardDataInitializer가 시작 시 "free" 슬러그 게시판을 생성한다
+        mockMvc.perform(post("/admin/boards/{slug}/update", "free")
+                        .with(csrf())
+                        .with(user("testadmin").roles("ADMIN"))
+                        .param("name",        "자유게시판 (수정)")
+                        .param("slug",        "free")
+                        .param("description", "수정된 설명"))
+                .andExpect(status().is3xxRedirection())
+                .andExpect(redirectedUrl("/admin"));
+    }
+
+    /**
+     * POST /admin/boards/{slug}/delete 로 게시판을 삭제하면 /admin 으로 리다이렉트된다.
+     * setUp에서 모든 게시물을 삭제했으므로 cascade 문제 없이 삭제 가능하다.
+     */
+    @Test
+    void deleteBoard_success_redirectsToDashboard() throws Exception {
+        // 삭제용 임시 게시판 생성 (free 등 시딩 게시판을 건드리지 않기 위함)
+        boardRepository.save(Board.builder()
+                .name("삭제용 게시판").slug("delete-me-board").build());
+
+        mockMvc.perform(post("/admin/boards/{slug}/delete", "delete-me-board")
                         .with(csrf())
                         .with(user("testadmin").roles("ADMIN")))
                 .andExpect(status().is3xxRedirection())

@@ -50,7 +50,10 @@ public class PostController {
         return ResponseEntity.ok(postService.getPosts(page, size, keyword, tag, boardSlug, sort));
     }
 
-    @Operation(summary = "게시물 단건 조회")
+    @Operation(summary = "게시물 단건 조회",
+               description = "조회 시마다 viewCount 가 1 증가합니다. " +
+                             "웹 UI(/posts/{id})는 세션 기반 중복 방지가 적용되지만 REST API는 stateless이므로 " +
+                             "호출할 때마다 카운트됩니다.")
     @ApiResponses({
         @ApiResponse(responseCode = "200", description = "조회 성공"),
         @ApiResponse(responseCode = "400", description = "게시물을 찾을 수 없음")
@@ -58,6 +61,8 @@ public class PostController {
     @GetMapping("/{id}")
     public ResponseEntity<PostResponse> getPost(
             @Parameter(description = "게시물 ID") @PathVariable Long id) {
+        // REST API는 stateless이므로 세션 중복 방지 없이 매 요청마다 조회수를 증가시킨다
+        postService.incrementViewCount(id);
         return ResponseEntity.ok(postService.getPost(id));
     }
 
