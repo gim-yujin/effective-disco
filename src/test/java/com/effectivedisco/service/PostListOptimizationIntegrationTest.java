@@ -90,6 +90,56 @@ class PostListOptimizationIntegrationTest {
         });
         assertThat(statistics.getPrepareStatementCount())
                 .as("문제 해결 검증: post.list 는 게시물 수만큼 LAZY select 를 늘리지 말고 현재 페이지 연관 데이터를 상수 개수 SQL 로 preload 해야 한다")
-                .isLessThanOrEqualTo(6L);
+                .isLessThanOrEqualTo(4L);
+    }
+
+    @Test
+    void getPosts_keywordSearchUsesBoundedStatementsAndStableCountQuery() {
+        String tagPrefix = "search-opt";
+        Board board = boardRepository.save(Board.builder()
+                .name("개발게시판")
+                .slug("dev-" + tagPrefix)
+                .description("검색 최적화 게시판")
+                .build());
+
+        Tag spring = tagRepository.save(new Tag("spring-" + tagPrefix));
+        Tag load = tagRepository.save(new Tag("load-" + tagPrefix));
+
+        for (int i = 0; i < 8; i++) {
+            User author = userRepository.save(User.builder()
+                    .username("search-author" + i)
+                    .email("search-author" + i + "@example.com")
+                    .password("encoded-password")
+                    .build());
+
+            Post post = Post.builder()
+                    .title(i < 5 ? "load-test-post-" + i : "other-post-" + i)
+                    .content(i < 5 ? "content with load keyword " + i : "plain content " + i)
+                    .author(author)
+                    .board(board)
+                    .build();
+            post.getTags().add(spring);
+            post.getTags().add(load);
+            post.addImage(new PostImage(post, "/search-images/" + i + ".jpg", 0));
+            postRepository.save(post);
+        }
+
+        entityManager.flush();
+        entityManager.clear();
+        statistics.clear();
+
+        Page<PostResponse> result = postService.getPosts(0, 10, "load", null, "dev-" + tagPrefix, "latest");
+
+        assertThat(result.getContent()).hasSize(5);
+        assertThat(result.getTotalElements()).isEqualTo(5);
+        assertThat(result.getContent()).allSatisfy(post -> {
+            assertThat(post.getBoardSlug()).isEqualTo("dev-" + tagPrefix);
+            assertThat(post.getAuthor()).startsWith("search-author");
+            assertThat(post.getTags()).containsExactly("load-" + tagPrefix, "spring-" + tagPrefix);
+            assertThat(post.getImageUrls()).hasSize(1);
+        });
+        assertThat(statistics.getPrepareStatementCount())
+                .as("문제 해결 검증: board+keyword search 는 board lookup + page query + count query + tag/image batch 로 고정되어야 한다")
+                .isLessThanOrEqualTo(5L);
     }
 }

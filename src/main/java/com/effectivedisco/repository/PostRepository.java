@@ -11,6 +11,7 @@ import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
 
@@ -26,6 +27,428 @@ public interface PostRepository extends JpaRepository<Post, Long> {
         Long getId();
         String getAuthorUsername();
     }
+
+    interface PostListRow {
+        Long getId();
+        String getTitle();
+        String getContent();
+        LocalDateTime getCreatedAt();
+        LocalDateTime getUpdatedAt();
+        int getCommentCount();
+        long getLikeCount();
+        int getViewCount();
+        boolean isPinned();
+        boolean isDraft();
+        String getLegacyImageUrl();
+        String getAuthorUsername();
+        String getBoardName();
+        String getBoardSlug();
+    }
+
+    interface PostTagRow {
+        Long getPostId();
+        String getTagName();
+    }
+
+    interface PostImageRow {
+        Long getPostId();
+        String getImageUrl();
+    }
+
+    // ══════════════════════════════════════════════════════
+    // 목록/검색 projection 쿼리
+    // ══════════════════════════════════════════════════════
+
+    /**
+     * 문제 해결:
+     * post.list hot path 는 목록 본문에 필요한 컬럼만 읽으면 되는데, EntityGraph 로 author 전체 엔티티를 끌고 오면서
+     * users 컬럼 fan-out 과 entity hydration 비용이 커졌다. 목록 전용 projection 으로 본문 select 폭을 줄인다.
+     */
+    @Query(value = """
+            SELECT
+                p.id AS id,
+                p.title AS title,
+                p.content AS content,
+                p.createdAt AS createdAt,
+                p.updatedAt AS updatedAt,
+                p.commentCount AS commentCount,
+                p.likeCount AS likeCount,
+                p.viewCount AS viewCount,
+                p.pinned AS pinned,
+                p.draft AS draft,
+                p.imageUrl AS legacyImageUrl,
+                a.username AS authorUsername,
+                b.name AS boardName,
+                b.slug AS boardSlug
+            FROM Post p
+            JOIN p.author a
+            LEFT JOIN p.board b
+            WHERE p.draft = false
+            ORDER BY p.createdAt DESC
+            """,
+            countQuery = """
+            SELECT COUNT(p)
+            FROM Post p
+            WHERE p.draft = false
+            """)
+    Page<PostListRow> findPublicPostListRowsOrderByCreatedAtDesc(Pageable pageable);
+
+    /**
+     * 문제 해결:
+     * keyword search 의 Page count 가 users join 을 그대로 타면 본문과 비슷한 비용의 count(*) 가 추가된다.
+     * countQuery 는 EXISTS 서브쿼리로 author 조건만 확인해 count join 비용을 줄인다.
+     */
+    @Query(value = """
+            SELECT
+                p.id AS id,
+                p.title AS title,
+                p.content AS content,
+                p.createdAt AS createdAt,
+                p.updatedAt AS updatedAt,
+                p.commentCount AS commentCount,
+                p.likeCount AS likeCount,
+                p.viewCount AS viewCount,
+                p.pinned AS pinned,
+                p.draft AS draft,
+                p.imageUrl AS legacyImageUrl,
+                a.username AS authorUsername,
+                b.name AS boardName,
+                b.slug AS boardSlug
+            FROM Post p
+            JOIN p.author a
+            LEFT JOIN p.board b
+            WHERE p.draft = false
+              AND (
+                LOWER(p.title) LIKE LOWER(CONCAT('%', :keyword, '%'))
+                OR LOWER(p.content) LIKE LOWER(CONCAT('%', :keyword, '%'))
+                OR LOWER(a.username) LIKE LOWER(CONCAT('%', :keyword, '%'))
+              )
+            ORDER BY p.createdAt DESC
+            """,
+            countQuery = """
+            SELECT COUNT(p)
+            FROM Post p
+            WHERE p.draft = false
+              AND (
+                LOWER(p.title) LIKE LOWER(CONCAT('%', :keyword, '%'))
+                OR LOWER(p.content) LIKE LOWER(CONCAT('%', :keyword, '%'))
+                OR EXISTS (
+                    SELECT 1
+                    FROM User u
+                    WHERE u = p.author
+                      AND LOWER(u.username) LIKE LOWER(CONCAT('%', :keyword, '%'))
+                )
+              )
+            """)
+    Page<PostListRow> searchPublicPostListRows(@Param("keyword") String keyword, Pageable pageable);
+
+    /**
+     * 문제 해결:
+     * 태그 검색도 Page count 에서 JOIN post_tags fan-out 이 커진다. 본문/카운트 모두 EXISTS 기반으로 태그 존재만 확인한다.
+     */
+    @Query(value = """
+            SELECT
+                p.id AS id,
+                p.title AS title,
+                p.content AS content,
+                p.createdAt AS createdAt,
+                p.updatedAt AS updatedAt,
+                p.commentCount AS commentCount,
+                p.likeCount AS likeCount,
+                p.viewCount AS viewCount,
+                p.pinned AS pinned,
+                p.draft AS draft,
+                p.imageUrl AS legacyImageUrl,
+                a.username AS authorUsername,
+                b.name AS boardName,
+                b.slug AS boardSlug
+            FROM Post p
+            JOIN p.author a
+            LEFT JOIN p.board b
+            WHERE p.draft = false
+              AND EXISTS (
+                SELECT 1
+                FROM p.tags t
+                WHERE t.name = :tagName
+              )
+            ORDER BY p.createdAt DESC
+            """,
+            countQuery = """
+            SELECT COUNT(p)
+            FROM Post p
+            WHERE p.draft = false
+              AND EXISTS (
+                SELECT 1
+                FROM p.tags t
+                WHERE t.name = :tagName
+              )
+            """)
+    Page<PostListRow> findPublicPostListRowsByTagName(@Param("tagName") String tagName, Pageable pageable);
+
+    @Query(value = """
+            SELECT
+                p.id AS id,
+                p.title AS title,
+                p.content AS content,
+                p.createdAt AS createdAt,
+                p.updatedAt AS updatedAt,
+                p.commentCount AS commentCount,
+                p.likeCount AS likeCount,
+                p.viewCount AS viewCount,
+                p.pinned AS pinned,
+                p.draft AS draft,
+                p.imageUrl AS legacyImageUrl,
+                a.username AS authorUsername,
+                b.name AS boardName,
+                b.slug AS boardSlug
+            FROM Post p
+            JOIN p.author a
+            LEFT JOIN p.board b
+            WHERE p.board = :board
+              AND p.draft = false
+            ORDER BY p.createdAt DESC
+            """,
+            countQuery = """
+            SELECT COUNT(p)
+            FROM Post p
+            WHERE p.board = :board
+              AND p.draft = false
+            """)
+    Page<PostListRow> findPublicPostListRowsByBoardOrderByCreatedAtDesc(@Param("board") Board board, Pageable pageable);
+
+    @Query(value = """
+            SELECT
+                p.id AS id,
+                p.title AS title,
+                p.content AS content,
+                p.createdAt AS createdAt,
+                p.updatedAt AS updatedAt,
+                p.commentCount AS commentCount,
+                p.likeCount AS likeCount,
+                p.viewCount AS viewCount,
+                p.pinned AS pinned,
+                p.draft AS draft,
+                p.imageUrl AS legacyImageUrl,
+                a.username AS authorUsername,
+                b.name AS boardName,
+                b.slug AS boardSlug
+            FROM Post p
+            JOIN p.author a
+            LEFT JOIN p.board b
+            WHERE p.board = :board
+              AND p.draft = false
+              AND (
+                LOWER(p.title) LIKE LOWER(CONCAT('%', :keyword, '%'))
+                OR LOWER(p.content) LIKE LOWER(CONCAT('%', :keyword, '%'))
+                OR LOWER(a.username) LIKE LOWER(CONCAT('%', :keyword, '%'))
+              )
+            ORDER BY p.createdAt DESC
+            """,
+            countQuery = """
+            SELECT COUNT(p)
+            FROM Post p
+            WHERE p.board = :board
+              AND p.draft = false
+              AND (
+                LOWER(p.title) LIKE LOWER(CONCAT('%', :keyword, '%'))
+                OR LOWER(p.content) LIKE LOWER(CONCAT('%', :keyword, '%'))
+                OR EXISTS (
+                    SELECT 1
+                    FROM User u
+                    WHERE u = p.author
+                      AND LOWER(u.username) LIKE LOWER(CONCAT('%', :keyword, '%'))
+                )
+              )
+            """)
+    Page<PostListRow> searchPublicPostListRowsInBoard(@Param("board") Board board,
+                                                      @Param("keyword") String keyword,
+                                                      Pageable pageable);
+
+    @Query(value = """
+            SELECT
+                p.id AS id,
+                p.title AS title,
+                p.content AS content,
+                p.createdAt AS createdAt,
+                p.updatedAt AS updatedAt,
+                p.commentCount AS commentCount,
+                p.likeCount AS likeCount,
+                p.viewCount AS viewCount,
+                p.pinned AS pinned,
+                p.draft AS draft,
+                p.imageUrl AS legacyImageUrl,
+                a.username AS authorUsername,
+                b.name AS boardName,
+                b.slug AS boardSlug
+            FROM Post p
+            JOIN p.author a
+            LEFT JOIN p.board b
+            WHERE p.board = :board
+              AND p.draft = false
+              AND EXISTS (
+                SELECT 1
+                FROM p.tags t
+                WHERE t.name = :tagName
+              )
+            ORDER BY p.createdAt DESC
+            """,
+            countQuery = """
+            SELECT COUNT(p)
+            FROM Post p
+            WHERE p.board = :board
+              AND p.draft = false
+              AND EXISTS (
+                SELECT 1
+                FROM p.tags t
+                WHERE t.name = :tagName
+              )
+            """)
+    Page<PostListRow> findPublicPostListRowsByBoardAndTagName(@Param("board") Board board,
+                                                              @Param("tagName") String tagName,
+                                                              Pageable pageable);
+
+    @Query(value = """
+            SELECT
+                p.id AS id,
+                p.title AS title,
+                p.content AS content,
+                p.createdAt AS createdAt,
+                p.updatedAt AS updatedAt,
+                p.commentCount AS commentCount,
+                p.likeCount AS likeCount,
+                p.viewCount AS viewCount,
+                p.pinned AS pinned,
+                p.draft AS draft,
+                p.imageUrl AS legacyImageUrl,
+                a.username AS authorUsername,
+                b.name AS boardName,
+                b.slug AS boardSlug
+            FROM Post p
+            JOIN p.author a
+            LEFT JOIN p.board b
+            WHERE p.draft = false
+            ORDER BY p.likeCount DESC, p.createdAt DESC
+            """,
+            countQuery = """
+            SELECT COUNT(p)
+            FROM Post p
+            WHERE p.draft = false
+            """)
+    Page<PostListRow> findAllPostListRowsOrderByLikeCountDesc(Pageable pageable);
+
+    @Query(value = """
+            SELECT
+                p.id AS id,
+                p.title AS title,
+                p.content AS content,
+                p.createdAt AS createdAt,
+                p.updatedAt AS updatedAt,
+                p.commentCount AS commentCount,
+                p.likeCount AS likeCount,
+                p.viewCount AS viewCount,
+                p.pinned AS pinned,
+                p.draft AS draft,
+                p.imageUrl AS legacyImageUrl,
+                a.username AS authorUsername,
+                b.name AS boardName,
+                b.slug AS boardSlug
+            FROM Post p
+            JOIN p.author a
+            LEFT JOIN p.board b
+            WHERE p.draft = false
+            ORDER BY p.commentCount DESC, p.createdAt DESC
+            """,
+            countQuery = """
+            SELECT COUNT(p)
+            FROM Post p
+            WHERE p.draft = false
+            """)
+    Page<PostListRow> findAllPostListRowsOrderByCommentCountDesc(Pageable pageable);
+
+    @Query(value = """
+            SELECT
+                p.id AS id,
+                p.title AS title,
+                p.content AS content,
+                p.createdAt AS createdAt,
+                p.updatedAt AS updatedAt,
+                p.commentCount AS commentCount,
+                p.likeCount AS likeCount,
+                p.viewCount AS viewCount,
+                p.pinned AS pinned,
+                p.draft AS draft,
+                p.imageUrl AS legacyImageUrl,
+                a.username AS authorUsername,
+                b.name AS boardName,
+                b.slug AS boardSlug
+            FROM Post p
+            JOIN p.author a
+            LEFT JOIN p.board b
+            WHERE p.board = :board
+              AND p.draft = false
+            ORDER BY p.likeCount DESC, p.createdAt DESC
+            """,
+            countQuery = """
+            SELECT COUNT(p)
+            FROM Post p
+            WHERE p.board = :board
+              AND p.draft = false
+            """)
+    Page<PostListRow> findPostListRowsByBoardOrderByLikeCountDesc(@Param("board") Board board, Pageable pageable);
+
+    @Query(value = """
+            SELECT
+                p.id AS id,
+                p.title AS title,
+                p.content AS content,
+                p.createdAt AS createdAt,
+                p.updatedAt AS updatedAt,
+                p.commentCount AS commentCount,
+                p.likeCount AS likeCount,
+                p.viewCount AS viewCount,
+                p.pinned AS pinned,
+                p.draft AS draft,
+                p.imageUrl AS legacyImageUrl,
+                a.username AS authorUsername,
+                b.name AS boardName,
+                b.slug AS boardSlug
+            FROM Post p
+            JOIN p.author a
+            LEFT JOIN p.board b
+            WHERE p.board = :board
+              AND p.draft = false
+            ORDER BY p.commentCount DESC, p.createdAt DESC
+            """,
+            countQuery = """
+            SELECT COUNT(p)
+            FROM Post p
+            WHERE p.board = :board
+              AND p.draft = false
+            """)
+    Page<PostListRow> findPostListRowsByBoardOrderByCommentCountDesc(@Param("board") Board board, Pageable pageable);
+
+    /**
+     * 문제 해결:
+     * 목록 DTO 는 태그/이미지 컬렉션이 필요하지만, 본문 select 에 collection join 을 섞으면 페이지네이션이 깨진다.
+     * 현재 페이지 ID만 대상으로 가벼운 row projection 을 한 번씩 추가 조회해 collection fan-out 을 상수 개수 쿼리로 묶는다.
+     */
+    @Query("""
+            SELECT p.id AS postId, t.name AS tagName
+            FROM Post p
+            JOIN p.tags t
+            WHERE p.id IN :postIds
+            ORDER BY p.id ASC, t.name ASC
+            """)
+    List<PostTagRow> findTagRowsByPostIdIn(@Param("postIds") List<Long> postIds);
+
+    @Query("""
+            SELECT p.id AS postId, i.imageUrl AS imageUrl
+            FROM Post p
+            JOIN p.images i
+            WHERE p.id IN :postIds
+            ORDER BY p.id ASC, i.sortOrder ASC
+            """)
+    List<PostImageRow> findImageRowsByPostIdIn(@Param("postIds") List<Long> postIds);
 
     // ══════════════════════════════════════════════════════
     // 전체 공개 게시물 조회 (draft = false)

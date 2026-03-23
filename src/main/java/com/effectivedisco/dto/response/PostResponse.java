@@ -78,16 +78,57 @@ public class PostResponse {
             example = "[\"/uploads/img1.jpg\", \"/uploads/img2.png\"]")
     private final List<String> imageUrls;
 
+    public PostResponse(Long id,
+                        String title,
+                        String content,
+                        String author,
+                        LocalDateTime createdAt,
+                        LocalDateTime updatedAt,
+                        int commentCount,
+                        long likeCount,
+                        int viewCount,
+                        List<String> tags,
+                        String boardName,
+                        String boardSlug,
+                        boolean pinned,
+                        boolean draft,
+                        List<String> imageUrls) {
+        this.id = id;
+        this.title = title;
+        this.content = content;
+        this.author = author;
+        this.createdAt = createdAt;
+        this.updatedAt = updatedAt;
+        this.commentCount = commentCount;
+        this.likeCount = likeCount;
+        this.viewCount = viewCount;
+        this.tags = List.copyOf(tags);
+        this.boardName = boardName;
+        this.boardSlug = boardSlug;
+        this.pinned = pinned;
+        this.draft = draft;
+        this.imageUrls = List.copyOf(imageUrls);
+    }
+
     public PostResponse(Post post, long likeCount) {
         this(
-                post,
+                post.getId(),
+                post.getTitle(),
+                post.getContent(),
                 post.getAuthor().getUsername(),
+                post.getCreatedAt(),
+                post.getUpdatedAt(),
+                post.getCommentCount(),
+                likeCount,
+                post.getViewCount(),
                 post.getTags().stream()
                         .map(t -> t.getName())
                         .sorted()
                         .collect(Collectors.toList()),
                 post.getBoard() != null ? post.getBoard().getName() : null,
                 post.getBoard() != null ? post.getBoard().getSlug() : null,
+                post.isPinned(),
+                post.isDraft(),
                 extractImageUrls(post)
         );
     }
@@ -103,21 +144,23 @@ public class PostResponse {
                         String boardName,
                         String boardSlug,
                         List<String> imageUrls) {
-        this.id = post.getId();
-        this.title = post.getTitle();
-        this.content = post.getContent();
-        this.author = authorUsername;
-        this.createdAt = post.getCreatedAt();
-        this.updatedAt = post.getUpdatedAt();
-        this.commentCount = post.getCommentCount();
-        this.likeCount = post.getLikeCount();
-        this.viewCount = post.getViewCount();
-        this.tags = List.copyOf(tagNames);
-        this.boardName = boardName;
-        this.boardSlug = boardSlug;
-        this.pinned    = post.isPinned();
-        this.draft     = post.isDraft();
-        this.imageUrls = List.copyOf(imageUrls);
+        this(
+                post.getId(),
+                post.getTitle(),
+                post.getContent(),
+                authorUsername,
+                post.getCreatedAt(),
+                post.getUpdatedAt(),
+                post.getCommentCount(),
+                post.getLikeCount(),
+                post.getViewCount(),
+                tagNames,
+                boardName,
+                boardSlug,
+                post.isPinned(),
+                post.isDraft(),
+                imageUrls
+        );
     }
 
     public PostResponse(Post post) {

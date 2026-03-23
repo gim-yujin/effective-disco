@@ -231,6 +231,32 @@
 - 같은 런의 `postgresSnapshot` 에서는 `Lock/transactionid`, `Lock/tuple`, `LWLock/WALWrite`, `IO/WALSync` wait 가 관측됐고, `slowActiveQueries` 는 주로 `posts + users` 목록 조회와 `count(*)` 검색/목록 count 쿼리였다.
 - 결론적으로 현재 로컬 환경에서 soak 기준 안정 factor 는 `0.6` 이고, `0.7` 부근부터는 정합성 깨짐이 아니라 read pressure + lock/WAL pressure 로 인해 pool 대기와 응답 지연이 먼저 증가한다.
 
+## 8차 결과
+
+상태: 완료
+
+검증 날짜:
+
+- 2026-03-24
+
+검증 범위:
+
+- `post.list` / 검색 `count(*)` read path 최적화
+- 목록/검색 projection 기반 본문 select 전환
+- `Page countQuery` 명시로 `users/tags` join fan-out 완화
+- `0.7` focused soak 재측정 2회
+
+핵심 결론:
+
+- 목록/검색 본문은 이제 `author` 전체 엔티티가 아니라 `username` 중심 projection 을 사용한다.
+- 검색/태그 `count(*)` 는 더 이상 `join users` / `join post_tags` fan-out 을 그대로 타지 않고, 명시적 `countQuery` 로 분리됐다.
+- targeted 테스트 [PostListOptimizationIntegrationTest.java](/home/admin0/effective-disco/src/test/java/com/effectivedisco/service/PostListOptimizationIntegrationTest.java) 기준 latest list 는 `<=4` statement, `board + keyword search` 는 `<=5` statement 상한을 통과했다.
+- 수정 후 focused `0.7` 재측정 [soak-20260324-072247.md](/home/admin0/effective-disco/loadtest/results/soak-20260324-072247.md) 에서는 `p95=763.21ms`, `p99=980.04ms`, `dbPoolTimeouts=10`, `unexpected_response_rate=0.0003` 이었다.
+- 정합성은 계속 유지됐다. `duplicateKeyConflicts=0`, 관계 중복 row `0`, SQL mismatch `0`
+- 다만 macro latency 기준으로는 아직 `0.7` 안정화에 성공하지 못했다. 쿼리 모양은 좋아졌지만 pool 대기와 timeout 은 여전히 남아 있다.
+- 같은 재측정의 `slowActiveQueries` 는 여전히 목록 본문 select 와 `count(p1_0.id)` 검색/태그 count 쿼리를 가리켰다.
+- 결론적으로 이번 변경은 `read query shape 개선`에는 성공했지만, 현재 로컬 환경에서 `0.7` 안정 구간을 확보할 정도의 체감 개선까지는 이어지지 않았다.
+
 ## 1차에서 보장한 불변식
 
 ### 관계형 쓰기 경로

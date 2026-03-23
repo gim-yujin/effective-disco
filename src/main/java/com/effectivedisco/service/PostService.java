@@ -20,14 +20,17 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.cache.annotation.CacheEvict;
 import org.springframework.cache.annotation.Cacheable;
 import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.core.userdetails.UsernameNotFoundException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -74,37 +77,37 @@ public class PostService {
         // 정렬 기준 정규화 — 지원하지 않는 값은 최신순으로 폴백
         String sortKey = (sort != null) ? sort.trim().toLowerCase() : "latest";
 
-        Page<Post> posts;
+        Page<PostRepository.PostListRow> posts;
 
         if (board != null && tag != null && !tag.isBlank()) {
             // 게시판 내 태그 필터 (태그 필터는 항상 최신순, 초안 제외)
-            posts = postRepository.findByBoardAndTagName(board, tag, pageable);
+            posts = postRepository.findPublicPostListRowsByBoardAndTagName(board, tag, pageable);
         } else if (board != null && keyword != null && !keyword.isBlank()) {
             // 게시판 내 키워드 검색 (검색은 항상 최신순, 초안 제외)
-            posts = postRepository.searchByKeywordInBoard(board, keyword, pageable);
+            posts = postRepository.searchPublicPostListRowsInBoard(board, keyword, pageable);
         } else if (board != null) {
             // 게시판 전체 목록 — 정렬 기준 적용 (초안 제외)
             posts = switch (sortKey) {
-                case "likes"    -> postRepository.findByBoardOrderByLikeCountDesc(board, pageable);
-                case "comments" -> postRepository.findByBoardOrderByCommentCountDesc(board, pageable);
-                default         -> postRepository.findByBoardAndDraftFalseOrderByCreatedAtDesc(board, pageable);
+                case "likes"    -> postRepository.findPostListRowsByBoardOrderByLikeCountDesc(board, pageable);
+                case "comments" -> postRepository.findPostListRowsByBoardOrderByCommentCountDesc(board, pageable);
+                default         -> postRepository.findPublicPostListRowsByBoardOrderByCreatedAtDesc(board, pageable);
             };
         } else if (tag != null && !tag.isBlank()) {
             // 전체 게시판 태그 필터 (태그 필터는 항상 최신순, 초안 제외)
-            posts = postRepository.findByTagName(tag, pageable);
+            posts = postRepository.findPublicPostListRowsByTagName(tag, pageable);
         } else if (keyword != null && !keyword.isBlank()) {
             // 전체 게시판 키워드 검색 (검색은 항상 최신순, 초안 제외)
-            posts = postRepository.searchByKeyword(keyword, pageable);
+            posts = postRepository.searchPublicPostListRows(keyword, pageable);
         } else {
             // 전체 목록 — 정렬 기준 적용 (초안 제외)
             posts = switch (sortKey) {
-                case "likes"    -> postRepository.findAllOrderByLikeCountDesc(pageable);
-                case "comments" -> postRepository.findAllOrderByCommentCountDesc(pageable);
-                default         -> postRepository.findByDraftFalseOrderByCreatedAtDesc(pageable);
+                case "likes"    -> postRepository.findAllPostListRowsOrderByLikeCountDesc(pageable);
+                case "comments" -> postRepository.findAllPostListRowsOrderByCommentCountDesc(pageable);
+                default         -> postRepository.findPublicPostListRowsOrderByCreatedAtDesc(pageable);
             };
         }
 
-        return toPostResponsePage(posts);
+        return toPostResponseProjectionPage(posts);
     }
 
     /**
@@ -136,7 +139,7 @@ public class PostService {
         Page<Post> posts = postRepository.findByAuthorAndDraftFalseOrderByCreatedAtDesc(
                 user, PageRequest.of(page, size)
         );
-        return toPostResponsePage(posts);
+        return toPostResponseEntityPage(posts);
     }
 
     /**
@@ -153,7 +156,7 @@ public class PostService {
         Page<Post> posts = postRepository.findByAuthorAndDraftTrueOrderByCreatedAtDesc(
                 user, PageRequest.of(page, size)
         );
-        return toPostResponsePage(posts);
+        return toPostResponseEntityPage(posts);
     }
 
     /** 전체 태그 이름 목록 (태그 필터 바 렌더링용) */
@@ -315,7 +318,7 @@ public class PostService {
         return toPostResponseList(postRepository.findByBoardAndPinnedTrueAndDraftFalseOrderByCreatedAtDesc(board));
     }
 
-    private Page<PostResponse> toPostResponsePage(Page<Post> posts) {
+    private Page<PostResponse> toPostResponseEntityPage(Page<Post> posts) {
         preloadListRelations(posts.getContent());
         return posts.map(PostResponse::new);
     }
@@ -325,6 +328,69 @@ public class PostService {
         return posts.stream()
                 .map(PostResponse::new)
                 .toList();
+    }
+
+    private Page<PostResponse> toPostResponseProjectionPage(Page<PostRepository.PostListRow> posts) {
+        List<PostResponse> content = toPostResponseProjectionList(posts.getContent());
+        return new PageImpl<>(content, posts.getPageable(), posts.getTotalElements());
+    }
+
+    private List<PostResponse> toPostResponseProjectionList(List<PostRepository.PostListRow> posts) {
+        if (posts.isEmpty()) {
+            return List.of();
+        }
+
+        List<Long> postIds = posts.stream()
+                .map(PostRepository.PostListRow::getId)
+                .toList();
+
+        // 문제 해결:
+        // 목록/검색은 projection 으로 본문 select 를 얇게 만들었지만, 태그/이미지 컬렉션은 여전히 필요하다.
+        // collection join 을 본문 쿼리에 합치면 페이지네이션과 count 해석이 깨지므로 현재 페이지 ID만 기준으로
+        // 태그/이미지 row 를 한 번씩 더 읽어 "얇은 본문 + 상수 개수 보조 쿼리" 구조로 유지한다.
+        Map<Long, List<String>> tagsByPostId = new LinkedHashMap<>();
+        for (PostRepository.PostTagRow tagRow : postRepository.findTagRowsByPostIdIn(postIds)) {
+            tagsByPostId.computeIfAbsent(tagRow.getPostId(), ignored -> new ArrayList<>())
+                    .add(tagRow.getTagName());
+        }
+
+        Map<Long, List<String>> imagesByPostId = new LinkedHashMap<>();
+        for (PostRepository.PostImageRow imageRow : postRepository.findImageRowsByPostIdIn(postIds)) {
+            imagesByPostId.computeIfAbsent(imageRow.getPostId(), ignored -> new ArrayList<>())
+                    .add(imageRow.getImageUrl());
+        }
+
+        return posts.stream()
+                .map(post -> new PostResponse(
+                        post.getId(),
+                        post.getTitle(),
+                        post.getContent(),
+                        post.getAuthorUsername(),
+                        post.getCreatedAt(),
+                        post.getUpdatedAt(),
+                        post.getCommentCount(),
+                        post.getLikeCount(),
+                        post.getViewCount(),
+                        tagsByPostId.getOrDefault(post.getId(), List.of()),
+                        post.getBoardName(),
+                        post.getBoardSlug(),
+                        post.isPinned(),
+                        post.isDraft(),
+                        resolveImageUrls(post, imagesByPostId)
+                ))
+                .toList();
+    }
+
+    private List<String> resolveImageUrls(PostRepository.PostListRow post,
+                                          Map<Long, List<String>> imagesByPostId) {
+        List<String> imageUrls = imagesByPostId.get(post.getId());
+        if (imageUrls != null && !imageUrls.isEmpty()) {
+            return imageUrls;
+        }
+        if (post.getLegacyImageUrl() != null) {
+            return List.of(post.getLegacyImageUrl());
+        }
+        return List.of();
     }
 
     private void preloadListRelations(List<Post> posts) {

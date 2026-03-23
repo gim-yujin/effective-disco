@@ -558,3 +558,72 @@ RUNS=1 STAGE_FACTORS=0.75,0.9 STOP_ON_HTTP_P99_MS=1200 \
 - `0.6` 기준으로 `30분 -> 1시간 -> 2시간` soak 를 시작한다.
 - 다음 최적화 대상은 `posts + users` 목록 조회의 남은 wall time 과 검색/목록 `count(*)` 경로다.
 - lock/WAL pressure 가 실제로 어디서 시작되는지 보려면 PostgreSQL 쪽 `pg_stat_statements` 또는 더 긴 timeline 비교를 추가하는 것이 좋다.
+
+## 2026-03-24 목록/검색 projection + countQuery 최적화
+
+상태: 완료
+
+### 배경
+
+- [soak-20260324-070318-metrics.jsonl](/home/admin0/effective-disco/loadtest/results/soak-20260324-070318-metrics.jsonl) 기준 `0.7` 부근의 `slowActiveQueries` 는 대부분 두 부류였다.
+  - `posts + users` 목록 본문 select
+  - `count(*) from posts ...` 검색/목록 count 쿼리
+- 특히 기존 목록 본문은 `author` 전체 엔티티를 끌고 와 `users` 컬럼 폭이 넓었고, 검색/태그 `Page count(*)` 도 `join users` / `join post_tags` fan-out 을 그대로 탔다.
+
+### 적용한 변경
+
+- [PostRepository.java](/home/admin0/effective-disco/src/main/java/com/effectivedisco/repository/PostRepository.java)
+  - `PostListRow`, `PostTagRow`, `PostImageRow` projection 추가
+  - latest / likes / comments / board / keyword / tag 전용 목록 query를 projection 기반으로 분리
+  - 검색/태그 query는 `countQuery` 를 명시해 `join users` / `join post_tags` fan-out 을 줄였다
+- [PostService.java](/home/admin0/effective-disco/src/main/java/com/effectivedisco/service/PostService.java)
+  - `getPosts()` 가 `Page<Post>` 대신 `Page<PostListRow>` 를 읽고, 현재 페이지 ID 기준 태그/이미지 row 를 한 번씩만 가져와 DTO 조립
+  - entity 기반 목록 변환은 작성자 게시물/초안처럼 필요한 경로에만 유지
+- [PostResponse.java](/home/admin0/effective-disco/src/main/java/com/effectivedisco/dto/response/PostResponse.java)
+  - raw-field 생성자를 추가해 목록 hot path 가 `Post` 엔티티를 다시 만들지 않게 정리
+- [PostListOptimizationIntegrationTest.java](/home/admin0/effective-disco/src/test/java/com/effectivedisco/service/PostListOptimizationIntegrationTest.java)
+  - latest list statement count 상한을 `<=4` 로 강화
+  - `board + keyword search` 에 대해 `totalElements` 와 statement count `<=5` 검증 추가
+
+### 검증
+
+targeted 테스트:
+
+```bash
+GRADLE_USER_HOME=/tmp/gradle-home ./gradlew test --no-daemon \
+  --tests "com.effectivedisco.service.PostListOptimizationIntegrationTest" \
+  --tests "com.effectivedisco.service.PostServiceTest" \
+  --tests "com.effectivedisco.controller.web.SearchWebControllerTest"
+```
+
+결과:
+
+- targeted 테스트 통과
+- latest list / board+keyword search statement count 상한 통과
+
+focused `0.7` 재측정:
+
+- 워밍업 직후 1차: [soak-20260324-072046.md](/home/admin0/effective-disco/loadtest/results/soak-20260324-072046.md)
+  - `p95=887.34ms`, `p99=1126.08ms`, `dbPoolTimeouts=20`
+- 같은 인스턴스 재측정 2차: [soak-20260324-072247.md](/home/admin0/effective-disco/loadtest/results/soak-20260324-072247.md)
+  - `p95=763.21ms`, `p99=980.04ms`, `dbPoolTimeouts=10`
+
+참고:
+
+- `0.6` baseline soak 는 [soak-20260324-071213-metrics.jsonl](/home/admin0/effective-disco/loadtest/results/soak-20260324-071213-metrics.jsonl) 기준 약 6분 시점에 이미 `dbPoolTimeouts=152` 와 기존 느린 query 패턴이 재현돼, 같은 failure mode 확인 후 새 코드 검증으로 전환했다.
+
+### 해석
+
+- 쿼리 모양 자체는 분명히 좋아졌다.
+  - `slowActiveQueries` 에서 예전 `join users ... a1_0.id,a1_0.bio,...` 형태 대신 `username` 중심의 얇은 projection select 가 관측됐다.
+  - 검색/태그 count 도 `count(p1_0.id)` 중심으로 바뀌었고, 불필요한 join fan-out 은 줄었다.
+- 하지만 현재 로컬 환경에서 `0.7` macro latency 는 아직 안정화되지 않았다.
+  - timeout 과 wait 는 줄지 않았고, [soak-20260324-072247-server.json](/home/admin0/effective-disco/loadtest/results/soak-20260324-072247-server.json) 기준 `dbPoolTimeouts=10`, `maxThreadsAwaitingConnection=190`
+  - `slowActiveQueries` 는 여전히 목록 본문 select 와 검색/태그 count 쿼리를 가리킨다.
+- 결론적으로 이번 변경은 `query shape 최적화` 단계로는 유효했지만, 다음 단계는 더 공격적인 read-path 축소 또는 PostgreSQL 실행계획 분석이다.
+
+### 남은 과제
+
+- `0.6` soak 를 새 코드 기준으로 다시 시작한다.
+- `post.list` 와 검색/태그 count 경로에 대해 인덱스/실행계획(`EXPLAIN ANALYZE`, `pg_stat_statements`)을 본다.
+- 필요하면 목록 전용 API 에서 `content` 칼럼 자체를 제외하는 더 얇은 projection 도 검토한다.
