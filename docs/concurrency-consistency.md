@@ -102,6 +102,9 @@
 - 2026-03-24 `JWT 인증 조회`를 `jwt.auth.resolve-user` / `jwt.auth.load-user.db` 로 분리 계측하고, 짧은 TTL 로컬 캐시를 적용했다.
 - short soak 기준 `jwtAuthCacheHits=3820`, `jwtAuthCacheMisses=62` 로 인증 요청 대부분은 캐시 hit 로 처리됐고, `jwt.auth.load-user.db averageWallTimeMs = 228.79`, `averageSqlExecutionTimeMs = 0.40` 으로 miss 비용의 대부분이 SQL 자체가 아니라 커넥션 획득 대기임을 확인했다.
 - 같은 실행에서도 `duplicateKeyConflicts=0`, 관계 중복 row `0`, SQL mismatch `0` 으로 정합성 불변식은 유지됐지만 `dbPoolTimeouts=435` 로 DB pool 포화 자체는 여전히 해소되지 않았다.
+- 2026-03-24 `20 / 24 / 28 / 32` Hikari pool sweep 결과, 현재 로컬 workload 기준 중앙값은 `28` 이 가장 좋았다.
+- `20` 은 `dbPoolTimeouts` 와 오류 응답이 재현됐고, `24/28/32` 는 모두 timeout 없이 버텼지만 `p95/p99` 는 `28` 이 가장 낮았다.
+- 이에 따라 loadtest 프로필 기본 Hikari `maximum-pool-size` 를 `28` 로 조정했다.
 - 상세 원인, 조치, 전후 수치는 [loadtest-optimization.md](loadtest-optimization.md) 에 기록한다.
 
 ## 4차 결과

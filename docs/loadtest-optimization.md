@@ -338,3 +338,73 @@ SOAK_FACTOR=1 SOAK_DURATION=10s WARMUP_DURATION=5s SAMPLE_INTERVAL_SECONDS=2 \
 - `jwt.auth.load-user.db` miss 자체는 가벼워졌지만, miss 시점의 wall time 대부분이 커넥션 대기이므로 다음 단계는 `pool 포화를 유발하는 나머지 경로`를 더 줄이는 것이다.
 - 특히 현재 short soak 기준으로는 `post.list averageWallTimeMs = 30.97` 가 여전히 가장 큰 profile 이고, pool timeout 은 전체 혼합 부하에서 계속 먼저 드러난다.
 - 다음 경계점 재측정과 장시간 soak 에서는 `jwtAuthCacheHits/Misses` 를 함께 보며 인증 경로가 더 이상 주병목이 아닌지 확인해야 한다.
+
+## 2026-03-24 `Hikari maximumPoolSize` 실험과 기본값 조정
+
+상태: 완료
+
+### 배경
+
+- 현재 로컬 환경은 `Ryzen 7 7840U`, `8코어 16스레드` 이고, loadtest 프로필 기본 Hikari 최대 pool 크기는 `20` 이었다.
+- 이전 반복 ramp-up / short soak 에서는 `maxActiveConnections=20`, `maxThreadsAwaitingConnection≈200`, `dbPoolTimeouts>0` 가 계속 관측됐다.
+- 따라서 "몇으로 올릴 것인가"를 추정이 아니라 반복 실험으로 결정할 필요가 있었다.
+
+### 실험 조건
+
+- 실행 시각: `20260324-051234`
+- 결과 루트: `loadtest/results/pool-sweep-20260324-051234`
+- 대상 pool 크기: `20`, `24`, `28`, `32`
+- 각 pool 크기마다 `3회` 반복
+- 공통 조건:
+  - `SOAK_FACTOR=1`
+  - `WARMUP_DURATION=5s`
+  - `SOAK_DURATION=10s`
+  - `SAMPLE_INTERVAL_SECONDS=2`
+  - `BASE_URL=http://localhost:18080`
+
+### 결과
+
+중앙값 기준:
+
+- `20`
+  - `p95 = 1473.98ms`
+  - `p99 = 1833.75ms`
+  - `unexpected_response_rate = 0.0285`
+  - `dbPoolTimeouts = 264`
+  - `maxThreadsAwaitingConnection = 200`
+- `24`
+  - `p95 = 470.05ms`
+  - `p99 = 584.89ms`
+  - `unexpected_response_rate = 0.0000`
+  - `dbPoolTimeouts = 0`
+  - `maxThreadsAwaitingConnection = 194`
+- `28`
+  - `p95 = 429.99ms`
+  - `p99 = 539.04ms`
+  - `unexpected_response_rate = 0.0000`
+  - `dbPoolTimeouts = 0`
+  - `maxThreadsAwaitingConnection = 191`
+- `32`
+  - `p95 = 438.41ms`
+  - `p99 = 549.32ms`
+  - `unexpected_response_rate = 0.0000`
+  - `dbPoolTimeouts = 0`
+  - `maxThreadsAwaitingConnection = 188`
+
+### 해석
+
+- `20` 은 현재 시나리오에서 확실히 부족하다.
+- `24`, `28`, `32` 는 모두 timeout 없이 버텼지만, `28` 이 `p95/p99` 기준으로 가장 좋았다.
+- `32` 는 waiting threads 가 약간 줄었지만 지연시간은 `28` 보다 소폭 나빠졌다.
+- 즉 현재 로컬 기준으로는 "조금 더 큰 pool" 이 아니라 `28` 이 가장 균형이 좋다.
+
+### 적용한 설정
+
+- `application-loadtest.yml` 의 기본 `maximum-pool-size` 를 `20 -> 28` 로 올렸다.
+- 환경 변수 `APP_LOAD_TEST_DB_POOL_MAX_SIZE` 로는 계속 override 가능하게 유지했다.
+
+### 남은 과제
+
+- 이 값은 현재 로컬 장비 + 현재 workload 기준값이다.
+- 장시간 soak 와 더 높은 ramp-up 에서도 `28` 이 최선인지 다시 확인해야 한다.
+- 대용량 데이터셋으로 넘어가면 같은 sweep 를 다시 돌려야 한다.
