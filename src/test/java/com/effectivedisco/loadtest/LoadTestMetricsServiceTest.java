@@ -82,4 +82,38 @@ class LoadTestMetricsServiceTest {
         assertThat(snapshot.duplicateKeyConflicts()).isZero();
         assertThat(snapshot.dbPoolTimeouts()).isZero();
     }
+
+    @Test
+    void bottleneckProfileSample_accumulatesWallSqlAndTransactionStats() {
+        loadTestMetricsService.recordBottleneckSample(
+                "comment.create",
+                12_000_000L,
+                4,
+                6_000_000L,
+                12_000_000L,
+                true
+        );
+        loadTestMetricsService.recordBottleneckSample(
+                "comment.create",
+                18_000_000L,
+                6,
+                8_000_000L,
+                18_000_000L,
+                true
+        );
+
+        LoadTestBottleneckProfileSnapshot snapshot = loadTestMetricsService.snapshot()
+                .bottleneckProfiles()
+                .stream()
+                .filter(profile -> profile.name().equals("comment.create"))
+                .findFirst()
+                .orElseThrow();
+
+        assertThat(snapshot.sampleCount()).isEqualTo(2);
+        assertThat(snapshot.maxSqlStatementCount()).isEqualTo(6);
+        assertThat(snapshot.transactionObservedCount()).isEqualTo(2);
+        assertThat(snapshot.averageWallTimeMs())
+                .as("문제 해결 검증: 병목 프로파일은 대상 경로의 평균 벽시계 시간을 보여줘야 한다")
+                .isEqualTo(15.0);
+    }
 }

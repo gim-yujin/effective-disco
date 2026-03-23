@@ -88,6 +88,7 @@ SPRING_PROFILES_ACTIVE=loadtest ./gradlew bootRun
 ./loadtest/run-bbs-load.sh
 ./loadtest/run-bbs-consistency-stress.sh
 ./loadtest/run-bbs-ramp-up.sh
+./loadtest/run-bbs-soak.sh
 ```
 
 - `loadtest/k6/bbs-load.js`: 게시판 목록, 핫 게시물 상세, 검색, 게시물/댓글 작성, 멱등 좋아요/해제 경쟁, 북마크/팔로우/차단/알림 mixed 정합성 시나리오
@@ -95,6 +96,7 @@ SPRING_PROFILES_ACTIVE=loadtest ./gradlew bootRun
 - `loadtest/results/server-metrics-*.json`: duplicate-key 충돌 수, DB pool timeout 수, max awaiting connection
 - `loadtest/run-bbs-consistency-stress.sh`: 반복 스트레스 실행 + 실행 후 SQL 정합성 검증 자동화
 - `loadtest/run-bbs-ramp-up.sh`: 부하 배수를 단계적으로 올리며 한계점과 중단 이유를 자동 기록
+- `loadtest/run-bbs-soak.sh`: 안정 구간에서 장시간 soak를 돌리며 SQL 정합성과 slow creep를 기록
 
 자세한 실행 방법은 [loadtest/README.md](/home/admin0/effective-disco/loadtest/README.md) 참고.
 

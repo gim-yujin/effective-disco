@@ -1,5 +1,7 @@
 package com.effectivedisco.loadtest;
 
+import java.util.List;
+
 /**
  * 문제 해결:
  * k6 결과만으로는 서버 내부 DB pool 압력과 duplicate-key 충돌 누적치를 함께 보기 어렵다.
@@ -15,6 +17,7 @@ public record LoadTestMetricsSnapshot(
         int maxActiveConnections,
         int maxIdleConnections,
         int maxTotalConnections,
-        int maxThreadsAwaitingConnection
+        int maxThreadsAwaitingConnection,
+        List<LoadTestBottleneckProfileSnapshot> bottleneckProfiles
 ) {
 }

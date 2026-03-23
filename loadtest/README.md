@@ -26,6 +26,12 @@ SPRING_PROFILES_ACTIVE=loadtest ./gradlew bootRun
 ./loadtest/run-bbs-ramp-up.sh
 ```
 
+장시간 soak + SQL 정합성 검증:
+
+```bash
+./loadtest/run-bbs-soak.sh
+```
+
 ## 시나리오
 
 - `browse_board_feed`: 게시판별 목록 조회와 정렬 부하
@@ -48,6 +54,8 @@ SPRING_PROFILES_ACTIVE=loadtest ./gradlew bootRun
 - `loadtest/results/consistency-stress-*-runNN-sql.tsv`: 실행별 SQL 정합성 스냅샷
 - `loadtest/results/ramp-up-*.md`: 배수별 한계점 탐색 요약 리포트
 - `loadtest/results/ramp-up-*.tsv`: 배수별 원본 수치와 중단 이유
+- `loadtest/results/soak-*.md`: 장시간 soak 최종 요약
+- `loadtest/results/soak-*-metrics.jsonl`: soak 중 주기적 서버 메트릭 타임라인
 
 ## 핵심 지표
 
@@ -57,3 +65,4 @@ SPRING_PROFILES_ACTIVE=loadtest ./gradlew bootRun
 - `maxThreadsAwaitingConnection`: 부하 중 DB pool 대기 정점
 - SQL 정합성: `Post.likeCount`, `Post.commentCount`, `User.unreadNotificationCount` 와 실제 row 수 일치 여부
 - 관계 중복: `post_likes`, `bookmarks`, `follows`, `blocks` 의 동일 키 중복 row 여부
+- 병목 프로파일: `comment.create`, `notification.store`, `post.list` 의 벽시계 시간, SQL 실행 시간, SQL 문 수, 트랜잭션 길이

@@ -6,6 +6,11 @@ spring:
       connection-timeout: ${APP_LOAD_TEST_DB_POOL_CONNECTION_TIMEOUT_MS:1000}
   jpa:
     show-sql: false
+    properties:
+      # 문제 해결:
+      # loadtest 전용 병목 분석에서는 Hibernate 통계를 켜야 statement/query 누적치를 읽을 수 있다.
+      # 운영 기본 프로필에는 비용을 전파하지 않도록 loadtest 에서만 활성화한다.
+      hibernate.generate_statistics: true
 
 logging:
   level:

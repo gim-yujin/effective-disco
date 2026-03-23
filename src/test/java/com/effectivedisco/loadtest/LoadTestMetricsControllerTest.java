@@ -39,6 +39,7 @@ class LoadTestMetricsControllerTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.duplicateKeyConflicts").value(0))
                 .andExpect(jsonPath("$.dbPoolTimeouts").value(0))
+                .andExpect(jsonPath("$.bottleneckProfiles").isArray())
                 .andExpect(jsonPath("$.currentActiveConnections").exists())
                 .andExpect(jsonPath("$.maxThreadsAwaitingConnection").exists());
     }
@@ -48,6 +49,7 @@ class LoadTestMetricsControllerTest {
         mockMvc.perform(post("/internal/load-test/reset"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.duplicateKeyConflicts").value(0))
-                .andExpect(jsonPath("$.dbPoolTimeouts").value(0));
+                .andExpect(jsonPath("$.dbPoolTimeouts").value(0))
+                .andExpect(jsonPath("$.bottleneckProfiles").isArray());
     }
 }

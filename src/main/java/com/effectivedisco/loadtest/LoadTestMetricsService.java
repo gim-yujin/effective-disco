@@ -8,7 +8,11 @@ import org.springframework.stereotype.Service;
 import javax.sql.DataSource;
 import java.sql.SQLException;
 import java.sql.SQLTransientConnectionException;
+import java.util.Comparator;
+import java.util.List;
 import java.util.Locale;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 
@@ -24,6 +28,7 @@ public class LoadTestMetricsService {
     private final AtomicInteger maxIdleConnections = new AtomicInteger();
     private final AtomicInteger maxTotalConnections = new AtomicInteger();
     private final AtomicInteger maxThreadsAwaitingConnection = new AtomicInteger();
+    private final Map<String, BottleneckAccumulator> bottleneckProfiles = new ConcurrentHashMap<>();
 
     public LoadTestMetricsService(DataSource dataSource) {
         this.dataSource = dataSource;
@@ -59,6 +64,17 @@ public class LoadTestMetricsService {
         updateMax(maxThreadsAwaitingConnection, state.threadsAwaitingConnection());
     }
 
+    public void recordBottleneckSample(String profileName,
+                                       long wallTimeNanos,
+                                       long sqlStatementCount,
+                                       long sqlExecutionNanos,
+                                       long transactionTimeNanos,
+                                       boolean transactionObserved) {
+        bottleneckProfiles
+                .computeIfAbsent(profileName, ignored -> new BottleneckAccumulator())
+                .record(wallTimeNanos, sqlStatementCount, sqlExecutionNanos, transactionTimeNanos, transactionObserved);
+    }
+
     public synchronized LoadTestMetricsSnapshot reset() {
         duplicateKeyConflicts.set(0);
         dbPoolTimeouts.set(0);
@@ -66,6 +82,7 @@ public class LoadTestMetricsService {
         maxIdleConnections.set(0);
         maxTotalConnections.set(0);
         maxThreadsAwaitingConnection.set(0);
+        bottleneckProfiles.clear();
         samplePoolState();
         return snapshot();
     }
@@ -87,7 +104,8 @@ public class LoadTestMetricsService {
                 maxActiveConnections.get(),
                 maxIdleConnections.get(),
                 maxTotalConnections.get(),
-                maxThreadsAwaitingConnection.get()
+                maxThreadsAwaitingConnection.get(),
+                snapshotBottleneckProfiles()
         );
     }
 
@@ -165,6 +183,13 @@ public class LoadTestMetricsService {
         target.accumulateAndGet(candidate, Math::max);
     }
 
+    private List<LoadTestBottleneckProfileSnapshot> snapshotBottleneckProfiles() {
+        return bottleneckProfiles.entrySet().stream()
+                .map(entry -> entry.getValue().snapshot(entry.getKey()))
+                .sorted(Comparator.comparing(LoadTestBottleneckProfileSnapshot::name))
+                .toList();
+    }
+
     private record PoolState(
             int activeConnections,
             int idleConnections,
@@ -173,6 +198,66 @@ public class LoadTestMetricsService {
     ) {
         private static PoolState empty() {
             return new PoolState(0, 0, 0, 0);
+        }
+    }
+
+    private static final class BottleneckAccumulator {
+        private long sampleCount;
+        private long totalWallNanos;
+        private long maxWallNanos;
+        private long totalSqlExecutionNanos;
+        private long maxSqlExecutionNanos;
+        private long totalSqlStatementCount;
+        private long maxSqlStatementCount;
+        private long totalTransactionNanos;
+        private long maxTransactionNanos;
+        private long transactionObservedCount;
+
+        synchronized void record(long wallTimeNanos,
+                                 long sqlStatementCount,
+                                 long sqlExecutionNanos,
+                                 long transactionTimeNanos,
+                                 boolean transactionObserved) {
+            sampleCount += 1;
+            totalWallNanos += Math.max(wallTimeNanos, 0L);
+            maxWallNanos = Math.max(maxWallNanos, wallTimeNanos);
+            totalSqlExecutionNanos += Math.max(sqlExecutionNanos, 0L);
+            maxSqlExecutionNanos = Math.max(maxSqlExecutionNanos, sqlExecutionNanos);
+            totalSqlStatementCount += Math.max(sqlStatementCount, 0L);
+            maxSqlStatementCount = Math.max(maxSqlStatementCount, sqlStatementCount);
+
+            if (transactionObserved) {
+                transactionObservedCount += 1;
+                totalTransactionNanos += Math.max(transactionTimeNanos, 0L);
+                maxTransactionNanos = Math.max(maxTransactionNanos, transactionTimeNanos);
+            }
+        }
+
+        synchronized LoadTestBottleneckProfileSnapshot snapshot(String name) {
+            return new LoadTestBottleneckProfileSnapshot(
+                    name,
+                    sampleCount,
+                    nanosToAverageMillis(totalWallNanos, sampleCount),
+                    nanosToMillis(maxWallNanos),
+                    nanosToAverageMillis(totalSqlExecutionNanos, sampleCount),
+                    nanosToMillis(maxSqlExecutionNanos),
+                    sampleCount == 0 ? 0.0 : ((double) totalSqlStatementCount) / sampleCount,
+                    maxSqlStatementCount,
+                    nanosToAverageMillis(totalTransactionNanos, transactionObservedCount),
+                    nanosToMillis(maxTransactionNanos),
+                    transactionObservedCount
+            );
+        }
+
+        private double nanosToAverageMillis(long totalNanos, long count) {
+            if (count == 0) {
+                return 0.0;
+            }
+            return nanosToMillis(totalNanos) / count;
+        }
+
+        private double nanosToMillis(long nanos) {
+            return nanos / 1_000_000.0;
         }
     }
 }
