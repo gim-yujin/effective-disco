@@ -12,7 +12,10 @@ import java.time.LocalDateTime;
  * 댓글·대댓글·좋아요 이벤트 발생 시 수신자에게 생성된다.
  */
 @Entity
-@Table(name = "notifications")
+@Table(name = "notifications", indexes = {
+        @Index(name = "idx_notification_recipient_created", columnList = "recipient_id, created_at"),
+        @Index(name = "idx_notification_recipient_read_created", columnList = "recipient_id, is_read, created_at")
+})
 @Getter
 @NoArgsConstructor
 public class Notification {
@@ -39,10 +42,10 @@ public class Notification {
     private String link;
 
     /** 읽음 여부. 알림 목록 페이지 방문 시 일괄 true로 변경된다. */
-    @Column(nullable = false)
+    @Column(name = "is_read", nullable = false)
     private boolean isRead = false;
 
-    @Column(nullable = false)
+    @Column(name = "created_at", nullable = false)
     private LocalDateTime createdAt;
 
     @Builder

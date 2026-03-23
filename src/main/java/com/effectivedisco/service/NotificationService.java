@@ -1,15 +1,22 @@
 package com.effectivedisco.service;
 
-import com.effectivedisco.domain.*;
+import com.effectivedisco.domain.Comment;
+import com.effectivedisco.domain.Notification;
+import com.effectivedisco.domain.NotificationType;
+import com.effectivedisco.domain.Post;
+import com.effectivedisco.domain.User;
 import com.effectivedisco.dto.response.NotificationResponse;
+import com.effectivedisco.event.NotificationRequestedEvent;
 import com.effectivedisco.repository.NotificationRepository;
 import com.effectivedisco.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.context.annotation.Lazy;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.security.core.userdetails.UsernameNotFoundException;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 import java.util.List;
 import java.util.stream.Collectors;
@@ -20,70 +27,88 @@ public class NotificationService {
 
     private final NotificationRepository notificationRepository;
     private final UserRepository         userRepository;
+    private final SseEmitterService      sseEmitterService;
+    private final ApplicationEventPublisher eventPublisher;
 
     /**
-     * SseEmitterService 를 @Lazy로 주입한다.
-     *
-     * NotificationService ↔ SseEmitterService 가 서로를 직접 참조하면
-     * Spring이 순환 의존성을 감지해 오류를 낸다.
-     * @Lazy를 사용하면 SseEmitterService 빈이 실제로 처음 호출될 때까지
-     * 프록시 객체만 주입되므로 초기화 시점의 순환 의존 문제를 피할 수 있다.
-     */
-    @Lazy
-    @Autowired
-    private SseEmitterService sseEmitterService;
-
-    /**
-     * 게시물에 댓글이 달렸을 때 게시물 작성자에게 알림을 생성한다.
+     * 게시물에 댓글이 달렸을 때 게시물 작성자에게 알림을 요청한다.
      * 본인이 자신의 게시물에 댓글을 달면 알림을 생성하지 않는다.
      */
-    @Transactional
     public void notifyComment(Post post, String commenterUsername) {
         if (post.getAuthor().getUsername().equals(commenterUsername)) return;
-        Notification n = Notification.builder()
-                .recipient(post.getAuthor())
-                .type(NotificationType.COMMENT)
-                .message(commenterUsername + "님이 회원님의 게시물에 댓글을 남겼습니다.")
-                .link("/posts/" + post.getId() + "#comments")
-                .build();
-        notificationRepository.save(n);
-        // 알림 저장 후 SSE로 실시간 미읽음 수 push
-        pushUnreadCount(post.getAuthor().getUsername());
+        publishNotification(new NotificationRequestedEvent(
+                post.getAuthor().getUsername(),
+                NotificationType.COMMENT,
+                commenterUsername + "님이 회원님의 게시물에 댓글을 남겼습니다.",
+                "/posts/" + post.getId() + "#comments"
+        ));
     }
 
     /**
-     * 댓글에 대댓글이 달렸을 때 댓글 작성자에게 알림을 생성한다.
+     * 댓글에 대댓글이 달렸을 때 댓글 작성자에게 알림을 요청한다.
      * 본인이 자신의 댓글에 답글을 달면 알림을 생성하지 않는다.
      */
-    @Transactional
     public void notifyReply(Comment parentComment, String replierUsername) {
         if (parentComment.getAuthor().getUsername().equals(replierUsername)) return;
-        Notification n = Notification.builder()
-                .recipient(parentComment.getAuthor())
-                .type(NotificationType.REPLY)
-                .message(replierUsername + "님이 회원님의 댓글에 답글을 남겼습니다.")
-                .link("/posts/" + parentComment.getPost().getId() + "#comment-" + parentComment.getId())
-                .build();
-        notificationRepository.save(n);
-        pushUnreadCount(parentComment.getAuthor().getUsername());
+        publishNotification(new NotificationRequestedEvent(
+                parentComment.getAuthor().getUsername(),
+                NotificationType.REPLY,
+                replierUsername + "님이 회원님의 댓글에 답글을 남겼습니다.",
+                "/posts/" + parentComment.getPost().getId() + "#comment-" + parentComment.getId()
+        ));
     }
 
     /**
-     * 게시물에 좋아요가 눌렸을 때 게시물 작성자에게 알림을 생성한다.
-     * 좋아요 취소 시에는 알림을 생성하지 않는다.
-     * 본인 게시물에 좋아요를 누르면 알림을 생성하지 않는다.
+     * 게시물에 좋아요가 눌렸을 때 게시물 작성자에게 알림을 요청한다.
+     * 좋아요 취소 시에는 호출되지 않는다.
      */
-    @Transactional
     public void notifyLike(Post post, String likerUsername) {
         if (post.getAuthor().getUsername().equals(likerUsername)) return;
-        Notification n = Notification.builder()
-                .recipient(post.getAuthor())
-                .type(NotificationType.LIKE)
-                .message(likerUsername + "님이 회원님의 게시물을 좋아합니다.")
-                .link("/posts/" + post.getId())
+        publishNotification(new NotificationRequestedEvent(
+                post.getAuthor().getUsername(),
+                NotificationType.LIKE,
+                likerUsername + "님이 회원님의 게시물을 좋아합니다.",
+                "/posts/" + post.getId()
+        ));
+    }
+
+    /**
+     * 쪽지 도착 알림을 요청한다.
+     * MessageService가 본문 저장을 커밋한 뒤에만 실제 알림이 만들어지도록 이벤트로 분리한다.
+     */
+    public void notifyMessage(String recipientUsername, String senderUsername, String title, Long messageId) {
+        publishNotification(new NotificationRequestedEvent(
+                recipientUsername,
+                NotificationType.MESSAGE,
+                senderUsername + "님이 쪽지를 보냈습니다: " + title,
+                "/messages/" + messageId
+        ));
+    }
+
+    /**
+     * 문제 해결:
+     * 이 메서드는 AFTER_COMMIT 이벤트 리스너가 호출한다.
+     * AFTER_COMMIT 시점에는 원 트랜잭션이 이미 끝났으므로 REQUIRED 로는
+     * update/delete 쿼리가 트랜잭션 없이 실행될 수 있다.
+     * REQUIRES_NEW 로 별도 트랜잭션을 열어 알림 row 저장, unread counter 증가,
+     * SSE 예약을 안전하게 마무리한다.
+     */
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public void storeNotificationAfterCommit(NotificationRequestedEvent event) {
+        User recipient = userRepository.findByUsername(event.recipientUsername()).orElse(null);
+        if (recipient == null) {
+            return;
+        }
+
+        Notification notification = Notification.builder()
+                .recipient(recipient)
+                .type(event.type())
+                .message(event.message())
+                .link(event.link())
                 .build();
-        notificationRepository.save(n);
-        pushUnreadCount(post.getAuthor().getUsername());
+        notificationRepository.save(notification);
+        userRepository.incrementUnreadNotificationCount(recipient.getId());
+        scheduleUnreadCountPushAfterCommit(recipient.getUsername());
     }
 
     /**
@@ -95,29 +120,47 @@ public class NotificationService {
         User user = findUser(username);
         List<NotificationResponse> list = notificationRepository
                 .findByRecipientOrderByCreatedAtDesc(user)
-                .stream().map(NotificationResponse::new).collect(Collectors.toList());
+                .stream()
+                .map(NotificationResponse::new)
+                .collect(Collectors.toList());
+
         notificationRepository.markAllAsRead(user);
-        // 읽음 처리 후 뱃지를 0으로 갱신
-        sseEmitterService.sendCount(username, 0);
+        userRepository.resetUnreadNotificationCount(user.getId());
+        scheduleUnreadCountPushAfterCommit(username);
         return list;
     }
 
-    /** 헤더 뱃지용: 미읽음 알림 수 */
+    /**
+     * 헤더 뱃지/SSE 초기값용 미읽음 알림 수.
+     * count query 대신 비정규화 카운터를 읽어 hot path를 가볍게 유지한다.
+     */
     public long getUnreadCount(String username) {
-        User user = userRepository.findByUsername(username).orElse(null);
-        if (user == null) return 0;
-        return notificationRepository.countByRecipientAndIsReadFalse(user);
+        return userRepository.findUnreadNotificationCountByUsername(username).orElse(0L);
     }
 
-    /* ── private helpers ──────────────────────────────────────── */
+    private void publishNotification(NotificationRequestedEvent event) {
+        eventPublisher.publishEvent(event);
+    }
 
     /**
-     * 현재 미읽음 수를 DB에서 조회해 SSE로 push한다.
-     * 알림 저장 트랜잭션이 커밋된 후 push가 실행되므로 최신 카운트가 보장된다.
+     * 문제 해결:
+     * 알림 저장 트랜잭션 안에서 바로 SSE를 보내면 커밋 실패 시 잘못된 숫자가 노출될 수 있다.
+     * afterCommit 훅에서 최신 unread count를 다시 읽어 전송하면 UI와 DB를 같은 시점으로 맞출 수 있다.
      */
-    private void pushUnreadCount(String username) {
-        long count = getUnreadCount(username);
-        sseEmitterService.sendCount(username, count);
+    private void scheduleUnreadCountPushAfterCommit(String username) {
+        Runnable push = () -> sseEmitterService.sendCount(username, getUnreadCount(username));
+
+        if (!TransactionSynchronizationManager.isSynchronizationActive()) {
+            push.run();
+            return;
+        }
+
+        TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+            @Override
+            public void afterCommit() {
+                push.run();
+            }
+        });
     }
 
     private User findUser(String username) {

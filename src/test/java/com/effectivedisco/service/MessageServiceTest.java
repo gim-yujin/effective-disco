@@ -1,12 +1,10 @@
 package com.effectivedisco.service;
 
 import com.effectivedisco.domain.Message;
-import com.effectivedisco.domain.Notification;
 import com.effectivedisco.domain.User;
 import com.effectivedisco.dto.request.MessageRequest;
 import com.effectivedisco.dto.response.MessageResponse;
 import com.effectivedisco.repository.MessageRepository;
-import com.effectivedisco.repository.NotificationRepository;
 import com.effectivedisco.repository.UserRepository;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -30,7 +28,7 @@ class MessageServiceTest {
 
     @Mock MessageRepository      messageRepository;
     @Mock UserRepository         userRepository;
-    @Mock NotificationRepository notificationRepository;
+    @Mock NotificationService    notificationService;
 
     @InjectMocks MessageService messageService;
 
@@ -44,16 +42,18 @@ class MessageServiceTest {
 
         given(userRepository.findByUsername("alice")).willReturn(Optional.of(sender));
         given(userRepository.findByUsername("bob")).willReturn(Optional.of(recipient));
-        // messageRepository.save()가 저장된 Message를 반환 (id 없이도 MessageResponse 생성 가능)
         given(messageRepository.save(any(Message.class)))
-                .willAnswer(inv -> inv.getArgument(0));
+                .willAnswer(inv -> {
+                    Message message = inv.getArgument(0);
+                    ReflectionTestUtils.setField(message, "id", 7L);
+                    return message;
+                });
 
         MessageResponse response = messageService.send(req, "alice");
 
         assertThat(response.getTitle()).isEqualTo("제목");
         verify(messageRepository).save(any(Message.class));
-        // 수신자에게 알림도 생성되어야 한다
-        verify(notificationRepository).save(any(Notification.class));
+        verify(notificationService).notifyMessage("bob", "alice", "제목", 7L);
     }
 
     @Test

@@ -1,13 +1,10 @@
 package com.effectivedisco.service;
 
 import com.effectivedisco.domain.Message;
-import com.effectivedisco.domain.Notification;
-import com.effectivedisco.domain.NotificationType;
 import com.effectivedisco.domain.User;
 import com.effectivedisco.dto.request.MessageRequest;
 import com.effectivedisco.dto.response.MessageResponse;
 import com.effectivedisco.repository.MessageRepository;
-import com.effectivedisco.repository.NotificationRepository;
 import com.effectivedisco.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.security.access.AccessDeniedException;
@@ -22,9 +19,9 @@ import java.util.stream.Collectors;
 @RequiredArgsConstructor
 public class MessageService {
 
-    private final MessageRepository      messageRepository;
-    private final UserRepository         userRepository;
-    private final NotificationRepository notificationRepository;
+    private final MessageRepository   messageRepository;
+    private final UserRepository      userRepository;
+    private final NotificationService notificationService;
 
     /**
      * 쪽지 전송.
@@ -48,14 +45,10 @@ public class MessageService {
                 .build();
         messageRepository.save(message);
 
-        // 수신자에게 알림 생성
-        Notification n = Notification.builder()
-                .recipient(recipient)
-                .type(NotificationType.MESSAGE)
-                .message(senderUsername + "님이 쪽지를 보냈습니다: " + request.getTitle())
-                .link("/messages/" + message.getId())
-                .build();
-        notificationRepository.save(n);
+        // 문제 해결:
+        // 본문 저장과 알림 저장을 같은 트랜잭션에서 직접 처리하면 롤백 시 잘못된 알림이 남을 수 있다.
+        // MESSAGE 알림도 이벤트로 발행해 commit 이후 별도 트랜잭션에서 저장한다.
+        notificationService.notifyMessage(recipient.getUsername(), senderUsername, request.getTitle(), message.getId());
 
         return new MessageResponse(message);
     }

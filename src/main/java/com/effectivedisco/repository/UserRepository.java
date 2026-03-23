@@ -4,6 +4,7 @@ import com.effectivedisco.domain.User;
 import jakarta.persistence.LockModeType;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Lock;
+import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
@@ -25,6 +26,22 @@ public interface UserRepository extends JpaRepository<User, Long> {
 
     boolean existsByUsername(String username);
     boolean existsByEmail(String email);
+
+    /**
+     * 문제 해결:
+     * unread count는 동시 알림 생성 시 lost update가 나면 안 되므로
+     * 조회 후 set이 아니라 DB 원자적 UPDATE로 증가시킨다.
+     */
+    @Modifying
+    @Query("UPDATE User u SET u.unreadNotificationCount = u.unreadNotificationCount + 1 WHERE u.id = :id")
+    void incrementUnreadNotificationCount(@Param("id") Long id);
+
+    @Modifying
+    @Query("UPDATE User u SET u.unreadNotificationCount = 0 WHERE u.id = :id")
+    void resetUnreadNotificationCount(@Param("id") Long id);
+
+    @Query("SELECT u.unreadNotificationCount FROM User u WHERE u.username = :username")
+    Optional<Long> findUnreadNotificationCountByUsername(@Param("username") String username);
 
     /** 관리자 패널: 가입일 최신순 전체 사용자 목록 */
     List<User> findAllByOrderByCreatedAtDesc();

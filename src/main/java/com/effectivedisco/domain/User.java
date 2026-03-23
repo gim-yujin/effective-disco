@@ -57,6 +57,14 @@ public class User {
     private String profileImageUrl;
 
     /**
+     * 문제 해결:
+     * 헤더 뱃지와 SSE가 매번 COUNT(*)를 치지 않도록 사용자별 미읽음 알림 수를 비정규화한다.
+     * 알림 생성/전체 읽음 처리 시 원자적으로 갱신해 high-traffic 환경에서도 조회 비용을 일정하게 유지한다.
+     */
+    @Column(nullable = false, columnDefinition = "bigint default 0")
+    private long unreadNotificationCount = 0L;
+
+    /**
      * 계정 정지 여부.
      * true 이면 해당 사용자는 로그인 시 LockedException 이 발생한다.
      * DDL 기본값을 false 로 지정해 기존 행의 NULL 방지.

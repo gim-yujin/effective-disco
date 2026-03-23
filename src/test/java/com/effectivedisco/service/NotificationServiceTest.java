@@ -6,6 +6,7 @@ import com.effectivedisco.domain.NotificationType;
 import com.effectivedisco.domain.Post;
 import com.effectivedisco.domain.User;
 import com.effectivedisco.dto.response.NotificationResponse;
+import com.effectivedisco.event.NotificationRequestedEvent;
 import com.effectivedisco.repository.NotificationRepository;
 import com.effectivedisco.repository.UserRepository;
 import org.junit.jupiter.api.BeforeEach;
@@ -13,6 +14,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.test.util.ReflectionTestUtils;
 
 import java.util.List;
@@ -20,165 +22,181 @@ import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.eq;
-import static org.mockito.BDDMockito.given;
 import static org.mockito.ArgumentMatchers.anyLong;
-import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.BDDMockito.given;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 
-/**
- * NotificationService 단위 테스트.
- *
- * sseEmitterService 는 @RequiredArgsConstructor 생성자에 포함되지 않는 비-final 필드이므로
- * @InjectMocks 가 생성자 주입 후 필드 주입으로 목을 삽입한다.
- */
 @ExtendWith(MockitoExtension.class)
 class NotificationServiceTest {
 
-    @Mock NotificationRepository notificationRepository;
+    @Mock NotificationRepository  notificationRepository;
     @Mock UserRepository          userRepository;
     @Mock SseEmitterService       sseEmitterService;
+    @Mock ApplicationEventPublisher eventPublisher;
 
     NotificationService notificationService;
 
-    /**
-     * @RequiredArgsConstructor가 생성한 생성자(notificationRepository, userRepository)로
-     * 서비스를 직접 생성한 뒤, @Lazy @Autowired 비-final 필드인 sseEmitterService를
-     * ReflectionTestUtils로 수동 주입한다.
-     * @InjectMocks는 @Lazy @Autowired 필드를 신뢰성 있게 주입하지 못하는 경우가 있다.
-     */
     @BeforeEach
     void setUp() {
-        notificationService = new NotificationService(notificationRepository, userRepository);
-        ReflectionTestUtils.setField(notificationService, "sseEmitterService", sseEmitterService);
+        notificationService = new NotificationService(
+                notificationRepository,
+                userRepository,
+                sseEmitterService,
+                eventPublisher
+        );
     }
 
-    // ── notifyComment ─────────────────────────────────────
+    // ── publish event ─────────────────────────────────────
 
     @Test
-    void notifyComment_differentUser_savesNotificationAndPushesSSE() {
-        User author    = makeUser("author");
-        User commenter = makeUser("commenter");
-        Post post = makePost(1L, author);
-
-        // pushUnreadCount 내부: userRepository.findByUsername + countByRecipientAndIsReadFalse
-        given(userRepository.findByUsername("author")).willReturn(Optional.of(author));
-        given(notificationRepository.countByRecipientAndIsReadFalse(author)).willReturn(1L);
+    void notifyComment_differentUser_publishesAfterCommitEvent() {
+        User author = makeUser("author");
+        Post post   = makePost(1L, author);
 
         notificationService.notifyComment(post, "commenter");
 
-        verify(notificationRepository).save(any(Notification.class));
-        verify(sseEmitterService).sendCount("author", 1L);
+        verify(eventPublisher).publishEvent(new NotificationRequestedEvent(
+                "author",
+                NotificationType.COMMENT,
+                "commenter님이 회원님의 게시물에 댓글을 남겼습니다.",
+                "/posts/1#comments"
+        ));
+        verify(notificationRepository, never()).save(any());
     }
 
     @Test
-    void notifyComment_sameAuthorAsCommenter_doesNotSave() {
-        // 본인 게시물에 본인이 댓글 → 알림 없음
+    void notifyComment_sameAuthor_doesNotPublishEvent() {
         User author = makeUser("author");
         Post post   = makePost(1L, author);
 
         notificationService.notifyComment(post, "author");
 
-        verify(notificationRepository, never()).save(any());
-        verify(sseEmitterService, never()).sendCount(anyString(), anyLong());
+        verify(eventPublisher, never()).publishEvent(any());
     }
 
-    // ── notifyReply ───────────────────────────────────────
-
     @Test
-    void notifyReply_differentUser_savesNotificationAndPushesSSE() {
+    void notifyReply_differentUser_publishesAfterCommitEvent() {
         User commentAuthor = makeUser("commentAuthor");
-        User replier       = makeUser("replier");
-        Post post    = makePost(1L, makeUser("postAuthor"));
-        Comment parent = makeComment(10L, post, commentAuthor);
-
-        given(userRepository.findByUsername("commentAuthor")).willReturn(Optional.of(commentAuthor));
-        given(notificationRepository.countByRecipientAndIsReadFalse(commentAuthor)).willReturn(2L);
+        Post post          = makePost(1L, makeUser("postAuthor"));
+        Comment parent     = makeComment(10L, post, commentAuthor);
 
         notificationService.notifyReply(parent, "replier");
 
-        verify(notificationRepository).save(any(Notification.class));
-        verify(sseEmitterService).sendCount("commentAuthor", 2L);
+        verify(eventPublisher).publishEvent(new NotificationRequestedEvent(
+                "commentAuthor",
+                NotificationType.REPLY,
+                "replier님이 회원님의 댓글에 답글을 남겼습니다.",
+                "/posts/1#comment-10"
+        ));
     }
 
     @Test
-    void notifyReply_sameAuthorAsReplier_doesNotSave() {
-        User commentAuthor = makeUser("commentAuthor");
-        Post post   = makePost(1L, makeUser("postAuthor"));
-        Comment parent = makeComment(10L, post, commentAuthor);
-
-        notificationService.notifyReply(parent, "commentAuthor");
-
-        verify(notificationRepository, never()).save(any());
-    }
-
-    // ── notifyLike ────────────────────────────────────────
-
-    @Test
-    void notifyLike_differentUser_savesNotificationAndPushesSSE() {
+    void notifyLike_differentUser_publishesAfterCommitEvent() {
         User author = makeUser("author");
         Post post   = makePost(1L, author);
-
-        given(userRepository.findByUsername("author")).willReturn(Optional.of(author));
-        given(notificationRepository.countByRecipientAndIsReadFalse(author)).willReturn(3L);
 
         notificationService.notifyLike(post, "liker");
 
-        verify(notificationRepository).save(any(Notification.class));
-        verify(sseEmitterService).sendCount("author", 3L);
+        verify(eventPublisher).publishEvent(new NotificationRequestedEvent(
+                "author",
+                NotificationType.LIKE,
+                "liker님이 회원님의 게시물을 좋아합니다.",
+                "/posts/1"
+        ));
     }
 
     @Test
-    void notifyLike_sameAuthorAsLiker_doesNotSave() {
-        User author = makeUser("author");
-        Post post   = makePost(1L, author);
+    void notifyMessage_publishesAfterCommitEvent() {
+        notificationService.notifyMessage("bob", "alice", "제목", 7L);
 
-        notificationService.notifyLike(post, "author");
+        verify(eventPublisher).publishEvent(new NotificationRequestedEvent(
+                "bob",
+                NotificationType.MESSAGE,
+                "alice님이 쪽지를 보냈습니다: 제목",
+                "/messages/7"
+        ));
+    }
+
+    // ── store after commit ───────────────────────────────
+
+    @Test
+    void storeNotificationAfterCommit_savesNotification_incrementsCounter_andPushesLatestCount() {
+        User recipient = makeUser("alice");
+        ReflectionTestUtils.setField(recipient, "id", 11L);
+        NotificationRequestedEvent event = new NotificationRequestedEvent(
+                "alice",
+                NotificationType.LIKE,
+                "좋아요!",
+                "/posts/1"
+        );
+
+        given(userRepository.findByUsername("alice")).willReturn(Optional.of(recipient));
+        given(userRepository.findUnreadNotificationCountByUsername("alice")).willReturn(Optional.of(3L));
+
+        notificationService.storeNotificationAfterCommit(event);
+
+        verify(notificationRepository).save(any(Notification.class));
+        verify(userRepository).incrementUnreadNotificationCount(11L);
+        verify(sseEmitterService).sendCount("alice", 3L);
+    }
+
+    @Test
+    void storeNotificationAfterCommit_missingRecipient_ignoresEvent() {
+        NotificationRequestedEvent event = new NotificationRequestedEvent(
+                "ghost",
+                NotificationType.LIKE,
+                "좋아요!",
+                "/posts/1"
+        );
+        given(userRepository.findByUsername("ghost")).willReturn(Optional.empty());
+
+        notificationService.storeNotificationAfterCommit(event);
 
         verify(notificationRepository, never()).save(any());
+        verify(sseEmitterService, never()).sendCount(any(), anyLong());
     }
 
     // ── getAndMarkAllRead ─────────────────────────────────
 
     @Test
-    void getAndMarkAllRead_returnsListAndMarksReadAndPushesZero() {
+    void getAndMarkAllRead_returnsList_marksRead_resetsCounter_andPushesLatestCount() {
         User user = makeUser("alice");
-        Notification n = Notification.builder()
-                .recipient(user).type(NotificationType.LIKE)
-                .message("좋아요!").link("/posts/1").build();
+        ReflectionTestUtils.setField(user, "id", 11L);
+        Notification notification = Notification.builder()
+                .recipient(user)
+                .type(NotificationType.LIKE)
+                .message("좋아요!")
+                .link("/posts/1")
+                .build();
 
         given(userRepository.findByUsername("alice")).willReturn(Optional.of(user));
-        given(notificationRepository.findByRecipientOrderByCreatedAtDesc(user))
-                .willReturn(List.of(n));
+        given(userRepository.findUnreadNotificationCountByUsername("alice")).willReturn(Optional.of(0L));
+        given(notificationRepository.findByRecipientOrderByCreatedAtDesc(user)).willReturn(List.of(notification));
 
         List<NotificationResponse> result = notificationService.getAndMarkAllRead("alice");
 
         assertThat(result).hasSize(1);
         verify(notificationRepository).markAllAsRead(user);
-        // 읽음 처리 후 SSE로 count=0 push
-        verify(sseEmitterService).sendCount("alice", 0);
+        verify(userRepository).resetUnreadNotificationCount(11L);
+        verify(sseEmitterService).sendCount("alice", 0L);
     }
 
     // ── getUnreadCount ────────────────────────────────────
 
     @Test
-    void getUnreadCount_returnsCountFromRepository() {
-        User user = makeUser("alice");
-        given(userRepository.findByUsername("alice")).willReturn(Optional.of(user));
-        given(notificationRepository.countByRecipientAndIsReadFalse(user)).willReturn(5L);
+    void getUnreadCount_returnsCounterValue() {
+        given(userRepository.findUnreadNotificationCountByUsername("alice")).willReturn(Optional.of(5L));
 
         assertThat(notificationService.getUnreadCount("alice")).isEqualTo(5L);
     }
 
     @Test
     void getUnreadCount_unknownUser_returnsZero() {
-        given(userRepository.findByUsername("ghost")).willReturn(Optional.empty());
+        given(userRepository.findUnreadNotificationCountByUsername("ghost")).willReturn(Optional.empty());
 
         assertThat(notificationService.getUnreadCount("ghost")).isZero();
     }
-
-    // ── helpers ───────────────────────────────────────────
 
     private User makeUser(String username) {
         return User.builder().username(username).email(username + "@test.com").password("pw").build();
