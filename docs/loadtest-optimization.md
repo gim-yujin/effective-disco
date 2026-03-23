@@ -81,6 +81,37 @@ GRADLE_USER_HOME=/tmp/gradle-home ./gradlew test --no-daemon \
 
 ### 남은 과제
 
-- 반복 ramp-up 을 다시 돌려 안정 구간이 `1.25x` 에서 얼마나 올라갔는지 재측정
-- `comment.create`, `notification.store` 를 다음 병목 후보로 분석
+- 재측정 결과를 바탕으로 `comment.create`, `notification.store` 를 다음 병목 후보로 분석
 - 필요 시 `post.list` 의 검색/태그 필터 쿼리 플랜과 인덱스도 별도로 점검
+
+### 후속 경계점 재측정
+
+실행 날짜:
+
+- 2026-03-24
+
+실행 조건:
+
+- 결과 디렉터리: `loadtest/results/boundary-repeat-opt-20260324-034537`
+- 반복 횟수: `5회`
+- `STOP_ON_K6_THRESHOLD=0`
+- `STOP_ON_HTTP_P99_MS=800`
+- `STAGE_FACTORS=1,1.25,1.5,1.75,2,2.25,2.5,3,3.5,4`
+- `BROWSE_DURATION=12s`, `HOT_POST_DURATION=12s`, `SEARCH_DURATION=12s`
+- `WRITE_STAGE_ONE_DURATION=8s`, `WRITE_STAGE_TWO_DURATION=8s`
+
+재측정 결과:
+
+- `1.25x`: `5/5 PASS`
+- `1.25x` 전체 `p99`: `641.39ms~686.97ms`, 평균 `664.17ms`
+- `1.5x`: `2/5 LIMIT`, `3/5 FAIL`
+- `1.5x` 전체 `p99`: `868.06ms~963.63ms`, 평균 `904.64ms`
+- `1.5x` 실패 런에서는 `unexpected_response_rate=0.0005~0.0020`, `dbPoolTimeouts=7~30`
+- `1.5x` 전체 런에서 `maxActiveConnections=20`, `maxThreadsAwaitingConnection=191~194`
+- 전체 반복 런에서 `duplicateKeyConflicts=0`, 관계 중복 row `0`, SQL mismatch `0`
+
+해석:
+
+- `post.list` 자체는 빨라졌지만, 전체 시스템의 안정 구간은 `1.25x` 에 그대로 머물렀다.
+- 즉 이번 최적화는 목록 경로 병목을 제거했지만, 전체 한계점은 `comment.create`, `notification.store`, 또는 그 외 쓰기 경로에서 다시 결정되고 있다.
+- 다음 최적화 우선순위는 `post.list` 가 아니라 `comment.create` 와 `notification.store` 다.

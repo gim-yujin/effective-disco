@@ -97,6 +97,34 @@
 - 이번 변경은 정합성 로직 변경이 아니라 DB pool 포화 원인 제거 목적의 읽기 경로 최적화다.
 - 상세 원인, 조치, 전후 수치는 [loadtest-optimization.md](loadtest-optimization.md) 에 기록한다.
 
+## 4차 결과
+
+상태: 완료
+
+검증 날짜:
+
+- 2026-03-24
+
+검증 범위:
+
+- `post.list` 최적화 이후 반복 ramp-up 경계점 재측정 5회
+- mixed scenario를 포함한 게시판 목록/핫 게시물/검색/게시물 작성/댓글 작성 혼합 부하
+- 멱등 좋아요 등록/해제 경쟁
+- 북마크 등록/해제 혼합 경쟁
+- 팔로우/언팔로우 혼합 경쟁
+- 차단/해제 혼합 경쟁
+- 알림 생성 vs 전체 읽음 혼합 경쟁
+- `unexpected_response_rate`, `dbPoolTimeouts`, 전체 `http_req_duration p99` 재측정
+
+핵심 결론:
+
+- `1.25x` 는 최적화 이후에도 `5/5 PASS` 였다.
+- `1.5x` 는 최적화 이후 `5/5` 모두 `LIMIT/FAIL` 이었다.
+- `1.5x` 에서 `2/5` 는 `http-p99-threshold`, `3/5` 는 `unexpected-response` 와 `dbPoolTimeouts` 동반으로 멈췄다.
+- `1.5x` 전체 `p99` 는 `868.06ms~963.63ms`, 평균 `904.64ms` 였다.
+- `duplicateKeyConflicts=0`, 관계 중복 row `0`, SQL mismatch `0` 으로 정합성 불변식은 최적화 후에도 계속 유지됐다.
+- 결론적으로 `post.list` 최적화는 국소 병목은 줄였지만, 시스템 전체 보수적 안정 구간은 아직 `1.25x` 다.
+
 ## 1차에서 보장한 불변식
 
 ### 관계형 쓰기 경로
