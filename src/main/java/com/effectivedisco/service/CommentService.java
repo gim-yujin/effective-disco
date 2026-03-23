@@ -8,6 +8,7 @@ import com.effectivedisco.dto.response.CommentResponse;
 import com.effectivedisco.repository.CommentRepository;
 import com.effectivedisco.repository.PostRepository;
 import com.effectivedisco.repository.UserRepository;
+import jakarta.persistence.EntityManager;
 import lombok.RequiredArgsConstructor;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.core.userdetails.UsernameNotFoundException;
@@ -24,6 +25,7 @@ public class CommentService {
     private final PostRepository      postRepository;
     private final UserRepository      userRepository;
     private final NotificationService notificationService;
+    private final EntityManager       entityManager;
 
     public List<CommentResponse> getComments(Long postId) {
         return commentRepository.findByPostIdAndParentIsNullOrderByCreatedAtAsc(postId)
@@ -32,18 +34,23 @@ public class CommentService {
 
     @Transactional
     public CommentResponse createComment(Long postId, CommentRequest request, String username) {
-        Post post = findPost(postId);
-        User user = findUser(username);
+        PostRepository.CommentNotificationTarget postTarget = findCommentNotificationTarget(postId);
+        UserRepository.CommentAuthorSnapshot authorSnapshot = findCommentAuthorSnapshot(username);
+        // 문제 해결:
+        // comment.create 는 댓글 1건 저장을 위해 Post/User 엔티티 전체를 읽고,
+        // 댓글 알림에서 post.author LAZY select 를 추가로 타며 SQL 이 불어났다.
+        // 존재 확인과 응답/알림에 필요한 최소 컬럼만 projection 으로 읽고 연관은 getReference 로 묶어
+        // hot path SQL 을 "게시물 확인 + 작성자 확인 + INSERT + 카운터 UPDATE" 수준으로 고정한다.
         Comment comment = Comment.builder()
                 .content(request.getContent())
-                .post(post)
-                .author(user)
+                .post(entityManager.getReference(Post.class, postTarget.getId()))
+                .author(entityManager.getReference(User.class, authorSnapshot.getId()))
                 .build();
-        CommentResponse response = new CommentResponse(commentRepository.save(comment));
+        Comment savedComment = commentRepository.save(comment);
         postRepository.incrementCommentCount(postId);
         // 게시물 작성자에게 댓글 알림 (본인 댓글은 제외)
-        notificationService.notifyComment(post, username);
-        return response;
+        notificationService.notifyComment(postTarget.getAuthorUsername(), postId, username);
+        return new CommentResponse(savedComment, authorSnapshot.getUsername(), authorSnapshot.getProfileImageUrl());
     }
 
     @Transactional
@@ -64,7 +71,11 @@ public class CommentService {
                 .author(user)
                 .parent(parent)
                 .build();
-        CommentResponse response = new CommentResponse(commentRepository.save(reply));
+        CommentResponse response = new CommentResponse(
+                commentRepository.save(reply),
+                user.getUsername(),
+                user.getProfileImageUrl()
+        );
         postRepository.incrementCommentCount(postId);
         // 부모 댓글 작성자에게 대댓글 알림 (본인 댓글은 제외)
         notificationService.notifyReply(parent, username);
@@ -135,8 +146,18 @@ public class CommentService {
                 .orElseThrow(() -> new IllegalArgumentException("Post not found: " + postId));
     }
 
+    private PostRepository.CommentNotificationTarget findCommentNotificationTarget(Long postId) {
+        return postRepository.findCommentNotificationTargetById(postId)
+                .orElseThrow(() -> new IllegalArgumentException("Post not found: " + postId));
+    }
+
     private User findUser(String username) {
         return userRepository.findByUsername(username)
+                .orElseThrow(() -> new UsernameNotFoundException("User not found: " + username));
+    }
+
+    private UserRepository.CommentAuthorSnapshot findCommentAuthorSnapshot(String username) {
+        return userRepository.findCommentAuthorSnapshotByUsername(username)
                 .orElseThrow(() -> new UsernameNotFoundException("User not found: " + username));
     }
 

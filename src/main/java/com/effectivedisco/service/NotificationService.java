@@ -35,12 +35,19 @@ public class NotificationService {
      * 본인이 자신의 게시물에 댓글을 달면 알림을 생성하지 않는다.
      */
     public void notifyComment(Post post, String commenterUsername) {
-        if (post.getAuthor().getUsername().equals(commenterUsername)) return;
+        notifyComment(post.getAuthor().getUsername(), post.getId(), commenterUsername);
+    }
+
+    /**
+     * 게시물 엔티티를 이미 들고 있지 않은 hot path 에서 사용하는 댓글 알림 요청.
+     */
+    public void notifyComment(String recipientUsername, Long postId, String commenterUsername) {
+        if (recipientUsername.equals(commenterUsername)) return;
         publishNotification(new NotificationRequestedEvent(
-                post.getAuthor().getUsername(),
+                recipientUsername,
                 NotificationType.COMMENT,
                 commenterUsername + "님이 회원님의 게시물에 댓글을 남겼습니다.",
-                "/posts/" + post.getId() + "#comments"
+                "/posts/" + postId + "#comments"
         ));
     }
 
@@ -109,8 +116,12 @@ public class NotificationService {
                 .link(event.link())
                 .build();
         notificationRepository.save(notification);
-        userRepository.incrementUnreadNotificationCount(recipient.getId());
-        scheduleUnreadCountPushAfterCommit(recipient.getUsername());
+        // 문제 해결:
+        // notification.store 는 알림 row 를 INSERT 한 뒤 unread count 를 다시 SELECT/COUNT 하면서
+        // DB를 한 번 더 돌고 있었다. 잠금으로 직렬화된 수신자 엔티티에서 최종 unread 값을 바로 올리고
+        // 그 값을 after-commit push 에 넘기면 저장 경로를 최소 SQL 로 유지할 수 있다.
+        recipient.incrementUnreadNotificationCount();
+        scheduleUnreadCountPushAfterCommit(recipient.getUsername(), recipient.getUnreadNotificationCount());
     }
 
     /**
@@ -126,9 +137,14 @@ public class NotificationService {
                 .map(NotificationResponse::new)
                 .collect(Collectors.toList());
 
-        notificationRepository.markAllAsRead(user);
-        userRepository.resetUnreadNotificationCount(user.getId());
-        scheduleUnreadCountPushAfterCommit(username);
+        if (user.getUnreadNotificationCount() > 0) {
+            // 문제 해결:
+            // 이미 unread 가 0 인 사용자는 bulk UPDATE 를 다시 날릴 이유가 없다.
+            // 직렬화된 User 엔티티의 비정규화 카운터를 기준으로 필요한 경우에만 읽음 처리를 수행한다.
+            notificationRepository.markAllAsRead(user);
+            user.resetUnreadNotificationCount();
+        }
+        scheduleUnreadCountPushAfterCommit(username, user.getUnreadNotificationCount());
         return list;
     }
 
@@ -147,10 +163,12 @@ public class NotificationService {
     /**
      * 문제 해결:
      * 알림 저장 트랜잭션 안에서 바로 SSE를 보내면 커밋 실패 시 잘못된 숫자가 노출될 수 있다.
-     * afterCommit 훅에서 최신 unread count를 다시 읽어 전송하면 UI와 DB를 같은 시점으로 맞출 수 있다.
+     * 다만 afterCommit 시점에 unread count를 다시 SELECT 하면 notification.store hot path 가
+     * 불필요하게 한 번 더 DB를 친다. 트랜잭션 안에서 확정한 unread 값을 그대로 넘겨
+     * UI와 DB 시점을 맞추면서 post-commit 재조회도 없앤다.
      */
-    private void scheduleUnreadCountPushAfterCommit(String username) {
-        Runnable push = () -> sseEmitterService.sendCount(username, getUnreadCount(username));
+    private void scheduleUnreadCountPushAfterCommit(String username, long unreadCount) {
+        Runnable push = () -> sseEmitterService.sendCount(username, unreadCount);
 
         if (!TransactionSynchronizationManager.isSynchronizationActive()) {
             push.run();
@@ -163,11 +181,6 @@ public class NotificationService {
                 push.run();
             }
         });
-    }
-
-    private User findUser(String username) {
-        return userRepository.findByUsername(username)
-                .orElseThrow(() -> new UsernameNotFoundException("사용자를 찾을 수 없습니다: " + username));
     }
 
     private User findUserForUpdate(String username) {

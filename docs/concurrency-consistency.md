@@ -95,6 +95,9 @@
 - 2026-03-24 `post.list` N+1 최적화를 적용했다.
 - 병목 프로파일 기준 `averageSqlStatementCount = 54.84 -> 4.80`, `averageWallTimeMs = 91.81 -> 19.35` 로 줄었다.
 - 이번 변경은 정합성 로직 변경이 아니라 DB pool 포화 원인 제거 목적의 읽기 경로 최적화다.
+- 2026-03-24 `comment.create` / `notification.store` 쓰기 경로 최적화를 적용했다.
+- 병목 프로파일 기준 `comment.create averageSqlStatementCount = 4.95 -> 4.00`, `notification.store averageSqlStatementCount = 3.00 -> 2.00` 으로 줄었다.
+- `notification.store averageWallTimeMs = 4.23 -> 1.95` 로 낮아졌고, short soak에서도 `duplicateKeyConflicts=0`, `dbPoolTimeouts=0`, SQL mismatch `0` 이 유지됐다.
 - 상세 원인, 조치, 전후 수치는 [loadtest-optimization.md](loadtest-optimization.md) 에 기록한다.
 
 ## 4차 결과

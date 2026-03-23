@@ -4,7 +4,6 @@ import com.effectivedisco.domain.User;
 import jakarta.persistence.LockModeType;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Lock;
-import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
@@ -12,6 +11,13 @@ import java.util.List;
 import java.util.Optional;
 
 public interface UserRepository extends JpaRepository<User, Long> {
+
+    interface CommentAuthorSnapshot {
+        Long getId();
+        String getUsername();
+        String getProfileImageUrl();
+    }
+
     Optional<User> findByUsername(String username);
 
     /**
@@ -29,16 +35,17 @@ public interface UserRepository extends JpaRepository<User, Long> {
 
     /**
      * 문제 해결:
-     * unread count는 동시 알림 생성 시 lost update가 나면 안 되므로
-     * 조회 후 set이 아니라 DB 원자적 UPDATE로 증가시킨다.
+     * comment.create 는 댓글 작성자 전체 엔티티를 읽지 않아도 user id / username / profile 만 있으면 충분하다.
+     * 작성 응답과 연관 getReference 에 필요한 최소 컬럼만 projection 으로 읽어 추가 SELECT 를 줄인다.
      */
-    @Modifying
-    @Query("UPDATE User u SET u.unreadNotificationCount = u.unreadNotificationCount + 1 WHERE u.id = :id")
-    void incrementUnreadNotificationCount(@Param("id") Long id);
-
-    @Modifying
-    @Query("UPDATE User u SET u.unreadNotificationCount = 0 WHERE u.id = :id")
-    void resetUnreadNotificationCount(@Param("id") Long id);
+    @Query("""
+            SELECT u.id AS id,
+                   u.username AS username,
+                   u.profileImageUrl AS profileImageUrl
+            FROM User u
+            WHERE u.username = :username
+            """)
+    Optional<CommentAuthorSnapshot> findCommentAuthorSnapshotByUsername(@Param("username") String username);
 
     @Query("SELECT u.unreadNotificationCount FROM User u WHERE u.username = :username")
     Optional<Long> findUnreadNotificationCountByUsername(@Param("username") String username);

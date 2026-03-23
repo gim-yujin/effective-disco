@@ -38,15 +38,33 @@ public class CommentResponse {
     private final String authorProfileImageUrl;
 
     public CommentResponse(Comment comment) {
-        this.id                   = comment.getId();
-        this.content              = comment.getContent();
-        this.author               = comment.getAuthor().getUsername();
-        this.createdAt            = comment.getCreatedAt();
-        this.updatedAt            = comment.getUpdatedAt();
-        this.authorProfileImageUrl = comment.getAuthor().getProfileImageUrl();
-        // 대댓글도 재귀적으로 같은 DTO로 변환
-        this.replies = comment.getReplies().stream()
-                .map(CommentResponse::new)
-                .toList();
+        this(
+                comment,
+                comment.getAuthor().getUsername(),
+                comment.getAuthor().getProfileImageUrl(),
+                comment.getReplies().stream().map(CommentResponse::new).toList()
+        );
+    }
+
+    /**
+     * 문제 해결:
+     * freshly-created 댓글 응답은 이미 작성자 username/profile 을 알고 있으므로
+     * author/replies LAZY 로딩을 다시 타지 않고도 DTO 를 만들 수 있어야 한다.
+     */
+    public CommentResponse(Comment comment, String authorUsername, String authorProfileImageUrl) {
+        this(comment, authorUsername, authorProfileImageUrl, List.of());
+    }
+
+    private CommentResponse(Comment comment,
+                            String authorUsername,
+                            String authorProfileImageUrl,
+                            List<CommentResponse> replies) {
+        this.id = comment.getId();
+        this.content = comment.getContent();
+        this.author = authorUsername;
+        this.createdAt = comment.getCreatedAt();
+        this.updatedAt = comment.getUpdatedAt();
+        this.authorProfileImageUrl = authorProfileImageUrl;
+        this.replies = replies;
     }
 }

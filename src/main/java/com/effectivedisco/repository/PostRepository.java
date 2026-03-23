@@ -12,6 +12,7 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
 import java.util.List;
+import java.util.Optional;
 
 /**
  * 게시물 레포지토리.
@@ -20,6 +21,11 @@ import java.util.List;
  * 초안은 작성자 전용 메서드(findByAuthorAndDraftTrue*)를 통해서만 접근한다.
  */
 public interface PostRepository extends JpaRepository<Post, Long> {
+
+    interface CommentNotificationTarget {
+        Long getId();
+        String getAuthorUsername();
+    }
 
     // ══════════════════════════════════════════════════════
     // 전체 공개 게시물 조회 (draft = false)
@@ -166,6 +172,14 @@ public interface PostRepository extends JpaRepository<Post, Long> {
 
     @Query("SELECT DISTINCT p FROM Post p LEFT JOIN FETCH p.images WHERE p.id IN :postIds")
     List<Post> findAllWithImagesByIdIn(@Param("postIds") List<Long> postIds);
+
+    /**
+     * 문제 해결:
+     * comment.create hot path 는 댓글 저장 자체보다 "게시물 존재 확인 + 게시물 작성자 username 확인"이 필요하다.
+     * 엔티티 전체를 읽지 말고 알림에 필요한 최소 컬럼만 projection 으로 가져와 SELECT fan-out 을 줄인다.
+     */
+    @Query("SELECT p.id AS id, p.author.username AS authorUsername FROM Post p WHERE p.id = :id")
+    Optional<CommentNotificationTarget> findCommentNotificationTargetById(@Param("id") Long id);
 
     // ══════════════════════════════════════════════════════
     // 원자적 카운트 UPDATE (동시성 안전)

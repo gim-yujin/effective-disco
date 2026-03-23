@@ -115,3 +115,100 @@ GRADLE_USER_HOME=/tmp/gradle-home ./gradlew test --no-daemon \
 - `post.list` 자체는 빨라졌지만, 전체 시스템의 안정 구간은 `1.25x` 에 그대로 머물렀다.
 - 즉 이번 최적화는 목록 경로 병목을 제거했지만, 전체 한계점은 `comment.create`, `notification.store`, 또는 그 외 쓰기 경로에서 다시 결정되고 있다.
 - 다음 최적화 우선순위는 `post.list` 가 아니라 `comment.create` 와 `notification.store` 다.
+
+## 2026-03-24 `comment.create` / `notification.store` 최적화
+
+상태: 완료
+
+### 배경
+
+- `post.list` 최적화 이후 short soak 기준 다음 병목 후보는 `comment.create` 와 `notification.store` 였다.
+- 최적화 직전 기준 artifact 는 `loadtest/results/soak-20260324-033507-server.json` 이다.
+- 당시 병목 프로파일은 다음과 같았다.
+  - `comment.create averageWallTimeMs = 2.01`
+  - `comment.create averageSqlExecutionTimeMs = 1.02`
+  - `comment.create averageSqlStatementCount = 4.95`
+  - `notification.store averageWallTimeMs = 4.23`
+  - `notification.store averageSqlExecutionTimeMs = 3.61`
+  - `notification.store averageSqlStatementCount = 3.00`
+
+### 원인
+
+- `comment.create` 는 댓글 1건 저장을 위해 `Post` 와 `User` 엔티티를 각각 전체 조회했고, 댓글 알림 생성 시 `post.author` LAZY 접근으로 추가 select 를 더 탔다.
+- 새 댓글 응답도 `CommentResponse` 생성 과정에서 작성자와 `replies` 컬렉션을 다시 접근해, freshly-created 댓글 경로에 불필요한 연관 로딩이 따라붙을 여지가 있었다.
+- `notification.store` 는 수신자 `User` 를 잠근 뒤 알림 row 를 저장하고, unread counter 증가 후 after-commit push 시 unread count 를 다시 읽었다.
+- 즉 `notification.store` 는 "잠금 조회 + INSERT + unread count 재조회" 구조라 저장 경로 자체에 여분의 read 가 붙어 있었다.
+
+### 적용한 변경
+
+- `PostRepository` 에 `CommentNotificationTarget` projection 을 추가해 `comment.create` 에 필요한 `post.id`, `post.author.username` 만 읽도록 바꿨다.
+- `UserRepository` 에 `CommentAuthorSnapshot` projection 을 추가해 댓글 작성자의 `id`, `username`, `profileImageUrl` 만 읽도록 바꿨다.
+- `CommentService.createComment()` 는 projection 으로 존재 여부를 확인한 뒤 `EntityManager.getReference()` 로 연관을 묶어 댓글을 저장하도록 변경했다.
+- `NotificationService` 에 username 기반 `notifyComment()` overload 를 추가해 댓글 알림 경로에서 `post.author` 추가 로딩을 없앴다.
+- `CommentResponse` 에 freshly-created 댓글 전용 생성자를 추가해 새 댓글 응답이 `author/replies` LAZY 로딩 없이 직렬화되도록 바꿨다.
+- `NotificationService.storeNotificationAfterCommit()` 는 잠금을 잡은 `User` 엔티티의 `unreadNotificationCount` 를 직접 증가시키고, 확정된 값을 after-commit SSE push 에 그대로 넘기도록 바꿨다.
+- `getAndMarkAllRead()` 는 unread 가 이미 `0` 이면 bulk update 를 건너뛰도록 정리했다.
+- Hibernate statistics 기반 `CommentCreateOptimizationIntegrationTest` 를 추가해 `comment.create` hot path 의 statement 수가 `4` 이하인지 고정했다.
+
+### 전후 비교
+
+최적화 전:
+
+- 실행 시각: `20260324-033507`
+- artifact: `loadtest/results/soak-20260324-033507-server.json`
+- `comment.create averageWallTimeMs = 2.01`
+- `comment.create averageSqlExecutionTimeMs = 1.02`
+- `comment.create averageSqlStatementCount = 4.95`
+- `notification.store averageWallTimeMs = 4.23`
+- `notification.store averageSqlExecutionTimeMs = 3.61`
+- `notification.store averageSqlStatementCount = 3.00`
+
+최적화 후:
+
+- 실행 시각: `20260324-040618`
+- artifact: `loadtest/results/soak-20260324-040618-server.json`
+- `comment.create averageWallTimeMs = 2.09`
+- `comment.create averageSqlExecutionTimeMs = 1.01`
+- `comment.create averageSqlStatementCount = 4.00`
+- `notification.store averageWallTimeMs = 1.95`
+- `notification.store averageSqlExecutionTimeMs = 1.55`
+- `notification.store averageSqlStatementCount = 2.00`
+
+### 해석
+
+- `comment.create` 는 wall time 자체는 거의 비슷했지만, statement 수를 `4.95 -> 4.00` 으로 줄여 SQL fan-out 을 제거했다.
+- `comment.create` 는 이제 "projection 2회 + comment insert + commentCount update" 수준으로 고정되어, 게시물 작성자/작성자 프로필/대댓글 컬렉션 접근 때문에 SQL 이 더 늘어나지 않는다.
+- `notification.store` 는 statement 수를 `3.00 -> 2.00` 으로 줄였고, wall time 도 `4.23ms -> 1.95ms` 로 유의미하게 감소했다.
+- 즉 이번 최적화는 단일 느린 쿼리를 고친 것이 아니라, 쓰기 hot path 에 붙어 있던 불필요한 read-back 과 연관 로딩을 제거한 것이다.
+
+### 검증
+
+회귀 + 통합 테스트:
+
+```bash
+GRADLE_USER_HOME=/tmp/gradle-home ./gradlew test --no-daemon \
+  --tests "com.effectivedisco.service.CommentServiceTest" \
+  --tests "com.effectivedisco.service.CommentCreateOptimizationIntegrationTest" \
+  --tests "com.effectivedisco.service.NotificationServiceTest" \
+  --tests "com.effectivedisco.service.NotificationAfterCommitIntegrationTest" \
+  --tests "com.effectivedisco.service.MessageServiceTest"
+```
+
+short soak:
+
+```bash
+SOAK_FACTOR=1 SOAK_DURATION=10s WARMUP_DURATION=5s SAMPLE_INTERVAL_SECONDS=2 \
+  BASE_URL=http://localhost:18080 ./loadtest/run-bbs-soak.sh
+```
+
+결과:
+
+- targeted Gradle 테스트 통과
+- `CommentCreateOptimizationIntegrationTest` 에서 `comment.create` 의 `getPrepareStatementCount() <= 4` 확인
+- short soak 재실행 결과 `unexpected_response_rate=0.0000`, `duplicateKeyConflicts=0`, `dbPoolTimeouts=0`, SQL mismatch `0`
+- soak 리포트는 기존 글로벌 p99 threshold 때문에 `FAIL` 로 종료됐지만, 이번 최적화 대상 경로의 정합성 깨짐이나 pool timeout 증거는 나오지 않았다.
+
+### 남은 과제
+
+- 같은 조건으로 반복 ramp-up 을 다시 돌려 `comment.create` / `notification.store` 최적화가 전체 안정 구간을 실제로 밀어 올렸는지 측정
+- 여전히 `1.5x` 경계가 유지되면 다음 병목을 `comment.create`, `notification.store` 외의 쓰기 경로 또는 pool 설정/DB 플랜에서 찾아야 한다

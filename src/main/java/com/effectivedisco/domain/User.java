@@ -103,6 +103,8 @@ public class User {
     public void updatePassword(String encoded)           { this.password = encoded; }
     /** 프로필 이미지 URL 변경 (null 허용 — null 이면 이니셜 아바타로 되돌림) */
     public void updateProfileImageUrl(String url)        { this.profileImageUrl = url; }
+    public void incrementUnreadNotificationCount()       { this.unreadNotificationCount += 1; }
+    public void resetUnreadNotificationCount()           { this.unreadNotificationCount = 0L; }
 
     /* ── 계정 정지 관리 ───────────────────────────────────────── */
 

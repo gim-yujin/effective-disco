@@ -8,7 +8,7 @@ import com.effectivedisco.dto.response.CommentResponse;
 import com.effectivedisco.repository.CommentRepository;
 import com.effectivedisco.repository.PostRepository;
 import com.effectivedisco.repository.UserRepository;
-import com.effectivedisco.service.NotificationService;
+import jakarta.persistence.EntityManager;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
@@ -32,6 +32,7 @@ class CommentServiceTest {
     @Mock PostRepository      postRepository;
     @Mock UserRepository      userRepository;
     @Mock NotificationService notificationService;
+    @Mock EntityManager       entityManager;
 
     @InjectMocks CommentService commentService;
 
@@ -40,9 +41,14 @@ class CommentServiceTest {
         Post post = makePost(1L, makeUser("author"));
         User commenter = makeUser("commenter");
         Comment saved = makeComment(1L, "hello", post, commenter, null);
+        ReflectionTestUtils.setField(commenter, "id", 21L);
 
-        given(postRepository.findById(1L)).willReturn(Optional.of(post));
-        given(userRepository.findByUsername("commenter")).willReturn(Optional.of(commenter));
+        given(postRepository.findCommentNotificationTargetById(1L))
+                .willReturn(Optional.of(commentNotificationTarget(1L, "author")));
+        given(userRepository.findCommentAuthorSnapshotByUsername("commenter"))
+                .willReturn(Optional.of(commentAuthorSnapshot(21L, "commenter", null)));
+        given(entityManager.getReference(Post.class, 1L)).willReturn(post);
+        given(entityManager.getReference(User.class, 21L)).willReturn(commenter);
         given(commentRepository.save(any(Comment.class))).willReturn(saved);
 
         CommentResponse response = commentService.createComment(1L, makeRequest("hello"), "commenter");
@@ -50,11 +56,12 @@ class CommentServiceTest {
         assertThat(response.getContent()).isEqualTo("hello");
         assertThat(response.getAuthor()).isEqualTo("commenter");
         verify(commentRepository).save(any(Comment.class));
+        verify(notificationService).notifyComment("author", 1L, "commenter");
     }
 
     @Test
     void createComment_postNotFound_throwsException() {
-        given(postRepository.findById(99L)).willReturn(Optional.empty());
+        given(postRepository.findCommentNotificationTargetById(99L)).willReturn(Optional.empty());
 
         assertThatThrownBy(() -> commentService.createComment(99L, makeRequest("hi"), "user"))
                 .isInstanceOf(IllegalArgumentException.class)
@@ -176,5 +183,40 @@ class CommentServiceTest {
         CommentRequest req = new CommentRequest();
         req.setContent(content);
         return req;
+    }
+
+    private PostRepository.CommentNotificationTarget commentNotificationTarget(Long id, String authorUsername) {
+        return new PostRepository.CommentNotificationTarget() {
+            @Override
+            public Long getId() {
+                return id;
+            }
+
+            @Override
+            public String getAuthorUsername() {
+                return authorUsername;
+            }
+        };
+    }
+
+    private UserRepository.CommentAuthorSnapshot commentAuthorSnapshot(Long id,
+                                                                      String username,
+                                                                      String profileImageUrl) {
+        return new UserRepository.CommentAuthorSnapshot() {
+            @Override
+            public Long getId() {
+                return id;
+            }
+
+            @Override
+            public String getUsername() {
+                return username;
+            }
+
+            @Override
+            public String getProfileImageUrl() {
+                return profileImageUrl;
+            }
+        };
     }
 }

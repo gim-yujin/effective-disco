@@ -121,9 +121,9 @@ class NotificationServiceTest {
     // ── store after commit ───────────────────────────────
 
     @Test
-    void storeNotificationAfterCommit_savesNotification_incrementsCounter_andPushesLatestCount() {
+    void storeNotificationAfterCommit_savesNotification_incrementsCounter_andPushesTrackedCountWithoutExtraRead() {
         User recipient = makeUser("alice");
-        ReflectionTestUtils.setField(recipient, "id", 11L);
+        ReflectionTestUtils.setField(recipient, "unreadNotificationCount", 2L);
         NotificationRequestedEvent event = new NotificationRequestedEvent(
                 "alice",
                 NotificationType.LIKE,
@@ -132,12 +132,12 @@ class NotificationServiceTest {
         );
 
         given(userRepository.findByUsernameForUpdate("alice")).willReturn(Optional.of(recipient));
-        given(userRepository.findUnreadNotificationCountByUsername("alice")).willReturn(Optional.of(3L));
 
         notificationService.storeNotificationAfterCommit(event);
 
         verify(notificationRepository).save(any(Notification.class));
-        verify(userRepository).incrementUnreadNotificationCount(11L);
+        assertThat(recipient.getUnreadNotificationCount()).isEqualTo(3L);
+        verify(userRepository, never()).findUnreadNotificationCountByUsername("alice");
         verify(sseEmitterService).sendCount("alice", 3L);
     }
 
@@ -160,9 +160,9 @@ class NotificationServiceTest {
     // ── getAndMarkAllRead ─────────────────────────────────
 
     @Test
-    void getAndMarkAllRead_returnsList_marksRead_resetsCounter_andPushesLatestCount() {
+    void getAndMarkAllRead_returnsList_marksRead_resetsCounter_andPushesTrackedCountWithoutExtraRead() {
         User user = makeUser("alice");
-        ReflectionTestUtils.setField(user, "id", 11L);
+        ReflectionTestUtils.setField(user, "unreadNotificationCount", 1L);
         Notification notification = Notification.builder()
                 .recipient(user)
                 .type(NotificationType.LIKE)
@@ -171,14 +171,34 @@ class NotificationServiceTest {
                 .build();
 
         given(userRepository.findByUsernameForUpdate("alice")).willReturn(Optional.of(user));
-        given(userRepository.findUnreadNotificationCountByUsername("alice")).willReturn(Optional.of(0L));
         given(notificationRepository.findByRecipientOrderByCreatedAtDesc(user)).willReturn(List.of(notification));
 
         List<NotificationResponse> result = notificationService.getAndMarkAllRead("alice");
 
         assertThat(result).hasSize(1);
         verify(notificationRepository).markAllAsRead(user);
-        verify(userRepository).resetUnreadNotificationCount(11L);
+        assertThat(user.getUnreadNotificationCount()).isZero();
+        verify(userRepository, never()).findUnreadNotificationCountByUsername("alice");
+        verify(sseEmitterService).sendCount("alice", 0L);
+    }
+
+    @Test
+    void getAndMarkAllRead_whenUnreadAlreadyZero_skipsBulkUpdate() {
+        User user = makeUser("alice");
+        Notification notification = Notification.builder()
+                .recipient(user)
+                .type(NotificationType.LIKE)
+                .message("이미 읽은 알림")
+                .link("/posts/1")
+                .build();
+
+        given(userRepository.findByUsernameForUpdate("alice")).willReturn(Optional.of(user));
+        given(notificationRepository.findByRecipientOrderByCreatedAtDesc(user)).willReturn(List.of(notification));
+
+        List<NotificationResponse> result = notificationService.getAndMarkAllRead("alice");
+
+        assertThat(result).hasSize(1);
+        verify(notificationRepository, never()).markAllAsRead(user);
         verify(sseEmitterService).sendCount("alice", 0L);
     }
 
