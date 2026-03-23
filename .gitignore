@@ -27,6 +27,7 @@ out/
 # Logs
 *.log
 logs/
+loadtest/results/
 
 # Spring Boot
 application-local.yml

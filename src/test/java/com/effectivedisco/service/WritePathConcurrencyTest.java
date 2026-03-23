@@ -95,6 +95,36 @@ class WritePathConcurrencyTest {
     }
 
     @Test
+    void likeAndUnlike_concurrentOppositeRequests_keepRelationAndCounterConsistent() throws Exception {
+        User author = saveUser("author");
+        User actor  = saveUser("actor");
+        Post post   = savePost(author, "좋아요/해제 경쟁");
+
+        runConcurrently(List.of(
+                () -> postService.likePost(post.getId(), actor.getUsername()),
+                () -> postService.likePost(post.getId(), actor.getUsername()),
+                () -> postService.likePost(post.getId(), actor.getUsername()),
+                () -> postService.likePost(post.getId(), actor.getUsername()),
+                () -> postService.unlikePost(post.getId(), actor.getUsername()),
+                () -> postService.unlikePost(post.getId(), actor.getUsername()),
+                () -> postService.unlikePost(post.getId(), actor.getUsername()),
+                () -> postService.unlikePost(post.getId(), actor.getUsername())
+        ));
+
+        Post persistedPost = postRepository.findById(post.getId()).orElseThrow();
+        User persistedUser = userRepository.findByUsername(actor.getUsername()).orElseThrow();
+        long relationCount = postLikeRepository.countByPostAndUser(persistedPost, persistedUser);
+        long likeCount = postRepository.findLikeCountById(post.getId());
+
+        assertThat(relationCount)
+                .as("문제 해결 검증: 좋아요/해제 요청이 섞여도 사용자-게시물 관계 row는 0개 또는 1개만 남아야 한다")
+                .isBetween(0L, 1L);
+        assertThat(likeCount)
+                .as("문제 해결 검증: likeCount는 최종 좋아요 row 수와 항상 같아야 한다")
+                .isEqualTo(relationCount);
+    }
+
+    @Test
     void follow_concurrentDuplicateRequests_createSingleRelation() throws Exception {
         User follower  = saveUser("follower");
         User following = saveUser("following");
@@ -107,6 +137,30 @@ class WritePathConcurrencyTest {
         assertThat(followRepository.countByFollowerAndFollowing(persistedFollower, persistedFollowing))
                 .as("문제 해결 검증: 같은 팔로우 요청이 동시에 와도 관계는 1개만 생성되어야 한다")
                 .isEqualTo(1);
+    }
+
+    @Test
+    void followAndUnfollow_concurrentOppositeRequests_keepSingleRelationOrNone() throws Exception {
+        User follower  = saveUser("follower");
+        User following = saveUser("following");
+
+        runConcurrently(List.of(
+                () -> followService.follow(follower.getUsername(), following.getUsername()),
+                () -> followService.follow(follower.getUsername(), following.getUsername()),
+                () -> followService.follow(follower.getUsername(), following.getUsername()),
+                () -> followService.follow(follower.getUsername(), following.getUsername()),
+                () -> followService.unfollow(follower.getUsername(), following.getUsername()),
+                () -> followService.unfollow(follower.getUsername(), following.getUsername()),
+                () -> followService.unfollow(follower.getUsername(), following.getUsername()),
+                () -> followService.unfollow(follower.getUsername(), following.getUsername())
+        ));
+
+        User persistedFollower  = userRepository.findByUsername(follower.getUsername()).orElseThrow();
+        User persistedFollowing = userRepository.findByUsername(following.getUsername()).orElseThrow();
+
+        assertThat(followRepository.countByFollowerAndFollowing(persistedFollower, persistedFollowing))
+                .as("문제 해결 검증: 팔로우/언팔로우 경쟁 후에도 관계 row는 0개 또는 1개만 남아야 한다")
+                .isBetween(0L, 1L);
     }
 
     @Test
@@ -126,6 +180,31 @@ class WritePathConcurrencyTest {
     }
 
     @Test
+    void bookmarkAndUnbookmark_concurrentOppositeRequests_keepSingleRelationOrNone() throws Exception {
+        User author = saveUser("author");
+        User actor  = saveUser("actor");
+        Post post   = savePost(author, "북마크/해제 경쟁");
+
+        runConcurrently(List.of(
+                () -> bookmarkService.bookmark(actor.getUsername(), post.getId()),
+                () -> bookmarkService.bookmark(actor.getUsername(), post.getId()),
+                () -> bookmarkService.bookmark(actor.getUsername(), post.getId()),
+                () -> bookmarkService.bookmark(actor.getUsername(), post.getId()),
+                () -> bookmarkService.unbookmark(actor.getUsername(), post.getId()),
+                () -> bookmarkService.unbookmark(actor.getUsername(), post.getId()),
+                () -> bookmarkService.unbookmark(actor.getUsername(), post.getId()),
+                () -> bookmarkService.unbookmark(actor.getUsername(), post.getId())
+        ));
+
+        User persistedUser = userRepository.findByUsername(actor.getUsername()).orElseThrow();
+        Post persistedPost = postRepository.findById(post.getId()).orElseThrow();
+
+        assertThat(bookmarkRepository.countByUserAndPost(persistedUser, persistedPost))
+                .as("문제 해결 검증: 북마크/해제 경쟁 후에도 관계 row는 0개 또는 1개만 남아야 한다")
+                .isBetween(0L, 1L);
+    }
+
+    @Test
     void block_concurrentDuplicateRequests_createSingleRelation() throws Exception {
         User blocker = saveUser("blocker");
         User blocked = saveUser("blocked");
@@ -138,6 +217,30 @@ class WritePathConcurrencyTest {
         assertThat(blockRepository.countByBlockerAndBlocked(persistedBlocker, persistedBlocked))
                 .as("문제 해결 검증: 같은 차단 요청이 동시에 와도 관계는 1개만 생성되어야 한다")
                 .isEqualTo(1);
+    }
+
+    @Test
+    void blockAndUnblock_concurrentOppositeRequests_keepSingleRelationOrNone() throws Exception {
+        User blocker = saveUser("blocker");
+        User blocked = saveUser("blocked");
+
+        runConcurrently(List.of(
+                () -> blockService.block(blocker.getUsername(), blocked.getUsername()),
+                () -> blockService.block(blocker.getUsername(), blocked.getUsername()),
+                () -> blockService.block(blocker.getUsername(), blocked.getUsername()),
+                () -> blockService.block(blocker.getUsername(), blocked.getUsername()),
+                () -> blockService.unblock(blocker.getUsername(), blocked.getUsername()),
+                () -> blockService.unblock(blocker.getUsername(), blocked.getUsername()),
+                () -> blockService.unblock(blocker.getUsername(), blocked.getUsername()),
+                () -> blockService.unblock(blocker.getUsername(), blocked.getUsername())
+        ));
+
+        User persistedBlocker = userRepository.findByUsername(blocker.getUsername()).orElseThrow();
+        User persistedBlocked = userRepository.findByUsername(blocked.getUsername()).orElseThrow();
+
+        assertThat(blockRepository.countByBlockerAndBlocked(persistedBlocker, persistedBlocked))
+                .as("문제 해결 검증: 차단/해제 경쟁 후에도 관계 row는 0개 또는 1개만 남아야 한다")
+                .isBetween(0L, 1L);
     }
 
     private User saveUser(String username) {
@@ -157,12 +260,21 @@ class WritePathConcurrencyTest {
     }
 
     private void runConcurrently(int workers, ThrowingRunnable action) throws Exception {
+        List<ThrowingRunnable> actions = new ArrayList<>();
+        for (int i = 0; i < workers; i++) {
+            actions.add(action);
+        }
+        runConcurrently(actions);
+    }
+
+    private void runConcurrently(List<ThrowingRunnable> actions) throws Exception {
+        int workers = actions.size();
         ExecutorService executor = Executors.newFixedThreadPool(workers);
         CountDownLatch ready = new CountDownLatch(workers);
         CountDownLatch start = new CountDownLatch(1);
         List<Future<?>> futures = new ArrayList<>();
 
-        for (int i = 0; i < workers; i++) {
+        for (ThrowingRunnable action : actions) {
             futures.add(executor.submit(() -> {
                 ready.countDown();
                 start.await(5, TimeUnit.SECONDS);

@@ -79,6 +79,21 @@ docker compose up -d --build
 
 `application.yml` 기본값: `localhost:5432`, 사용자 `postgres`, 비밀번호 `4321`
 
+## 부하 테스트 (k6)
+
+Redis/Kafka 없이 애플리케이션 내부 진단 경로와 `k6`만으로 BBS 부하를 측정한다.
+
+```bash
+SPRING_PROFILES_ACTIVE=loadtest ./gradlew bootRun
+./loadtest/run-bbs-load.sh
+```
+
+- `loadtest/k6/bbs-load.js`: 게시판 목록, 핫 게시물 상세, 검색, 게시물/댓글 작성, 멱등 좋아요/해제 경쟁 시나리오
+- `loadtest/results/k6-summary-*.json`: 시나리오별 p95/p99와 실패율
+- `loadtest/results/server-metrics-*.json`: duplicate-key 충돌 수, DB pool timeout 수, max awaiting connection
+
+자세한 실행 방법은 [loadtest/README.md](/home/admin0/effective-disco/loadtest/README.md) 참고.
+
 ## 개발 명령어
 
 ```bash

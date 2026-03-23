@@ -1,11 +1,15 @@
 package com.effectivedisco.config;
 
+import com.effectivedisco.loadtest.LoadTestMetricsService;
+import lombok.RequiredArgsConstructor;
+import org.springframework.dao.DataAccessResourceFailureException;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.orm.ObjectOptimisticLockingFailureException;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.core.AuthenticationException;
+import org.springframework.transaction.CannotCreateTransactionException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
@@ -13,7 +17,10 @@ import org.springframework.web.bind.annotation.RestControllerAdvice;
 import java.util.Map;
 
 @RestControllerAdvice
+@RequiredArgsConstructor
 public class GlobalExceptionHandler {
+
+    private final LoadTestMetricsService loadTestMetricsService;
 
     @ExceptionHandler(IllegalArgumentException.class)
     public ResponseEntity<Map<String, String>> handleIllegalArgument(IllegalArgumentException e) {
@@ -41,6 +48,7 @@ public class GlobalExceptionHandler {
 
     @ExceptionHandler(DataIntegrityViolationException.class)
     public ResponseEntity<Map<String, String>> handleDataIntegrity(DataIntegrityViolationException e) {
+        loadTestMetricsService.recordDuplicateKeyConflictIfDetected(e);
         return ResponseEntity.status(HttpStatus.CONFLICT)
                 .body(Map.of("error", "요청이 충돌했습니다. 다시 시도해주세요."));
     }
@@ -49,5 +57,18 @@ public class GlobalExceptionHandler {
     public ResponseEntity<Map<String, String>> handleOptimisticLock(ObjectOptimisticLockingFailureException e) {
         return ResponseEntity.status(HttpStatus.CONFLICT)
                 .body(Map.of("error", "다른 사용자가 동시에 수정했습니다. 다시 시도해주세요."));
+    }
+
+    @ExceptionHandler({
+            CannotCreateTransactionException.class,
+            DataAccessResourceFailureException.class
+    })
+    public ResponseEntity<Map<String, String>> handleDataAccessPressure(RuntimeException e) {
+        // 문제 해결:
+        // 부하 테스트에서 커넥션 풀 고갈을 일반 500으로 묻어버리면 p95/p99 악화 원인을 추적하기 어렵다.
+        // DB 압력 예외를 503으로 분리하고 timeout 카운터를 남겨 병목 지점을 바로 확인할 수 있게 한다.
+        loadTestMetricsService.recordDbPoolTimeoutIfDetected(e);
+        return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
+                .body(Map.of("error", "데이터베이스가 혼잡합니다. 잠시 후 다시 시도해주세요."));
     }
 }

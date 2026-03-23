@@ -92,10 +92,12 @@ public class NotificationService {
      * update/delete 쿼리가 트랜잭션 없이 실행될 수 있다.
      * REQUIRES_NEW 로 별도 트랜잭션을 열어 알림 row 저장, unread counter 증가,
      * SSE 예약을 안전하게 마무리한다.
+     * 또한 수신자 User 행을 잠가 "알림 생성"과 "전체 읽음 처리"가 엇갈릴 때도
+     * unread counter가 실제 unread row 수와 어긋나지 않게 직렬화한다.
      */
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public void storeNotificationAfterCommit(NotificationRequestedEvent event) {
-        User recipient = userRepository.findByUsername(event.recipientUsername()).orElse(null);
+        User recipient = userRepository.findByUsernameForUpdate(event.recipientUsername()).orElse(null);
         if (recipient == null) {
             return;
         }
@@ -117,7 +119,7 @@ public class NotificationService {
      */
     @Transactional
     public List<NotificationResponse> getAndMarkAllRead(String username) {
-        User user = findUser(username);
+        User user = findUserForUpdate(username);
         List<NotificationResponse> list = notificationRepository
                 .findByRecipientOrderByCreatedAtDesc(user)
                 .stream()
@@ -165,6 +167,11 @@ public class NotificationService {
 
     private User findUser(String username) {
         return userRepository.findByUsername(username)
+                .orElseThrow(() -> new UsernameNotFoundException("사용자를 찾을 수 없습니다: " + username));
+    }
+
+    private User findUserForUpdate(String username) {
+        return userRepository.findByUsernameForUpdate(username)
                 .orElseThrow(() -> new UsernameNotFoundException("사용자를 찾을 수 없습니다: " + username));
     }
 }

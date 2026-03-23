@@ -131,7 +131,7 @@ class NotificationServiceTest {
                 "/posts/1"
         );
 
-        given(userRepository.findByUsername("alice")).willReturn(Optional.of(recipient));
+        given(userRepository.findByUsernameForUpdate("alice")).willReturn(Optional.of(recipient));
         given(userRepository.findUnreadNotificationCountByUsername("alice")).willReturn(Optional.of(3L));
 
         notificationService.storeNotificationAfterCommit(event);
@@ -149,7 +149,7 @@ class NotificationServiceTest {
                 "좋아요!",
                 "/posts/1"
         );
-        given(userRepository.findByUsername("ghost")).willReturn(Optional.empty());
+        given(userRepository.findByUsernameForUpdate("ghost")).willReturn(Optional.empty());
 
         notificationService.storeNotificationAfterCommit(event);
 
@@ -170,7 +170,7 @@ class NotificationServiceTest {
                 .link("/posts/1")
                 .build();
 
-        given(userRepository.findByUsername("alice")).willReturn(Optional.of(user));
+        given(userRepository.findByUsernameForUpdate("alice")).willReturn(Optional.of(user));
         given(userRepository.findUnreadNotificationCountByUsername("alice")).willReturn(Optional.of(0L));
         given(notificationRepository.findByRecipientOrderByCreatedAtDesc(user)).willReturn(List.of(notification));
 

@@ -1,0 +1,21 @@
+spring:
+  datasource:
+    hikari:
+      maximum-pool-size: ${APP_LOAD_TEST_DB_POOL_MAX_SIZE:20}
+      minimum-idle: ${APP_LOAD_TEST_DB_POOL_MIN_IDLE:10}
+      connection-timeout: ${APP_LOAD_TEST_DB_POOL_CONNECTION_TIMEOUT_MS:1000}
+  jpa:
+    show-sql: false
+
+logging:
+  level:
+    org.hibernate.SQL: warn
+    org.hibernate.orm.jdbc.bind: warn
+
+app:
+  load-test:
+    # 문제 해결:
+    # 부하 테스트용 내부 진단 endpoint와 샘플러는 운영 기본 프로필에서 열리면 안 된다.
+    # loadtest 프로필에서만 켜서 k6 계측에 필요한 최소 관측면만 노출한다.
+    enabled: true
+    sampling-interval-ms: ${APP_LOAD_TEST_SAMPLING_INTERVAL_MS:250}
