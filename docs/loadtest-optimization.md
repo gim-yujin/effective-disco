@@ -627,3 +627,102 @@ focused `0.7` 재측정:
 - `0.6` soak 를 새 코드 기준으로 다시 시작한다.
 - `post.list` 와 검색/태그 count 경로에 대해 인덱스/실행계획(`EXPLAIN ANALYZE`, `pg_stat_statements`)을 본다.
 - 필요하면 목록 전용 API 에서 `content` 칼럼 자체를 제외하는 더 얇은 projection 도 검토한다.
+
+## 2026-03-24 `0.6 / 30분` soak 재검증 + PostgreSQL 실행계획 분석
+
+상태: 완료
+
+### 배경
+
+- 앞선 `0.5~0.7` 반복 측정에서는 `0.6` 이 첫 안정 factor 로 나왔지만, 이는 짧은 ramp-up 기준이었다.
+- 목록/검색 projection 최적화 이후에도 실제 장시간 soak 에서 같은 결론이 유지되는지 다시 확인할 필요가 있었다.
+- 동시에 `slowActiveQueries` 가 계속 `post.list` 와 `count(*)` 경로를 가리켰기 때문에, PostgreSQL 실행계획 수준에서 원인을 더 구체적으로 확인해야 했다.
+
+### 실행 결과
+
+장시간 soak:
+
+- 실행 시각: `20260324-073142`
+- artifact: [soak-20260324-073142.md](/home/admin0/effective-disco/loadtest/results/soak-20260324-073142.md)
+- `soak_factor = 0.6`
+- `soak_duration = 30m`
+- `status = FAIL`
+- `http p95 = 979.75ms`
+- `http p99 = 1289.36ms`
+- `unexpected_response_rate = 0.0036`
+- `dbPoolTimeouts = 4752`
+- `maxActiveConnections = 28`
+- `maxThreadsAwaitingConnection = 194`
+- SQL snapshot [soak-20260324-073142-sql.tsv](/home/admin0/effective-disco/loadtest/results/soak-20260324-073142-sql.tsv) 기준 `duplicate row = 0`, `postLike/comment/unread mismatch = 0`
+
+최종 서버 프로파일:
+
+- artifact: [soak-20260324-073142-server.json](/home/admin0/effective-disco/loadtest/results/soak-20260324-073142-server.json)
+- `post.list averageWallTimeMs = 93.75`
+- `post.list averageSqlExecutionTimeMs = 88.67`
+- `post.list averageSqlStatementCount = 4.81`
+- `notification.read-all.summary averageWallTimeMs = 51.42`
+- `notification.store averageWallTimeMs = 12.65`
+- `jwt.auth.load-user.db averageWallTimeMs = 239.48`
+- `jwt.auth.load-user.db averageSqlExecutionTimeMs = 0.68`
+
+PostgreSQL wait 타임라인:
+
+- artifact: [soak-20260324-073142-metrics.jsonl](/home/admin0/effective-disco/loadtest/results/soak-20260324-073142-metrics.jsonl)
+- `max waitingSessions = 9`
+- `max lockWaitingSessions = 7`
+- `max longestQueryMs = 154`
+- `max longestTransactionMs = 225`
+- 상위 wait: `Client/ClientRead`, `Lock/transactionid`, `Lock/tuple`, `IO/WALSync`, `LWLock/WALWrite`
+- 상위 slow query: `post.list`, `board + keyword count(*)`, `tag count(*)`
+
+### PostgreSQL 실행계획 분석
+
+사전 확인:
+
+- `pg_stat_statements` 는 이 로컬 PostgreSQL 에 활성화되어 있지 않았다.
+- `shared_preload_libraries` 가 비어 있었고, `pg_extension` 에도 `pg_stat_statements` 가 없었다.
+- 따라서 이번 분석은 `EXPLAIN (ANALYZE, BUFFERS)` 와 현재 인덱스 상태 기준으로 진행했다.
+
+데이터 규모:
+
+- `posts = 98,692`
+- `post_tags = 203,046`
+- `dev/free/qna` 게시판은 각각 약 `32.8k` row 규모
+
+실행계획 핵심:
+
+- `board + keyword` 목록 본문 query
+  - 실행 시간: 약 `93.7ms`
+  - `idx_post_board_draft` 로 board slice 는 줄였지만, `%keyword%` 필터 때문에 여전히 수만 건을 heap scan/filter 한다.
+  - `created_at desc` 정렬은 인덱스 지원 없이 top-N sort 로 끝난다.
+- `board + keyword count(*)`
+  - 실행 시간: 약 `98.5ms`
+  - explicit `countQuery` 로 query shape 는 개선됐지만, 결국 같은 `posts` 범위를 다시 스캔한다.
+  - 병목은 `users` join fan-out 이 아니라 `title/content` substring filter 자체다.
+- `tag count(*)`
+  - 실행 시간: 약 `71.6ms`
+  - `post_tags` 를 거의 전범위로 읽고 `HashAggregate` 한 뒤 `posts` PK lookup 을 수행한다.
+  - 현재 PK 방향 `(post_id, tag_id)` 만으로는 `tag -> posts` 탐색이 비효율적이다.
+
+인덱스 상태 관찰:
+
+- `posts` 는 `idx_post_board_draft (board_id, draft)` 와 `idx_post_user (user_id)` 정도만 존재한다.
+- `post_tags` 는 PK `(post_id, tag_id)` 만 있고 `tag_id` 선행 인덱스가 없다.
+- 즉 현재 실행계획 기준으로는 아래 두 인덱스가 다음 후보다.
+  - `posts(board_id, draft, created_at desc)`
+  - `post_tags(tag_id, post_id)`
+
+### 해석
+
+- 최신 코드 기준으로는 `0.6` 도 장시간 soak 안정 구간이 아니다.
+- 정합성은 계속 유지됐으므로, 지금 문제는 race condition 이 아니라 `read-heavy query + count(*) + lock/WAL pressure` 가 만든 커넥션 점유 시간이다.
+- `post.list` 는 statement fan-out 은 이미 줄었지만, 이제는 한 번의 SQL 실행 시간 자체가 크다.
+- `jwt.auth.load-user.db` 는 평균 wall time 이 `239ms` 수준이지만 SQL 시간은 `0.68ms` 수준이므로, auth miss 역시 느린 query 가 아니라 커넥션 대기 전파의 결과로 보는 편이 맞다.
+
+### 남은 과제
+
+- `posts(board_id, draft, created_at desc)` 인덱스를 추가해 최신 목록 정렬 비용을 줄인다.
+- `post_tags(tag_id, post_id)` 인덱스를 추가해 태그 count/list 의 full scan 성격을 줄인다.
+- `%keyword%` 검색을 유지할 계획이면 `pg_trgm` 또는 full-text search 방향을 별도로 검토한다.
+- 목록/검색 응답에서 `content` 칼럼이 정말 필요한지 다시 검토한다.

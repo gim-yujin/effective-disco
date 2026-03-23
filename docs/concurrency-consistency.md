@@ -257,6 +257,31 @@
 - 같은 재측정의 `slowActiveQueries` 는 여전히 목록 본문 select 와 `count(p1_0.id)` 검색/태그 count 쿼리를 가리켰다.
 - 결론적으로 이번 변경은 `read query shape 개선`에는 성공했지만, 현재 로컬 환경에서 `0.7` 안정 구간을 확보할 정도의 체감 개선까지는 이어지지 않았다.
 
+## 9차 결과
+
+상태: 완료
+
+검증 날짜:
+
+- 2026-03-24
+
+검증 범위:
+
+- 최신 코드 기준 `0.6 / 30분` soak 재검증
+- mixed scenario 전체 장시간 검증
+- PostgreSQL `wait_event` 타임라인 수집
+- `EXPLAIN ANALYZE` 기반 목록/검색/태그 count query 실행계획 분석
+
+핵심 결론:
+
+- 새 코드 기준 장시간 soak [soak-20260324-073142.md](/home/admin0/effective-disco/loadtest/results/soak-20260324-073142.md) 는 `FAIL` 이었다.
+- `http p95=979.75ms`, `p99=1289.36ms`, `unexpected_response_rate=0.0036`, `dbPoolTimeouts=4752`, `maxActiveConnections=28`, `maxThreadsAwaitingConnection=194` 가 관측됐다.
+- 같은 soak 의 SQL 스냅샷 [soak-20260324-073142-sql.tsv](/home/admin0/effective-disco/loadtest/results/soak-20260324-073142-sql.tsv) 기준 `duplicate row=0`, `postLike/comment/unread mismatch=0` 으로 정합성 불변식은 계속 유지됐다.
+- soak 타임라인 기준 `postgresSnapshot` 최고치는 `waitingSessions=9`, `lockWaitingSessions=7`, `longestQueryMs=154`, `longestTransactionMs=225` 였다.
+- 가장 자주 관측된 wait 는 `Lock/transactionid`, `Lock/tuple`, `IO/WALSync`, `LWLock/WALWrite` 였다.
+- 가장 자주 관측된 느린 query 는 목록 본문 `post.list`, `board + keyword count(*)`, `tag count(*)` 였다.
+- 결론적으로 현재 로컬 환경과 최신 코드 기준으로는 `0.6` 도 더 이상 안정 factor 가 아니며, 먼저 깨지는 것은 정합성이 아니라 DB pool 포화와 read pressure 다.
+
 ## 1차에서 보장한 불변식
 
 ### 관계형 쓰기 경로
