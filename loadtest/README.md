@@ -138,4 +138,10 @@ SCENARIO_PROFILES=browse_board_feed+relation_mixed,search_catalog+relation_mixed
 - `postgresSnapshot.slowActiveQueries`: 현재 장기 실행 query 와 wait event 스냅샷
 - SQL 정합성: `Post.likeCount`, `Post.commentCount`, `User.unreadNotificationCount` 와 실제 row 수 일치 여부
 - 관계 중복: `post_likes`, `bookmarks`, `follows`, `blocks` 의 동일 키 중복 row 여부
-- 병목 프로파일: `comment.create`, `notification.store`, `post.list` 의 벽시계 시간, SQL 실행 시간, SQL 문 수, 트랜잭션 길이
+- 병목 프로파일: `comment.create`, `notification.store`, `post.list`, `post.list.browse.rows`, `post.list.search.rows`, `post.list.tag.rows` 의 벽시계 시간, SQL 실행 시간, SQL 문 수, 트랜잭션 길이
+
+## 현재 API hot path
+
+- browse/search load 는 `/api/posts` page endpoint 가 아니라 `/api/posts/slice` cursor endpoint 를 사용한다.
+- board browse 는 `latest/likes/comments` 정렬을 지원한다.
+- keyword/tag search 는 `latest` 정렬만 지원하며, hot path 에서는 `count(*)` 를 제거한다.

@@ -19,16 +19,28 @@ public class PostScrollResponse {
     @Schema(description = "다음 요청에 전달할 createdAt 커서", nullable = true)
     private final LocalDateTime nextCursorCreatedAt;
 
+    @Schema(description = "좋아요순/댓글순 등 점수 정렬에 사용하는 다음 sortValue 커서", nullable = true, example = "12")
+    private final Long nextCursorSortValue;
+
     @Schema(description = "다음 요청에 전달할 ID 커서", nullable = true, example = "42")
     private final Long nextCursorId;
 
     public PostScrollResponse(List<PostResponse> content,
                               boolean hasNext,
                               LocalDateTime nextCursorCreatedAt,
+                              Long nextCursorSortValue,
                               Long nextCursorId) {
         this.content = List.copyOf(content);
         this.hasNext = hasNext;
         this.nextCursorCreatedAt = nextCursorCreatedAt;
+        this.nextCursorSortValue = nextCursorSortValue;
         this.nextCursorId = nextCursorId;
+    }
+
+    public PostScrollResponse(List<PostResponse> content,
+                              boolean hasNext,
+                              LocalDateTime nextCursorCreatedAt,
+                              Long nextCursorId) {
+        this(content, hasNext, nextCursorCreatedAt, null, nextCursorId);
     }
 }

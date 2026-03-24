@@ -5,6 +5,7 @@ import com.effectivedisco.domain.Post;
 import com.effectivedisco.domain.PostImage;
 import com.effectivedisco.domain.Tag;
 import com.effectivedisco.domain.User;
+import com.effectivedisco.dto.response.PostScrollResponse;
 import com.effectivedisco.dto.response.PostResponse;
 import com.effectivedisco.repository.BoardRepository;
 import com.effectivedisco.repository.PostRepository;
@@ -145,6 +146,50 @@ class PostListOptimizationIntegrationTest {
         assertThat(statistics.getPrepareStatementCount())
                 .as("문제 해결 검증: board+keyword search 는 board lookup + page query + count query + tag/image batch 로 고정되어야 한다")
                 .isLessThanOrEqualTo(5L);
+    }
+
+    @Test
+    void getPostSlice_keywordSearchAvoidsCountQuery() {
+        String tagPrefix = "slice-search";
+        Board board = boardRepository.save(Board.builder()
+                .name("Slice 검색 게시판")
+                .slug("slice-" + tagPrefix)
+                .description("slice 검색 최적화 게시판")
+                .build());
+
+        Tag spring = tagRepository.save(new Tag("spring-" + tagPrefix));
+
+        for (int i = 0; i < 6; i++) {
+            User author = userRepository.save(User.builder()
+                    .username("slice-author" + i)
+                    .email("slice-author" + i + "@example.com")
+                    .password("encoded-password")
+                    .build());
+
+            Post post = Post.builder()
+                    .title("load-slice-post-" + i)
+                    .content("content with load keyword " + i)
+                    .author(author)
+                    .board(board)
+                    .build();
+            post.getTags().add(spring);
+            post.addImage(new PostImage(post, "/slice-images/" + i + ".jpg", 0));
+            postRepository.save(post);
+        }
+
+        entityManager.flush();
+        entityManager.clear();
+        statistics.clear();
+
+        PostScrollResponse result = postService.getPostSlice(5, "load", null, "slice-" + tagPrefix, "latest", null, null, null);
+
+        assertThat(result.getContent()).hasSize(5);
+        assertThat(result.isHasNext()).isTrue();
+        assertThat(result.getNextCursorCreatedAt()).isNotNull();
+        assertThat(result.getNextCursorId()).isNotNull();
+        assertThat(statistics.getPrepareStatementCount())
+                .as("문제 해결 검증: API search slice 는 count(*) 없이 board lookup + rows query + tag/image batch 수준으로 끝나야 한다")
+                .isLessThanOrEqualTo(4L);
     }
 
     @Test

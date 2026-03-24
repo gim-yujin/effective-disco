@@ -3,6 +3,9 @@ package com.effectivedisco.repository;
 import com.effectivedisco.domain.Board;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Slice;
+
+import java.time.LocalDateTime;
 
 /**
  * PostgreSQL 전용 검색 최적화와 테스트용 fallback 을 함께 담는 커스텀 저장소.
@@ -19,4 +22,15 @@ public interface PostRepositoryCustom {
     Page<PostRepository.PostListRow> searchPublicPostListRows(String keyword, Pageable pageable);
 
     Page<PostRepository.PostListRow> searchPublicPostListRowsInBoard(Board board, String keyword, Pageable pageable);
+
+    Slice<PostRepository.PostListRow> searchPublicPostListRowsSlice(String keyword,
+                                                                    Pageable pageable,
+                                                                    LocalDateTime cursorCreatedAt,
+                                                                    Long cursorId);
+
+    Slice<PostRepository.PostListRow> searchPublicPostListRowsInBoardSlice(Board board,
+                                                                           String keyword,
+                                                                           Pageable pageable,
+                                                                           LocalDateTime cursorCreatedAt,
+                                                                           Long cursorId);
 }

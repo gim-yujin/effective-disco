@@ -90,6 +90,38 @@ public class PostController {
         ));
     }
 
+    @Operation(summary = "API browse/search slice 조회",
+               description = "browse/search hot path 전용 count-less cursor API입니다. " +
+                             "board browse(latest/likes/comments) 와 keyword/tag search(latest) 를 지원합니다.")
+    @ApiResponses({
+        @ApiResponse(responseCode = "200", description = "slice 조회 성공"),
+        @ApiResponse(responseCode = "400", description = "잘못된 cursor 또는 지원하지 않는 조합")
+    })
+    @GetMapping("/slice")
+    public ResponseEntity<PostScrollResponse> getPostSlice(
+            @Parameter(description = "페이지 크기", example = "20")
+            @RequestParam(defaultValue = "20") int size,
+            @Parameter(description = "키워드 검색어")
+            @RequestParam(required = false) String keyword,
+            @Parameter(description = "태그 이름으로 필터링")
+            @RequestParam(required = false) String tag,
+            @Parameter(description = "게시판 슬러그로 필터링 (예: free, dev)")
+            @RequestParam(required = false) String boardSlug,
+            @Parameter(description = "정렬 기준: latest | likes | comments")
+            @RequestParam(defaultValue = "latest") String sort,
+            @Parameter(description = "다음 배치를 위한 createdAt 커서")
+            @RequestParam(required = false)
+            @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME)
+            LocalDateTime cursorCreatedAt,
+            @Parameter(description = "좋아요순/댓글순에서 사용하는 다음 sortValue 커서")
+            @RequestParam(required = false) Long cursorSortValue,
+            @Parameter(description = "다음 배치를 위한 ID 커서")
+            @RequestParam(required = false) Long cursorId) {
+        return ResponseEntity.ok(postService.getPostSlice(
+                size, keyword, tag, boardSlug, sort, cursorCreatedAt, cursorSortValue, cursorId
+        ));
+    }
+
     @Operation(summary = "게시물 단건 조회",
                description = "조회 시마다 viewCount 가 1 증가합니다. " +
                              "웹 UI(/posts/{id})는 세션 기반 중복 방지가 적용되지만 REST API는 stateless이므로 " +

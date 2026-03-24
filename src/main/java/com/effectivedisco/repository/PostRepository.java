@@ -137,6 +137,71 @@ public interface PostRepository extends JpaRepository<Post, Long>, PostRepositor
             """)
     Page<PostListRow> findPublicPostListRowsByTagName(@Param("tagName") String tagName, Pageable pageable);
 
+    @Query("""
+            SELECT
+                p.id AS id,
+                p.title AS title,
+                '' AS content,
+                p.createdAt AS createdAt,
+                p.updatedAt AS updatedAt,
+                p.commentCount AS commentCount,
+                p.likeCount AS likeCount,
+                p.viewCount AS viewCount,
+                p.pinned AS pinned,
+                p.draft AS draft,
+                p.imageUrl AS legacyImageUrl,
+                a.username AS authorUsername,
+                b.name AS boardName,
+                b.slug AS boardSlug
+            FROM Post p
+            JOIN p.author a
+            LEFT JOIN p.board b
+            WHERE p.draft = false
+              AND EXISTS (
+                SELECT 1
+                FROM p.tags t
+                WHERE t.name = :tagName
+              )
+            ORDER BY p.createdAt DESC, p.id DESC
+            """)
+    Slice<PostListRow> findScrollPostListRowsByTagName(@Param("tagName") String tagName, Pageable pageable);
+
+    @Query("""
+            SELECT
+                p.id AS id,
+                p.title AS title,
+                '' AS content,
+                p.createdAt AS createdAt,
+                p.updatedAt AS updatedAt,
+                p.commentCount AS commentCount,
+                p.likeCount AS likeCount,
+                p.viewCount AS viewCount,
+                p.pinned AS pinned,
+                p.draft AS draft,
+                p.imageUrl AS legacyImageUrl,
+                a.username AS authorUsername,
+                b.name AS boardName,
+                b.slug AS boardSlug
+            FROM Post p
+            JOIN p.author a
+            LEFT JOIN p.board b
+            WHERE p.draft = false
+              AND EXISTS (
+                SELECT 1
+                FROM p.tags t
+                WHERE t.name = :tagName
+              )
+              AND (
+                p.createdAt < :cursorCreatedAt
+                OR (p.createdAt = :cursorCreatedAt AND p.id < :cursorId)
+              )
+            ORDER BY p.createdAt DESC, p.id DESC
+            """)
+    Slice<PostListRow> findScrollPostListRowsByTagNameAndCreatedAtBefore(@Param("tagName") String tagName,
+                                                                         @Param("cursorCreatedAt") LocalDateTime cursorCreatedAt,
+                                                                         @Param("cursorId") Long cursorId,
+                                                                         Pageable pageable);
+
     @Query(value = """
             SELECT
                 p.id AS id,
@@ -338,6 +403,76 @@ public interface PostRepository extends JpaRepository<Post, Long>, PostRepositor
                                                               @Param("tagName") String tagName,
                                                               Pageable pageable);
 
+    @Query("""
+            SELECT
+                p.id AS id,
+                p.title AS title,
+                '' AS content,
+                p.createdAt AS createdAt,
+                p.updatedAt AS updatedAt,
+                p.commentCount AS commentCount,
+                p.likeCount AS likeCount,
+                p.viewCount AS viewCount,
+                p.pinned AS pinned,
+                p.draft AS draft,
+                p.imageUrl AS legacyImageUrl,
+                a.username AS authorUsername,
+                b.name AS boardName,
+                b.slug AS boardSlug
+            FROM Post p
+            JOIN p.author a
+            LEFT JOIN p.board b
+            WHERE p.board = :board
+              AND p.draft = false
+              AND EXISTS (
+                SELECT 1
+                FROM p.tags t
+                WHERE t.name = :tagName
+              )
+            ORDER BY p.createdAt DESC, p.id DESC
+            """)
+    Slice<PostListRow> findScrollPostListRowsByBoardAndTagName(@Param("board") Board board,
+                                                               @Param("tagName") String tagName,
+                                                               Pageable pageable);
+
+    @Query("""
+            SELECT
+                p.id AS id,
+                p.title AS title,
+                '' AS content,
+                p.createdAt AS createdAt,
+                p.updatedAt AS updatedAt,
+                p.commentCount AS commentCount,
+                p.likeCount AS likeCount,
+                p.viewCount AS viewCount,
+                p.pinned AS pinned,
+                p.draft AS draft,
+                p.imageUrl AS legacyImageUrl,
+                a.username AS authorUsername,
+                b.name AS boardName,
+                b.slug AS boardSlug
+            FROM Post p
+            JOIN p.author a
+            LEFT JOIN p.board b
+            WHERE p.board = :board
+              AND p.draft = false
+              AND EXISTS (
+                SELECT 1
+                FROM p.tags t
+                WHERE t.name = :tagName
+              )
+              AND (
+                p.createdAt < :cursorCreatedAt
+                OR (p.createdAt = :cursorCreatedAt AND p.id < :cursorId)
+              )
+            ORDER BY p.createdAt DESC, p.id DESC
+            """)
+    Slice<PostListRow> findScrollPostListRowsByBoardAndTagNameAndCreatedAtBefore(@Param("board") Board board,
+                                                                                  @Param("tagName") String tagName,
+                                                                                  @Param("cursorCreatedAt") LocalDateTime cursorCreatedAt,
+                                                                                  @Param("cursorId") Long cursorId,
+                                                                                  Pageable pageable);
+
     @Query(value = """
             SELECT
                 p.id AS id,
@@ -427,6 +562,70 @@ public interface PostRepository extends JpaRepository<Post, Long>, PostRepositor
             """)
     Page<PostListRow> findPostListRowsByBoardOrderByLikeCountDesc(@Param("board") Board board, Pageable pageable);
 
+    @Query("""
+            SELECT
+                p.id AS id,
+                p.title AS title,
+                '' AS content,
+                p.createdAt AS createdAt,
+                p.updatedAt AS updatedAt,
+                p.commentCount AS commentCount,
+                p.likeCount AS likeCount,
+                p.viewCount AS viewCount,
+                p.pinned AS pinned,
+                p.draft AS draft,
+                p.imageUrl AS legacyImageUrl,
+                a.username AS authorUsername,
+                b.name AS boardName,
+                b.slug AS boardSlug
+            FROM Post p
+            JOIN p.author a
+            LEFT JOIN p.board b
+            WHERE p.board = :board
+              AND p.draft = false
+            ORDER BY p.likeCount DESC, p.createdAt DESC, p.id DESC
+            """)
+    Slice<PostListRow> findScrollPostListRowsByBoardOrderByLikeCountDesc(@Param("board") Board board, Pageable pageable);
+
+    @Query("""
+            SELECT
+                p.id AS id,
+                p.title AS title,
+                '' AS content,
+                p.createdAt AS createdAt,
+                p.updatedAt AS updatedAt,
+                p.commentCount AS commentCount,
+                p.likeCount AS likeCount,
+                p.viewCount AS viewCount,
+                p.pinned AS pinned,
+                p.draft AS draft,
+                p.imageUrl AS legacyImageUrl,
+                a.username AS authorUsername,
+                b.name AS boardName,
+                b.slug AS boardSlug
+            FROM Post p
+            JOIN p.author a
+            LEFT JOIN p.board b
+            WHERE p.board = :board
+              AND p.draft = false
+              AND (
+                p.likeCount < :cursorSortValue
+                OR (
+                    p.likeCount = :cursorSortValue
+                    AND (
+                        p.createdAt < :cursorCreatedAt
+                        OR (p.createdAt = :cursorCreatedAt AND p.id < :cursorId)
+                    )
+                )
+              )
+            ORDER BY p.likeCount DESC, p.createdAt DESC, p.id DESC
+            """)
+    Slice<PostListRow> findScrollPostListRowsByBoardAndLikeCountAfter(@Param("board") Board board,
+                                                                      @Param("cursorSortValue") Long cursorSortValue,
+                                                                      @Param("cursorCreatedAt") LocalDateTime cursorCreatedAt,
+                                                                      @Param("cursorId") Long cursorId,
+                                                                      Pageable pageable);
+
     @Query(value = """
             SELECT
                 p.id AS id,
@@ -457,6 +656,70 @@ public interface PostRepository extends JpaRepository<Post, Long>, PostRepositor
               AND p.draft = false
             """)
     Page<PostListRow> findPostListRowsByBoardOrderByCommentCountDesc(@Param("board") Board board, Pageable pageable);
+
+    @Query("""
+            SELECT
+                p.id AS id,
+                p.title AS title,
+                '' AS content,
+                p.createdAt AS createdAt,
+                p.updatedAt AS updatedAt,
+                p.commentCount AS commentCount,
+                p.likeCount AS likeCount,
+                p.viewCount AS viewCount,
+                p.pinned AS pinned,
+                p.draft AS draft,
+                p.imageUrl AS legacyImageUrl,
+                a.username AS authorUsername,
+                b.name AS boardName,
+                b.slug AS boardSlug
+            FROM Post p
+            JOIN p.author a
+            LEFT JOIN p.board b
+            WHERE p.board = :board
+              AND p.draft = false
+            ORDER BY p.commentCount DESC, p.createdAt DESC, p.id DESC
+            """)
+    Slice<PostListRow> findScrollPostListRowsByBoardOrderByCommentCountDesc(@Param("board") Board board, Pageable pageable);
+
+    @Query("""
+            SELECT
+                p.id AS id,
+                p.title AS title,
+                '' AS content,
+                p.createdAt AS createdAt,
+                p.updatedAt AS updatedAt,
+                p.commentCount AS commentCount,
+                p.likeCount AS likeCount,
+                p.viewCount AS viewCount,
+                p.pinned AS pinned,
+                p.draft AS draft,
+                p.imageUrl AS legacyImageUrl,
+                a.username AS authorUsername,
+                b.name AS boardName,
+                b.slug AS boardSlug
+            FROM Post p
+            JOIN p.author a
+            LEFT JOIN p.board b
+            WHERE p.board = :board
+              AND p.draft = false
+              AND (
+                p.commentCount < :cursorSortValue
+                OR (
+                    p.commentCount = :cursorSortValue
+                    AND (
+                        p.createdAt < :cursorCreatedAt
+                        OR (p.createdAt = :cursorCreatedAt AND p.id < :cursorId)
+                    )
+                )
+              )
+            ORDER BY p.commentCount DESC, p.createdAt DESC, p.id DESC
+            """)
+    Slice<PostListRow> findScrollPostListRowsByBoardAndCommentCountAfter(@Param("board") Board board,
+                                                                         @Param("cursorSortValue") Long cursorSortValue,
+                                                                         @Param("cursorCreatedAt") LocalDateTime cursorCreatedAt,
+                                                                         @Param("cursorId") Long cursorId,
+                                                                         Pageable pageable);
 
     /**
      * 문제 해결:

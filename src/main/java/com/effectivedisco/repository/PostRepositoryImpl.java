@@ -6,6 +6,8 @@ import jakarta.persistence.Query;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Slice;
+import org.springframework.data.domain.SliceImpl;
 import org.springframework.jdbc.core.ConnectionCallback;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Repository;
@@ -40,8 +42,10 @@ public class PostRepositoryImpl implements PostRepositoryCustom {
 
     private static final String POSTGRES_GLOBAL_KEYWORD_SQL = createPostgresKeywordContentSql(false);
     private static final String POSTGRES_GLOBAL_KEYWORD_COUNT_SQL = createPostgresKeywordCountSql(false);
+    private static final String POSTGRES_GLOBAL_KEYWORD_SLICE_SQL = createPostgresKeywordSliceSql(false);
     private static final String POSTGRES_BOARD_KEYWORD_SQL = createPostgresKeywordContentSql(true);
     private static final String POSTGRES_BOARD_KEYWORD_COUNT_SQL = createPostgresKeywordCountSql(true);
+    private static final String POSTGRES_BOARD_KEYWORD_SLICE_SQL = createPostgresKeywordSliceSql(true);
     private static final String FALLBACK_GLOBAL_KEYWORD_SQL = """
             SELECT
                 p.id,
@@ -69,6 +73,7 @@ public class PostRepositoryImpl implements PostRepositoryCustom {
               )
             ORDER BY p.created_at DESC
             """;
+    private static final String FALLBACK_GLOBAL_KEYWORD_SLICE_SQL = createFallbackKeywordSliceSql(false);
 
     private static final String FALLBACK_GLOBAL_KEYWORD_COUNT_SQL = """
             SELECT COUNT(*)
@@ -109,6 +114,7 @@ public class PostRepositoryImpl implements PostRepositoryCustom {
               )
             ORDER BY p.created_at DESC
             """;
+    private static final String FALLBACK_BOARD_KEYWORD_SLICE_SQL = createFallbackKeywordSliceSql(true);
     private static final String FALLBACK_BOARD_KEYWORD_COUNT_SQL = """
             SELECT COUNT(*)
             FROM posts p
@@ -185,6 +191,82 @@ public class PostRepositoryImpl implements PostRepositoryCustom {
                 """;
     }
 
+    private static String createPostgresKeywordSliceSql(boolean boardSearch) {
+        String boardPredicate = boardSearch ? "AND p.board_id = :boardId" : "";
+        String idUnion = """
+                WITH matched_post_ids AS (
+                    %s
+                    UNION
+                    %s
+                )
+                """.formatted(
+                POSTGRES_FTS_POST_ID_BRANCH.formatted(boardPredicate),
+                POSTGRES_USERNAME_POST_ID_BRANCH.formatted(boardPredicate)
+        );
+        return idUnion + """
+                SELECT
+                    p.id,
+                    p.title,
+                    '' AS content,
+                    p.created_at,
+                    p.updated_at,
+                    p.comment_count,
+                    p.like_count,
+                    p.view_count,
+                    p.pinned,
+                    p.draft,
+                    p.image_url,
+                    a.username,
+                    b.name,
+                    b.slug
+                FROM matched_post_ids m
+                JOIN posts p ON p.id = m.id
+                JOIN users a ON a.id = p.user_id
+                LEFT JOIN boards b ON b.id = p.board_id
+                WHERE (
+                    p.created_at < :cursorCreatedAt
+                    OR (p.created_at = :cursorCreatedAt AND p.id < :cursorId)
+                )
+                ORDER BY p.created_at DESC, p.id DESC
+                """;
+    }
+
+    private static String createFallbackKeywordSliceSql(boolean boardSearch) {
+        String boardPredicate = boardSearch ? "AND p.board_id = :boardId" : "";
+        return """
+                SELECT
+                    p.id,
+                    p.title,
+                    '' AS content,
+                    p.created_at,
+                    p.updated_at,
+                    p.comment_count,
+                    p.like_count,
+                    p.view_count,
+                    p.pinned,
+                    p.draft,
+                    p.image_url,
+                    a.username,
+                    b.name,
+                    b.slug
+                FROM posts p
+                JOIN users a ON a.id = p.user_id
+                LEFT JOIN boards b ON b.id = p.board_id
+                WHERE p.draft = false
+                  %s
+                  AND (
+                    lower(p.title) LIKE concat('%%', lower(:keyword), '%%')
+                    OR lower(p.content) LIKE concat('%%', lower(:keyword), '%%')
+                    OR lower(a.username) LIKE concat('%%', lower(:keyword), '%%')
+                  )
+                  AND (
+                    p.created_at < :cursorCreatedAt
+                    OR (p.created_at = :cursorCreatedAt AND p.id < :cursorId)
+                  )
+                ORDER BY p.created_at DESC, p.id DESC
+                """.formatted(boardPredicate);
+    }
+
     @Override
     public Page<PostRepository.PostListRow> searchPublicPostListRows(String keyword, Pageable pageable) {
         return executeKeywordSearch(keyword, pageable, null);
@@ -195,6 +277,23 @@ public class PostRepositoryImpl implements PostRepositoryCustom {
                                                                             String keyword,
                                                                             Pageable pageable) {
         return executeKeywordSearch(keyword, pageable, board.getId());
+    }
+
+    @Override
+    public Slice<PostRepository.PostListRow> searchPublicPostListRowsSlice(String keyword,
+                                                                           Pageable pageable,
+                                                                           LocalDateTime cursorCreatedAt,
+                                                                           Long cursorId) {
+        return executeKeywordSlice(keyword, pageable, null, cursorCreatedAt, cursorId);
+    }
+
+    @Override
+    public Slice<PostRepository.PostListRow> searchPublicPostListRowsInBoardSlice(Board board,
+                                                                                  String keyword,
+                                                                                  Pageable pageable,
+                                                                                  LocalDateTime cursorCreatedAt,
+                                                                                  Long cursorId) {
+        return executeKeywordSlice(keyword, pageable, board.getId(), cursorCreatedAt, cursorId);
     }
 
     private Page<PostRepository.PostListRow> executeKeywordSearch(String rawKeyword,
@@ -229,6 +328,33 @@ public class PostRepositoryImpl implements PostRepositoryCustom {
         return new PageImpl<>(content, pageable, total.longValue());
     }
 
+    private Slice<PostRepository.PostListRow> executeKeywordSlice(String rawKeyword,
+                                                                  Pageable pageable,
+                                                                  Long boardId,
+                                                                  LocalDateTime cursorCreatedAt,
+                                                                  Long cursorId) {
+        String keyword = rawKeyword == null ? "" : rawKeyword.trim();
+        SearchSqlSet sqlSet = selectSliceSqlSet(boardId != null, isPostgresDatabase());
+
+        Query contentQuery = entityManager.createNativeQuery(sqlSet.contentSql());
+        bindParameters(contentQuery, keyword, boardId);
+        contentQuery.setParameter("cursorCreatedAt", Timestamp.valueOf(cursorCreatedAt));
+        contentQuery.setParameter("cursorId", cursorId);
+        int batchSize = pageable.isPaged() ? pageable.getPageSize() : 20;
+        contentQuery.setMaxResults(batchSize + 1);
+
+        @SuppressWarnings("unchecked")
+        List<Object[]> rows = contentQuery.getResultList();
+        boolean hasNext = rows.size() > batchSize;
+        if (hasNext) {
+            rows = rows.subList(0, batchSize);
+        }
+        List<PostRepository.PostListRow> content = rows.stream()
+                .map(this::mapPostListRow)
+                .toList();
+        return new SliceImpl<>(content, pageable, hasNext);
+    }
+
     private void bindParameters(Query query, String keyword, Long boardId) {
         query.setParameter("keyword", keyword);
         if (boardId != null) {
@@ -245,6 +371,17 @@ public class PostRepositoryImpl implements PostRepositoryCustom {
         return boardSearch
                 ? new SearchSqlSet(FALLBACK_BOARD_KEYWORD_SQL, FALLBACK_BOARD_KEYWORD_COUNT_SQL)
                 : new SearchSqlSet(FALLBACK_GLOBAL_KEYWORD_SQL, FALLBACK_GLOBAL_KEYWORD_COUNT_SQL);
+    }
+
+    private SearchSqlSet selectSliceSqlSet(boolean boardSearch, boolean postgres) {
+        if (postgres) {
+            return boardSearch
+                    ? new SearchSqlSet(POSTGRES_BOARD_KEYWORD_SLICE_SQL, "")
+                    : new SearchSqlSet(POSTGRES_GLOBAL_KEYWORD_SLICE_SQL, "");
+        }
+        return boardSearch
+                ? new SearchSqlSet(FALLBACK_BOARD_KEYWORD_SLICE_SQL, "")
+                : new SearchSqlSet(FALLBACK_GLOBAL_KEYWORD_SLICE_SQL, "");
     }
 
     private boolean isPostgresDatabase() {

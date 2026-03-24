@@ -147,8 +147,59 @@ public class PostService {
         );
 
         List<PostResponse> content = toPostResponseProjectionList(slice.getContent());
-        PostScrollCursor nextCursor = resolveNextScrollCursor(slice);
-        return new PostScrollResponse(content, slice.hasNext(), nextCursor.createdAt(), nextCursor.id());
+        PostScrollCursor nextCursor = resolveNextScrollCursor(slice, sortKey);
+        return new PostScrollResponse(content, slice.hasNext(), nextCursor.createdAt(), nextCursor.sortValue(), nextCursor.id());
+    }
+
+    @Transactional(readOnly = true)
+    public PostScrollResponse getPostSlice(int size,
+                                           String keyword,
+                                           String tag,
+                                           String boardSlug,
+                                           String sort,
+                                           LocalDateTime cursorCreatedAt,
+                                           Long cursorSortValue,
+                                           Long cursorId) {
+        String sortKey = (sort != null) ? sort.trim().toLowerCase() : "latest";
+        if ((cursorCreatedAt == null) != (cursorId == null)) {
+            throw new IllegalArgumentException("cursorCreatedAt 과 cursorId 는 함께 전달해야 합니다.");
+        }
+        if (requiresRankedCursor(sortKey) && cursorId != null && cursorSortValue == null) {
+            throw new IllegalArgumentException("좋아요순/댓글순 cursor 요청에는 cursorSortValue 가 필요합니다.");
+        }
+        if ((keyword != null && !keyword.isBlank()) || (tag != null && !tag.isBlank())) {
+            if (!"latest".equals(sortKey)) {
+                throw new IllegalArgumentException("키워드/태그 검색 slice 는 latest 정렬만 지원합니다.");
+            }
+        }
+
+        Board board = null;
+        if (boardSlug != null && !boardSlug.isBlank()) {
+            board = boardRepository.findBySlug(boardSlug)
+                    .orElseThrow(() -> new IllegalArgumentException("존재하지 않는 게시판: " + boardSlug));
+        }
+        if (board == null
+                && (keyword == null || keyword.isBlank())
+                && (tag == null || tag.isBlank())) {
+            throw new IllegalArgumentException("slice API 는 boardSlug 또는 keyword/tag 가 필요합니다.");
+        }
+
+        int pageSize = Math.max(1, Math.min(size, 50));
+        Pageable limit = PageRequest.of(0, pageSize);
+        Slice<PostRepository.PostListRow> slice = loadApiSlice(
+                board,
+                limit,
+                keyword,
+                tag,
+                sortKey,
+                cursorCreatedAt,
+                cursorSortValue,
+                cursorId
+        );
+
+        List<PostResponse> content = toPostResponseProjectionList(slice.getContent());
+        PostScrollCursor nextCursor = resolveNextScrollCursor(slice, sortKey);
+        return new PostScrollResponse(content, slice.hasNext(), nextCursor.createdAt(), nextCursor.sortValue(), nextCursor.id());
     }
 
     /**
@@ -459,12 +510,124 @@ public class PostService {
                 );
     }
 
-    private PostScrollCursor resolveNextScrollCursor(Slice<PostRepository.PostListRow> slice) {
+    private Slice<PostRepository.PostListRow> loadApiSlice(Board board,
+                                                           Pageable limit,
+                                                           String keyword,
+                                                           String tag,
+                                                           String sortKey,
+                                                           LocalDateTime cursorCreatedAt,
+                                                           Long cursorSortValue,
+                                                           Long cursorId) {
+        if (tag != null && !tag.isBlank()) {
+            return loadTagSlice(board, tag, limit, cursorCreatedAt, cursorId);
+        }
+        if (keyword != null && !keyword.isBlank()) {
+            return loadSearchSlice(board, keyword, limit, cursorCreatedAt, cursorId);
+        }
+        if (board == null) {
+            throw new IllegalArgumentException("게시판 browse slice 에는 boardSlug 가 필요합니다.");
+        }
+        return loadBrowseSlice(board, limit, sortKey, cursorCreatedAt, cursorSortValue, cursorId);
+    }
+
+    private Slice<PostRepository.PostListRow> loadBrowseSlice(Board board,
+                                                              Pageable limit,
+                                                              String sortKey,
+                                                              LocalDateTime cursorCreatedAt,
+                                                              Long cursorSortValue,
+                                                              Long cursorId) {
+        // 문제 해결:
+        // broad mixed 최소 재현 조합에서는 browse feed 와 search 가 같이 돌 때만 pool timeout 이 커졌다.
+        // browse 전용 slice 를 분리 profile 로 남기면 "feed rows" 가 먼저 비싸지는지,
+        // search rows 가 먼저 비싸지는지를 같은 부하에서 분리해서 볼 수 있다.
+        return loadTestStepProfiler.profile(
+                "post.list.browse.rows",
+                false,
+                () -> switch (sortKey) {
+                    case "likes" -> loadRankedBrowseSlice(board, limit, cursorCreatedAt, cursorSortValue, cursorId, true);
+                    case "comments" -> loadRankedBrowseSlice(board, limit, cursorCreatedAt, cursorSortValue, cursorId, false);
+                    default -> loadBoardScrollSlice(board, limit, cursorCreatedAt, cursorId, Set.of());
+                }
+        );
+    }
+
+    private Slice<PostRepository.PostListRow> loadRankedBrowseSlice(Board board,
+                                                                    Pageable limit,
+                                                                    LocalDateTime cursorCreatedAt,
+                                                                    Long cursorSortValue,
+                                                                    Long cursorId,
+                                                                    boolean likesSort) {
+        if (cursorCreatedAt == null || cursorId == null || cursorSortValue == null) {
+            return likesSort
+                    ? postRepository.findScrollPostListRowsByBoardOrderByLikeCountDesc(board, limit)
+                    : postRepository.findScrollPostListRowsByBoardOrderByCommentCountDesc(board, limit);
+        }
+        return likesSort
+                ? postRepository.findScrollPostListRowsByBoardAndLikeCountAfter(board, cursorSortValue, cursorCreatedAt, cursorId, limit)
+                : postRepository.findScrollPostListRowsByBoardAndCommentCountAfter(board, cursorSortValue, cursorCreatedAt, cursorId, limit);
+    }
+
+    private Slice<PostRepository.PostListRow> loadSearchSlice(Board board,
+                                                              String keyword,
+                                                              Pageable limit,
+                                                              LocalDateTime cursorCreatedAt,
+                                                              Long cursorId) {
+        // 문제 해결:
+        // API search hot path 는 기존 Page 에서 count(*) 를 같이 치며 `post.list` 하나로만 묶여 있었다.
+        // search rows 를 별도 slice profile 로 분리하면 search query 자체가 비싼지,
+        // browse feed 와 겹칠 때만 비싸지는지를 숫자로 구분할 수 있다.
+        LocalDateTime effectiveCursorCreatedAt = cursorCreatedAt != null
+                ? cursorCreatedAt
+                : LocalDateTime.of(9999, 12, 31, 23, 59, 59, 999_999_999);
+        Long effectiveCursorId = cursorId != null ? cursorId : Long.MAX_VALUE;
+        return loadTestStepProfiler.profile(
+                "post.list.search.rows",
+                false,
+                () -> board == null
+                        ? postRepository.searchPublicPostListRowsSlice(keyword, limit, effectiveCursorCreatedAt, effectiveCursorId)
+                        : postRepository.searchPublicPostListRowsInBoardSlice(board, keyword, limit, effectiveCursorCreatedAt, effectiveCursorId)
+        );
+    }
+
+    private Slice<PostRepository.PostListRow> loadTagSlice(Board board,
+                                                           String tag,
+                                                           Pageable limit,
+                                                           LocalDateTime cursorCreatedAt,
+                                                           Long cursorId) {
+        // 문제 해결:
+        // tag filter 도 browse/search 와 같은 목록 hot path 인데, 별도 profile 이 없으면
+        // broad mixed 에서 keyword search 와 tag search 중 무엇이 먼저 느려지는지 구분할 수 없다.
+        return loadTestStepProfiler.profile(
+                "post.list.tag.rows",
+                false,
+                () -> {
+                    if (cursorCreatedAt == null || cursorId == null) {
+                        return board == null
+                                ? postRepository.findScrollPostListRowsByTagName(tag, limit)
+                                : postRepository.findScrollPostListRowsByBoardAndTagName(board, tag, limit);
+                    }
+                    return board == null
+                            ? postRepository.findScrollPostListRowsByTagNameAndCreatedAtBefore(tag, cursorCreatedAt, cursorId, limit)
+                            : postRepository.findScrollPostListRowsByBoardAndTagNameAndCreatedAtBefore(board, tag, cursorCreatedAt, cursorId, limit);
+                }
+        );
+    }
+
+    private boolean requiresRankedCursor(String sortKey) {
+        return "likes".equals(sortKey) || "comments".equals(sortKey);
+    }
+
+    private PostScrollCursor resolveNextScrollCursor(Slice<PostRepository.PostListRow> slice, String sortKey) {
         if (slice.isEmpty()) {
-            return new PostScrollCursor(null, null);
+            return new PostScrollCursor(null, null, null);
         }
         PostRepository.PostListRow last = slice.getContent().get(slice.getNumberOfElements() - 1);
-        return new PostScrollCursor(last.getCreatedAt(), last.getId());
+        Long sortValue = switch (sortKey) {
+            case "likes" -> last.getLikeCount();
+            case "comments" -> (long) last.getCommentCount();
+            default -> null;
+        };
+        return new PostScrollCursor(last.getCreatedAt(), sortValue, last.getId());
     }
 
     private void preloadListRelations(List<Post> posts) {

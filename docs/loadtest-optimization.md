@@ -1533,3 +1533,54 @@ run detail 핵심:
 - `browse_board_feed + search_catalog + like_mixed` 조합에서 `post.list` query shape 를 더 줄일 수 있는지 점검
 - 필요하면 search count/query 와 feed list query 를 더 분리 계측
 - 같은 조합 재측정 후 `dbPoolTimeouts`, `post.list averageSqlExecutionTimeMs`, `longestQueryMs` 감소 여부 확인
+
+## 2026-03-25 post.list 세분화 계측 + API browse/search slice 전환
+
+상태: 구현 완료
+
+### 배경
+
+- 이전 단계까지의 결론은 `browse_board_feed + search_catalog + like_mixed` 에서 `post.list` 가 먼저 커진다는 것이었다.
+- 하지만 `post.list` 하나만으로는 `feed rows`, `search rows`, `tag rows`, `search count(*)` 중 무엇이 먼저 비싸지는지 분리되지 않았다.
+- 동시에 loadtest 의 API browse/search 경로는 여전히 `/api/posts?page=...` 를 통해 `Page` 기반으로 동작해, hot path 에서 계속 `count(*)` 를 동반하고 있었다.
+
+### 구현
+
+- [PostService.java](/home/admin0/effective-disco/src/main/java/com/effectivedisco/service/PostService.java)
+  - `post.list.browse.rows`
+  - `post.list.search.rows`
+  - `post.list.tag.rows`
+  로 profile 을 직접 분리했다.
+- [PostController.java](/home/admin0/effective-disco/src/main/java/com/effectivedisco/controller/PostController.java)
+  - 새 API `GET /api/posts/slice` 를 추가했다.
+  - board browse(`latest/likes/comments`) 와 keyword/tag search 를 `cursor/slice` 로 조회한다.
+- [PostRepositoryImpl.java](/home/admin0/effective-disco/src/main/java/com/effectivedisco/repository/PostRepositoryImpl.java)
+  - keyword search native SQL 에 `Slice` 전용 경로를 추가했다.
+  - API hot path 에서는 `count(*)` 를 제거하고 rows query 만 수행한다.
+- [PostRepository.java](/home/admin0/effective-disco/src/main/java/com/effectivedisco/repository/PostRepository.java)
+  - board `likes/comments` browse 와 tag filter 에 대해 `Slice` 전용 query 를 추가했다.
+- [PostScrollResponse.java](/home/admin0/effective-disco/src/main/java/com/effectivedisco/dto/response/PostScrollResponse.java)
+  - `nextCursorSortValue` 를 추가해 좋아요순/댓글순도 같은 cursor 응답 형식으로 다룰 수 있게 했다.
+- [bbs-load.js](/home/admin0/effective-disco/loadtest/k6/bbs-load.js)
+  - `browse_board_feed`, `search_catalog` 시나리오가 `/api/posts/slice` 를 사용하도록 바꿨다.
+
+### 문제 해결
+
+- browse/search API hot path 에서 `count(*)` 를 제거했다.
+- `post.list` 를 한 덩어리로 보지 않고 `browse/search/tag` rows 로 분리해 다음 측정에서 원인을 더 바로 읽을 수 있게 했다.
+- web 전용 `/boards/{slug}/scroll` 경로는 그대로 두고, loadtest 와 REST hot path 만 새 slice API 로 옮겨 영향 범위를 좁혔다.
+
+### 검증
+
+- targeted Gradle 테스트 통과:
+  - `PostControllerTest`
+  - `PostListOptimizationIntegrationTest`
+  - `PostServiceTest`
+- `k6 archive loadtest/k6/bbs-load.js -O /tmp/bbs-load.tar` 통과
+- 특히 [PostListOptimizationIntegrationTest.java](/home/admin0/effective-disco/src/test/java/com/effectivedisco/service/PostListOptimizationIntegrationTest.java) 에서 keyword search slice 가 `count(*)` 없이 bounded statement count 로 끝나는지 검증했다.
+
+### 다음 액션
+
+- 새 hot path 기준으로 `browse_board_feed + search_catalog + like_mixed` short soak 재측정
+- `post.list.browse.rows`, `post.list.search.rows`, `post.list.tag.rows` 중 어느 profile 이 먼저 커지는지 확인
+- 그 결과에 따라 feed list query 또는 search rows query 를 다음 최적화 대상으로 확정

@@ -132,6 +132,54 @@ class PostControllerTest {
     }
 
     @Test
+    void getPostSlice_keywordSearch_returnsCursorBatchWithoutPageMetadata() throws Exception {
+        Board board = boardRepository.save(Board.builder()
+                .name("검색 게시판")
+                .slug("api-search-board")
+                .build());
+        postRepository.save(Post.builder().title("load post 1").content("content").author(testUser).board(board).build());
+        postRepository.save(Post.builder().title("load post 2").content("content").author(testUser).board(board).build());
+        postRepository.save(Post.builder().title("other post").content("content").author(testUser).board(board).build());
+
+        mockMvc.perform(get("/api/posts/slice")
+                        .param("boardSlug", "api-search-board")
+                        .param("keyword", "load")
+                        .param("size", "1"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.content.length()").value(1))
+                .andExpect(jsonPath("$.hasNext").value(true))
+                .andExpect(jsonPath("$.nextCursorCreatedAt").isNotEmpty())
+                .andExpect(jsonPath("$.nextCursorId").isNumber());
+    }
+
+    @Test
+    void getPostSlice_rankedBrowse_returnsSortCursor() throws Exception {
+        Board board = boardRepository.save(Board.builder()
+                .name("랭킹 게시판")
+                .slug("rank-board")
+                .build());
+        Post low = Post.builder().title("low").content("content").author(testUser).board(board).build();
+        Post high = Post.builder().title("high").content("content").author(testUser).board(board).build();
+        postRepository.save(low);
+        postRepository.save(high);
+        postRepository.incrementLikeCount(high.getId());
+        postRepository.incrementLikeCount(high.getId());
+        postRepository.incrementLikeCount(low.getId());
+
+        mockMvc.perform(get("/api/posts/slice")
+                        .param("boardSlug", "rank-board")
+                        .param("sort", "likes")
+                        .param("size", "1"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.content.length()").value(1))
+                .andExpect(jsonPath("$.content[0].title").value("high"))
+                .andExpect(jsonPath("$.hasNext").value(true))
+                .andExpect(jsonPath("$.nextCursorSortValue").value(2))
+                .andExpect(jsonPath("$.nextCursorCreatedAt").isNotEmpty())
+                .andExpect(jsonPath("$.nextCursorId").isNumber());
+    }
+
+    @Test
     void getPost_success_returns200() throws Exception {
         Post post = postRepository.save(
                 Post.builder().title("Hello").content("World").author(testUser).build());

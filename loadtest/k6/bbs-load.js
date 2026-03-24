@@ -297,7 +297,7 @@ export function browseBoardFeed(data) {
   const boardSlug = data.boards[exec.scenario.iterationInTest % data.boards.length];
   const sorts = ['latest', 'likes', 'comments'];
   const sort = sorts[exec.scenario.iterationInTest % sorts.length];
-  const response = http.get(`${BASE_URL}/api/posts?boardSlug=${boardSlug}&sort=${sort}&page=0&size=20`);
+  const response = http.get(`${BASE_URL}/api/posts/slice?boardSlug=${boardSlug}&sort=${sort}&size=20`);
 
   browseListDuration.add(response.timings.duration);
   recordResponse(response, [200], `browse board ${boardSlug}`);
@@ -314,9 +314,9 @@ export function hotPostDetails(data) {
 export function searchCatalog(data) {
   const boardSlug = data.boards[exec.scenario.iterationInTest % data.boards.length];
   const queries = [
-    `${BASE_URL}/api/posts?boardSlug=${boardSlug}&keyword=load&page=0&size=20`,
-    `${BASE_URL}/api/posts?tag=spring&page=0&size=20`,
-    `${BASE_URL}/api/posts?boardSlug=${boardSlug}&sort=likes&page=0&size=20`,
+    `${BASE_URL}/api/posts/slice?boardSlug=${boardSlug}&keyword=load&size=20`,
+    `${BASE_URL}/api/posts/slice?tag=spring&size=20`,
+    `${BASE_URL}/api/posts/slice?boardSlug=${boardSlug}&sort=likes&size=20`,
   ];
 
   for (const url of queries) {
