@@ -307,6 +307,31 @@
 - 반복 ramp-up 전 런에서 `dbPoolTimeouts=0`, `unexpected_response_rate=0.0000`, 관계 중복 row `0`, SQL mismatch `0` 이었다.
 - 결론적으로 이번 검색 query shape rewrite 는 정합성을 해치지 않으면서, 검색 병목을 실제로 줄여 안정 factor 를 `n/a` 수준에서 `0.8` 까지 회복시켰다.
 
+## 11차 결과
+
+상태: 완료
+
+검증 날짜:
+
+- 2026-03-24
+
+검증 범위:
+
+- 최신 검색 query shape 기준 `0.8 / 30분` soak
+- mixed scenario 전체 장시간 검증
+- PostgreSQL `wait_event` / `slowActiveQueries` 장시간 추적
+- 반복 ramp-up 안정 구간과 장시간 soak 안정 구간의 차이 검증
+
+핵심 결론:
+
+- [soak-20260324-104517.md](/home/admin0/effective-disco/loadtest/results/soak-20260324-104517.md) 기준 `0.8 / 30분` soak 는 `FAIL` 이었다.
+- `http p95=1236.62ms`, `p99=1721.70ms`, `unexpected_response_rate=0.0031`, `dbPoolTimeouts=4707`, `maxActiveConnections=28`, `maxThreadsAwaitingConnection=200` 이 관측됐다.
+- 같은 soak 의 SQL 스냅샷 [soak-20260324-104517-sql.tsv](/home/admin0/effective-disco/loadtest/results/soak-20260324-104517-sql.tsv) 기준 `duplicate row=0`, `postLike/comment/unread mismatch=0` 으로 정합성 불변식은 계속 유지됐다.
+- 최종 서버 스냅샷 [soak-20260324-104517-server.json](/home/admin0/effective-disco/loadtest/results/soak-20260324-104517-server.json) 기준 남은 대표 병목은 `post.list averageSqlExecutionTimeMs=61.76`, `averageWallTimeMs=65.84` 였다.
+- 같은 스냅샷에서 `notification.read-all.summary averageWallTimeMs=58.81`, `notification.store averageWallTimeMs=14.68`, `jwt.auth.load-user.db averageWallTimeMs=222.12` 까지 커졌다.
+- 장시간 타임라인 [soak-20260324-104517-metrics.jsonl](/home/admin0/effective-disco/loadtest/results/soak-20260324-104517-metrics.jsonl) 에서는 `WALWrite`, `WALSync`, `transactionid`, `tuple` wait 가 반복적으로 관측됐다.
+- 결론적으로 `0.8` 은 반복 ramp-up 기준 안정 구간이지만, `30분 soak` 기준 안정 구간은 아니다. 현재 시스템은 정합성은 유지하지만 장시간 mixed load 에서는 여전히 DB pool 포화와 읽기 경로 점유 시간 때문에 무너진다.
+
 ## 1차에서 보장한 불변식
 
 ### 관계형 쓰기 경로

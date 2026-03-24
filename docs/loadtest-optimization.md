@@ -866,3 +866,92 @@ PostgreSQL wait 타임라인:
 
 - 새 기준 `0.8` 로 `30분 -> 1시간 -> 2시간` soak 를 다시 돌린다.
 - 검색 병목은 많이 줄었으므로, 이후 남는 병목은 `post.list` 본문 SQL 자체와 mixed write 경로 경합인지 다시 분리해서 본다.
+
+## 2026-03-24 `0.8 / 30분` soak 재검증
+
+상태: 완료
+
+### 배경
+
+- 검색 query shape rewrite 이후 반복 ramp-up [sub-stability-20260324-101158.md](/home/admin0/effective-disco/loadtest/results/sub-stability-20260324-101158.md) 에서는 `0.6/0.7/0.8` 이 모두 `5/5 PASS` 였다.
+- 하지만 이 결과는 짧은 stage 기반 반복 측정이므로, `0.8` 이 실제 장시간 mixed load 안정 구간인지 별도 soak 로 확인할 필요가 있었다.
+
+### 실행 결과
+
+실행 artifact:
+
+- [soak-20260324-104517.md](/home/admin0/effective-disco/loadtest/results/soak-20260324-104517.md)
+- [soak-20260324-104517-server.json](/home/admin0/effective-disco/loadtest/results/soak-20260324-104517-server.json)
+- [soak-20260324-104517-metrics.jsonl](/home/admin0/effective-disco/loadtest/results/soak-20260324-104517-metrics.jsonl)
+- [soak-20260324-104517-sql.tsv](/home/admin0/effective-disco/loadtest/results/soak-20260324-104517-sql.tsv)
+
+측정값:
+
+- `soak_factor = 0.8`
+- `soak_duration = 30m`
+- `status = FAIL`
+- `http p95 = 1236.62ms`
+- `http p99 = 1721.70ms`
+- `unexpected_response_rate = 0.0031`
+- `dbPoolTimeouts = 4707`
+- `maxActiveConnections = 28`
+- `maxThreadsAwaitingConnection = 200`
+
+정합성:
+
+- `duplicateKeyConflicts = 0`
+- `relationDuplicateRows = 0`
+- `postLikeMismatchPosts = 0`
+- `postCommentMismatchPosts = 0`
+- `unreadNotificationMismatchUsers = 0`
+
+### 서버 프로파일
+
+최종 병목 프로파일:
+
+- `post.list averageWallTimeMs = 65.84`
+- `post.list averageSqlExecutionTimeMs = 61.76`
+- `post.list averageSqlStatementCount = 4.81`
+- `notification.read-all.summary averageWallTimeMs = 58.81`
+- `notification.read-all.summary.count averageWallTimeMs = 11.80`
+- `notification.store averageWallTimeMs = 14.68`
+- `jwt.auth.load-user.db averageWallTimeMs = 222.12`
+
+중간 타임라인 특징:
+
+- 초기 몇 분은 `dbPoolTimeouts=0` 이었지만, 약 6분 이후 timeout 이 누적되기 시작했다.
+- 종료 시점에는 `dbPoolTimeouts=4707` 까지 증가했다.
+- `maxThreadsAwaitingConnection` 은 `200` 까지 도달했다.
+
+### PostgreSQL wait 관찰
+
+장시간 타임라인에서 반복적으로 관측된 wait:
+
+- `LWLock/WALWrite`
+- `IO/WALSync`
+- `Lock/transactionid`
+- `Lock/tuple`
+
+동시에 `slowActiveQueries` 상위에는 계속 아래가 남았다.
+
+- 목록 본문 `post.list`
+- 게시판/전체 목록 `count(*)`
+- 태그 기반 `count(*)`
+
+즉 검색 query rewrite 로 검색 branch 는 많이 좋아졌지만, 장시간 mixed soak 에서는 `post.list` 본문 SQL + 알림 read/write + WAL/lock pressure`가 다시 전체 pool을 잠식했다.
+
+### 해석
+
+- 이번 결과는 "`0.8` 이 반복 ramp-up 안정 구간"과 "`0.8` 이 장시간 soak 안정 구간"은 다른 문제라는 점을 분명하게 보여준다.
+- 즉 검색 query shape rewrite 는 짧은 반복 부하와 검색 집중 부하 개선에는 성공했지만, 장시간 mixed soak 를 통과할 만큼 시스템 전체 병목을 제거하진 못했다.
+- 현재 단계의 결론은 이렇다.
+  - 검색 path rewrite: 성공
+  - `0.8` ramp-up 안정화: 성공
+  - `0.8 / 30분 soak` 안정화: 실패
+
+### 남은 과제
+
+- `0.7` 이하에서 다시 `30분 -> 1시간 -> 2시간` soak 를 잡아 실제 장시간 안정 구간을 다시 확정한다.
+- `post.list` 본문 SQL 실행 시간을 더 줄인다. 특히 목록 응답에서 `content` 를 유지할지 재검토가 필요하다.
+- `notification.read-all.summary` 와 `notification.store` 가 장시간 soak 에서 커지는 이유를 별도 분리 계측한다.
+- 가능하면 PostgreSQL `pg_stat_statements` 를 활성화해 장시간 soak 기준 top query 누적 시간을 직접 확인한다.
