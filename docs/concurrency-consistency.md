@@ -658,6 +658,42 @@
 - 따라서 최신 broad mixed 불안정성은 `단일 profile` 자체의 한계가 아니라, `복수 profile 이 동시에 걸릴 때의 상호작용` 으로 다시 좁혀졌다.
 - 즉 다음 단계의 관심사는 broad mixed 를 다시 반복하는 것이 아니라, 최신 코드 기준으로 `2-profile / 3-profile` 조합을 다시 좁혀 최소 재현 조건을 갱신하는 것이다.
 
+## 23차 결과
+
+상태: 완료
+
+검증 날짜:
+
+- 2026-03-25
+
+검증 범위:
+
+- 최신 코드 기준 `2-profile / 3-profile` 조합 재확정용 조합 matrix 러너 추가
+- broad mixed 가 실제로 깨지는 `0.6` 에서 pair screen 우선 실행
+- 최소 불안정 크기가 pair 인지 triple 인지 재확정
+
+핵심 결론:
+
+- 실행 artifact:
+  - [pair summary](/home/admin0/effective-disco/loadtest/results/scenario-combination-matrix-20260325-075043.md)
+  - `browse_search+write`
+    - [suite](/home/admin0/effective-disco/loadtest/results/scenario-combination-browse_search+write-20260325-075043/scenario-browse_search+write-20260325-075043/sub-stability-20260325-075043.md)
+    - [aggregate](/home/admin0/effective-disco/loadtest/results/scenario-combination-browse_search+write-20260325-075043/scenario-browse_search+write-20260325-075043/sub-stability-20260325-075043-aggregate.tsv)
+  - `browse_search+relation_mixed`
+    - [suite](/home/admin0/effective-disco/loadtest/results/scenario-combination-browse_search+relation_mixed-20260325-075043/scenario-browse_search+relation_mixed-20260325-075555/sub-stability-20260325-075555.md)
+    - [aggregate](/home/admin0/effective-disco/loadtest/results/scenario-combination-browse_search+relation_mixed-20260325-075043/scenario-browse_search+relation_mixed-20260325-075555/sub-stability-20260325-075555-aggregate.tsv)
+  - `browse_search+notification`
+    - [aggregate](/home/admin0/effective-disco/loadtest/results/scenario-combination-browse_search+notification-20260325-075043/scenario-browse_search+notification-20260325-075955/sub-stability-20260325-075955-aggregate.tsv)
+- `browse_search+write` 는 `0.6 = 5/5 PASS` 였다.
+- `browse_search+notification` 도 `0.6 = 5/5 PASS` 였다.
+- 반면 `browse_search+relation_mixed` 는 `0.6 = 0/5 PASS, 5/5 FAIL` 로 강하게 재현됐다.
+  - max `http p99 = 962.75ms`
+  - max `dbPoolTimeouts = 95`
+  - max `waiting = 173`
+- 따라서 최신 코드 기준 broad mixed 불안정성의 최소 재현 크기는 다시 `2-profile` 로 확정됐다.
+- 이번 러너는 `최소 불안정 크기` 를 찾는 용도이므로, pair 에서 이미 unstable 이 확인되면 triple 로 더 올라가지 않도록 중단했다.
+- 즉 현재 1순위 추적 조합은 다시 `browse_search + relation_mixed` 이다.
+
 ## 1차에서 보장한 불변식
 
 ### 관계형 쓰기 경로

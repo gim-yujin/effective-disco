@@ -56,6 +56,16 @@ SCENARIO_PROFILE=browse_board_feed+search_catalog+relation_mixed ./loadtest/run-
 ./loadtest/run-bbs-scenario-matrix.sh
 ```
 
+2-profile / 3-profile 조합 matrix 비교:
+
+```bash
+BASE_URL=http://localhost:18081 \
+RUNS=5 \
+STAGE_FACTORS=0.6 \
+COMBINATION_SIZES=2,3 \
+./loadtest/run-bbs-scenario-combination-matrix.sh
+```
+
 장시간 soak + SQL 정합성 검증:
 
 ```bash
@@ -112,6 +122,17 @@ SCENARIO_PROFILES=browse_board_feed+relation_mixed,search_catalog+relation_mixed
 ./loadtest/run-bbs-scenario-matrix.sh
 ```
 
+최소 재현 크기만 빠르게 확인하려면:
+
+```bash
+BASE_URL=http://localhost:18081 \
+RUNS=5 \
+STAGE_FACTORS=0.6 \
+COMBINATION_SIZES=2 \
+STOP_AFTER_FIRST_UNSTABLE_SIZE=1 \
+./loadtest/run-bbs-scenario-combination-matrix.sh
+```
+
 ## 결과물
 
 - `loadtest/results/k6-summary-*.json`: 클라이언트 관점 p95/p99, 실패율
@@ -125,6 +146,8 @@ SCENARIO_PROFILES=browse_board_feed+relation_mixed,search_catalog+relation_mixed
 - `loadtest/results/sub-stability-*.tsv`: sub-1.0 반복 원본 수치
 - `loadtest/results/scenario-matrix-*.md`: profile 별 안정 factor 비교 리포트
 - `loadtest/results/scenario-matrix-*.tsv`: profile 별 aggregate 경로와 PASS/LIMIT/FAIL 요약
+- `loadtest/results/scenario-combination-matrix-*.md`: pair/triple 조합별 stable factor 와 최소 불안정 크기 요약
+- `loadtest/results/scenario-combination-matrix-*.tsv`: 조합별 aggregate 경로와 unstable 여부 원본
 - `loadtest/results/soak-*.md`: 장시간 soak 최종 요약
 - `loadtest/results/soak-*-metrics.jsonl`: soak 중 주기적 서버 메트릭 타임라인
 

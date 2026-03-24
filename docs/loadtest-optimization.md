@@ -1749,3 +1749,63 @@ run detail 핵심:
 - 최신 코드 기준으로는 단일 profile 이 broad mixed 불안정성의 직접 원인이 아니다.
 - 즉 현재 남은 문제는 `read`, `write`, `relation`, `notification` 중 하나가 혼자 깨지는 구조가 아니라, 여러 profile 이 동시에 DB pool 과 트랜잭션 점유 시간을 밀어 올리는 조합 문제다.
 - 다음 단계는 broad mixed 자체를 계속 보는 것이 아니라, 최신 코드 기준 `2-profile / 3-profile` 조합을 다시 좁혀 최소 재현 조건을 재확정하는 것이다.
+
+## 2026-03-25 조합 matrix 러너 추가 + 최소 재현 크기 재확정
+
+상태: 완료
+
+### 배경
+
+- 최신 broad mixed 는 여전히 불안정했지만, 단일 profile 은 모두 `0.6` 까지 안정적이었다.
+- 따라서 다음 질문은 "`최소 재현 조건`의 크기가 지금도 `2-profile` 인가, 아니면 `3-profile` 까지 가야 하는가" 였다.
+- 이 질문은 broad mixed 전체를 반복하는 것보다, `0.6` 에서 pair/triple 조합을 체계적으로 재는 편이 더 직접적이다.
+
+### 구현
+
+- [run-bbs-scenario-combination-matrix.sh](/home/admin0/effective-disco/loadtest/run-bbs-scenario-combination-matrix.sh)
+  - `BASE_PROFILES` 에서 `2-profile / 3-profile` 조합을 자동 생성한다.
+  - 각 조합을 [run-bbs-scenario-sub-stability.sh](/home/admin0/effective-disco/loadtest/run-bbs-scenario-sub-stability.sh) 로 반복 측정한다.
+  - `highest stable factor`, `unstable` 여부, aggregate 경로를 하나의 summary 로 모은다.
+  - 기본값 `STOP_AFTER_FIRST_UNSTABLE_SIZE=1` 로, pair 에서 이미 실패 조합이 나오면 triple 로 불필요하게 올라가지 않는다.
+
+### 문제 해결
+
+- 최신 코드 기준으로 broad mixed 최소 재현 조건의 `크기` 를 수작업이 아니라 자동으로 다시 확정할 수 있게 했다.
+- broad mixed 가 실제로 깨지는 factor 하나만 집중 측정할 수 있어, full grid 로 시간을 과하게 쓰지 않게 했다.
+- unstable size 가 확인되면 더 큰 조합을 자동으로 생략해, 원인 분리 속도를 높였다.
+
+### 실행 artifact
+
+- [pair summary](/home/admin0/effective-disco/loadtest/results/scenario-combination-matrix-20260325-075043.md)
+
+조건:
+
+- fresh `loadtest` 인스턴스 `18081`
+- `RUNS=5`
+- `STAGE_FACTORS=0.6`
+- `COMBINATION_SIZES=2`
+- pair 에서 unstable 조합이 확인되면 종료
+
+### 결과
+
+- `browse_search+write`: `0.6 = 5/5 PASS`
+  - [aggregate](/home/admin0/effective-disco/loadtest/results/scenario-combination-browse_search+write-20260325-075043/scenario-browse_search+write-20260325-075043/sub-stability-20260325-075043-aggregate.tsv)
+- `browse_search+relation_mixed`: `0.6 = 0/5 PASS, 5/5 FAIL`
+  - [suite](/home/admin0/effective-disco/loadtest/results/scenario-combination-browse_search+relation_mixed-20260325-075043/scenario-browse_search+relation_mixed-20260325-075555/sub-stability-20260325-075555.md)
+  - [aggregate](/home/admin0/effective-disco/loadtest/results/scenario-combination-browse_search+relation_mixed-20260325-075043/scenario-browse_search+relation_mixed-20260325-075555/sub-stability-20260325-075555-aggregate.tsv)
+  - max `http p99 = 962.75ms`
+  - max `dbPoolTimeouts = 95`
+  - max `waiting = 173`
+- `browse_search+notification`: `0.6 = 5/5 PASS`
+  - [aggregate](/home/admin0/effective-disco/loadtest/results/scenario-combination-browse_search+notification-20260325-075043/scenario-browse_search+notification-20260325-075955/sub-stability-20260325-075955-aggregate.tsv)
+
+### 해석
+
+- 최신 코드 기준 최소 재현 크기는 다시 `2-profile` 로 확정됐다.
+- 그리고 현재 가장 강한 pair 재현 조합은 다시 `browse_search + relation_mixed` 이다.
+- 즉 `like-focused` 개선과 API slice 전환 이후에도, broad mixed 의 남은 핵심은 여전히 `read pressure + relation write pressure` 의 상호작용이다.
+
+### 다음 액션
+
+- `browse_search + relation_mixed` 를 다시 세분화해 `browse_board_feed / search_catalog / tag path` 와 `like/follow/bookmark/block` 중 어떤 하위 조합이 현재 최소 재현 조합인지 최신 기준으로 좁히기
+- 그 조합 하나에만 PostgreSQL wait / slow query 계측을 집중하기
