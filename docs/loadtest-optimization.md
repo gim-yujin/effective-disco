@@ -1225,3 +1225,63 @@ GRADLE_USER_HOME=/tmp/gradle-home ./gradlew test --no-daemon
 - `0.5 / 0.55 / 0.6` 으로 한 번 더 내려 실제 soak 기준 factor 를 확보
 - `browse/search` 와 mixed write 를 더 쪼개서 어떤 시나리오가 가장 먼저 `db-pool-timeout` 을 만드는지 분리
 - `post.list` 이후 hot path 재프로파일링 또는 환경 분리 필요성 검토
+
+## 2026-03-24 scenario profile 분해 측정
+
+상태: 완료
+
+### 배경
+
+- broad mixed 반복 측정에서는 `0.6` 조차 `5/5 PASS` 가 나오지 않았지만, 그 결과만으로는 어느 시나리오가 먼저 Hikari timeout 을 만드는지 분리할 수 없었다.
+- 그래서 `bbs-load.js` 에 `SCENARIO_PROFILE` 개념을 넣고, `browse_search`, `write`, `relation_mixed`, `notification` 을 각각 독립적으로 켜고 끌 수 있게 바꿨다.
+- 반복 실행용 래퍼로 `run-bbs-scenario-sub-stability.sh`, 여러 profile 을 한 번에 비교하는 `run-bbs-scenario-matrix.sh` 를 추가했다.
+
+### 실행 결과
+
+실행 artifact:
+
+- [scenario-matrix-20260324-130059.md](/home/admin0/effective-disco/loadtest/results/scenario-matrix-20260324-130059.md)
+- [scenario-matrix-20260324-130059.tsv](/home/admin0/effective-disco/loadtest/results/scenario-matrix-20260324-130059.tsv)
+
+측정 조건:
+
+- clean `loadtest` instance: `http://localhost:18081`
+- `RUNS=5`
+- `STAGE_FACTORS=0.5,0.55,0.6`
+- `STOP_ON_HTTP_P99_MS=800`
+- `STOP_ON_K6_THRESHOLD=0`
+
+profile 별 결과:
+
+- `browse_search`: `0.5 / 0.55 / 0.6` 모두 `5/5 PASS`, `highest stable factor = 0.6`
+- `write`: `0.5 / 0.55 / 0.6` 모두 `5/5 PASS`, `highest stable factor = 0.6`
+- `relation_mixed`: `0.5 / 0.55 / 0.6` 모두 `5/5 PASS`, `highest stable factor = 0.6`
+- `notification`: `0.5 / 0.55 / 0.6` 모두 `5/5 PASS`, `highest stable factor = 0.6`
+
+개별 aggregate:
+
+- [browse_search aggregate](/home/admin0/effective-disco/loadtest/results/scenario-browse_search-20260324-130059/scenario-browse_search-20260324-130059/sub-stability-20260324-130059-aggregate.tsv)
+- [write aggregate](/home/admin0/effective-disco/loadtest/results/scenario-write-20260324-130059/scenario-write-20260324-131251/sub-stability-20260324-131251-aggregate.tsv)
+- [relation_mixed aggregate](/home/admin0/effective-disco/loadtest/results/scenario-relation_mixed-20260324-130059/scenario-relation_mixed-20260324-132825/sub-stability-20260324-132825-aggregate.tsv)
+- [notification aggregate](/home/admin0/effective-disco/loadtest/results/scenario-notification-20260324-130059/scenario-notification-20260324-134015/sub-stability-20260324-134015-aggregate.tsv)
+
+핵심 수치:
+
+- `browse_search` max `p99`: `76.00ms`
+- `write` max `p99`: `64.97ms`
+- `relation_mixed` max `p99`: `167.65ms`
+- `notification` max `p99`: `87.52ms`
+- 전 profile 에서 `dbPoolTimeouts = 0`
+
+### 해석
+
+- broad mixed 에서만 timeout 이 났고, 단일 profile 은 모두 `0.6` 까지 안정적이었다.
+- 즉 지금 문제는 "어느 하나의 시나리오가 혼자서 pool 을 터뜨린다"가 아니라, 여러 시나리오가 동시에 섞일 때 생기는 상호작용이다.
+- 특히 `relation_mixed` 는 `maxThreadsAwaitingConnection` 이 `172` 까지 갔지만 timeout 없이 통과했다. 대기열만으로는 실패를 설명할 수 없고, read/write 동시 점유 시간이 겹칠 때가 문제라는 뜻이다.
+- 다음 우선순위는 단일 profile 분해에서 한 단계 더 나아가 `browse_search + relation_mixed`, `browse_search + notification`, `write + relation_mixed` 같은 2-profile 조합 비교다.
+
+### 남은 과제
+
+- 2-profile 조합 matrix 추가
+- `browse_search + relation_mixed` 를 첫 우선순위로 반복 측정
+- broad mixed 와 2-profile 결과를 비교해 최소 재현 조합을 확정

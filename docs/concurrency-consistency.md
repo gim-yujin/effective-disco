@@ -384,6 +384,32 @@
 - 이번 하위 구간 탐색에서는 `unexpected-response` 없이 모두 `db-pool-timeout` 만 LIMIT 신호로 나타났다.
 - 결론적으로 현재 로컬 환경에서는 `0.6` 조차 `5/5 PASS` 재현성을 확보하지 못했다. 즉 지금 시점에는 soak 기준 factor 를 아직 확정할 수 없다.
 
+## 14차 결과
+
+상태: 완료
+
+검증 날짜:
+
+- 2026-03-24
+
+검증 범위:
+
+- scenario profile 분해 러너 추가
+- clean `loadtest` 인스턴스(`18081`)에서 `0.5 / 0.55 / 0.6`, `RUNS=5`
+- `browse_search`, `write`, `relation_mixed`, `notification` 개별 반복 ramp-up 재측정
+
+핵심 결론:
+
+- broad mixed 부하에서는 `0.6` 도 안정 구간이 아니었지만, 이번 분해 측정에서는 모든 단일 profile 이 `0.6` 까지 `5/5 PASS` 였다.
+- matrix 요약은 [scenario-matrix-20260324-130059.md](/home/admin0/effective-disco/loadtest/results/scenario-matrix-20260324-130059.md), 원본 집계는 [scenario-matrix-20260324-130059.tsv](/home/admin0/effective-disco/loadtest/results/scenario-matrix-20260324-130059.tsv) 에 있다.
+- `browse_search`: `0.5 / 0.55 / 0.6` 모두 `5/5 PASS`, `highest stable factor = 0.6`
+- `write`: `0.5 / 0.55 / 0.6` 모두 `5/5 PASS`, `highest stable factor = 0.6`
+- `relation_mixed`: `0.5 / 0.55 / 0.6` 모두 `5/5 PASS`, `highest stable factor = 0.6`
+- `notification`: `0.5 / 0.55 / 0.6` 모두 `5/5 PASS`, `highest stable factor = 0.6`
+- 개별 aggregate는 [browse_search aggregate](/home/admin0/effective-disco/loadtest/results/scenario-browse_search-20260324-130059/scenario-browse_search-20260324-130059/sub-stability-20260324-130059-aggregate.tsv), [write aggregate](/home/admin0/effective-disco/loadtest/results/scenario-write-20260324-130059/scenario-write-20260324-131251/sub-stability-20260324-131251-aggregate.tsv), [relation_mixed aggregate](/home/admin0/effective-disco/loadtest/results/scenario-relation_mixed-20260324-130059/scenario-relation_mixed-20260324-132825/sub-stability-20260324-132825-aggregate.tsv), [notification aggregate](/home/admin0/effective-disco/loadtest/results/scenario-notification-20260324-130059/scenario-notification-20260324-134015/sub-stability-20260324-134015-aggregate.tsv) 에 남겼다.
+- 모든 개별 profile 에서 `dbPoolTimeouts=0`, `unexpected_response_rate=0`, 관계 중복 `0`, `postLike/comment/unread mismatch=0` 이었다.
+- 결론적으로 현재 재현되는 불안정성은 단일 시나리오 자체의 한계가 아니라, `read + write + relation/notification` 이 동시에 섞일 때 발생하는 상호작용 문제다.
+
 ## 1차에서 보장한 불변식
 
 ### 관계형 쓰기 경로

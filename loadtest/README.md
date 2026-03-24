@@ -32,6 +32,18 @@ sub-1.0 안정 구간 반복 탐색:
 ./loadtest/run-bbs-sub-stability.sh
 ```
 
+시나리오 분해 반복 탐색:
+
+```bash
+SCENARIO_PROFILE=browse_search ./loadtest/run-bbs-scenario-sub-stability.sh
+```
+
+시나리오 matrix 비교:
+
+```bash
+./loadtest/run-bbs-scenario-matrix.sh
+```
+
 장시간 soak + SQL 정합성 검증:
 
 ```bash
@@ -51,6 +63,14 @@ sub-1.0 안정 구간 반복 탐색:
 - `block_mixed_race`: 같은 사용자의 차단/해제 혼합 경쟁
 - `notification_read_write_mixed`: 알림 생성과 전체 읽음 처리 혼합 경쟁
 
+### 시나리오 profile
+
+- `full`: 기존 broad mixed 전체 시나리오
+- `browse_search`: 목록/상세/검색 읽기 경로만 측정
+- `write`: 게시물 작성/댓글 작성만 측정
+- `relation_mixed`: like/follow/bookmark/block 혼합 경쟁만 측정
+- `notification`: 알림 생성/읽음 처리만 측정
+
 ## 결과물
 
 - `loadtest/results/k6-summary-*.json`: 클라이언트 관점 p95/p99, 실패율
@@ -62,6 +82,8 @@ sub-1.0 안정 구간 반복 탐색:
 - `loadtest/results/ramp-up-*.tsv`: 배수별 원본 수치와 중단 이유
 - `loadtest/results/sub-stability-*.md`: `0.75 ~ 1.0` 구간 반복 PASS/LIMIT/FAIL 집계
 - `loadtest/results/sub-stability-*.tsv`: sub-1.0 반복 원본 수치
+- `loadtest/results/scenario-matrix-*.md`: profile 별 안정 factor 비교 리포트
+- `loadtest/results/scenario-matrix-*.tsv`: profile 별 aggregate 경로와 PASS/LIMIT/FAIL 요약
 - `loadtest/results/soak-*.md`: 장시간 soak 최종 요약
 - `loadtest/results/soak-*-metrics.jsonl`: soak 중 주기적 서버 메트릭 타임라인
 

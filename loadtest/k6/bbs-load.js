@@ -26,96 +26,153 @@ const bookmarkMixedVus = Number(__ENV.BOOKMARK_MIXED_VUS || 0);
 const followMixedVus = Number(__ENV.FOLLOW_MIXED_VUS || 0);
 const blockMixedVus = Number(__ENV.BLOCK_MIXED_VUS || 0);
 const notificationMixedVus = Number(__ENV.NOTIFICATION_MIXED_VUS || 0);
+const scenarioProfile = __ENV.SCENARIO_PROFILE || 'full';
 
-const scenarios = {
-  browse_board_feed: {
+const scenarios = {};
+
+// 문제 해결:
+// broad mixed load만 계속 돌리면 어느 시나리오가 먼저 Hikari timeout을 만들었는지 분리할 수 없다.
+// scenario profile을 두어 read / write / relation mixed / notification 경로를 각각 독립적으로 켜고 끌 수 있게 한다.
+function isProfileEnabled(...profiles) {
+  return scenarioProfile === 'full' || profiles.includes(scenarioProfile);
+}
+
+function addConstantArrivalScenario(name, execName, rate, duration, preAllocatedVUs, maxVUs, ...profiles) {
+  if (rate <= 0 || !isProfileEnabled(...profiles)) {
+    return;
+  }
+
+  scenarios[name] = {
     executor: 'constant-arrival-rate',
-    exec: 'browseBoardFeed',
-    rate: Number(__ENV.BROWSE_RATE || 30),
+    exec: execName,
+    rate,
     timeUnit: '1s',
-    duration: __ENV.BROWSE_DURATION || '1m',
-    preAllocatedVUs: Number(__ENV.BROWSE_PRE_ALLOCATED_VUS || 20),
-    maxVUs: Number(__ENV.BROWSE_MAX_VUS || 60),
-  },
-  hot_post_details: {
-    executor: 'constant-arrival-rate',
-    exec: 'hotPostDetails',
-    rate: Number(__ENV.HOT_POST_RATE || 40),
-    timeUnit: '1s',
-    duration: __ENV.HOT_POST_DURATION || '1m',
-    preAllocatedVUs: Number(__ENV.HOT_POST_PRE_ALLOCATED_VUS || 20),
-    maxVUs: Number(__ENV.HOT_POST_MAX_VUS || 80),
-  },
-  search_catalog: {
-    executor: 'constant-arrival-rate',
-    exec: 'searchCatalog',
-    rate: Number(__ENV.SEARCH_RATE || 15),
-    timeUnit: '1s',
-    duration: __ENV.SEARCH_DURATION || '1m',
-    preAllocatedVUs: Number(__ENV.SEARCH_PRE_ALLOCATED_VUS || 10),
-    maxVUs: Number(__ENV.SEARCH_MAX_VUS || 40),
-  },
-  write_posts_and_comments: {
+    duration,
+    preAllocatedVUs,
+    maxVUs,
+  };
+}
+
+function addRampingArrivalScenario(name, execName, startRate, stages, preAllocatedVUs, maxVUs, ...profiles) {
+  const hasPositiveStage = stages.some((stage) => stage.target > 0);
+  if ((startRate <= 0 && !hasPositiveStage) || !isProfileEnabled(...profiles)) {
+    return;
+  }
+
+  scenarios[name] = {
     executor: 'ramping-arrival-rate',
-    exec: 'writePostsAndComments',
-    startRate: Number(__ENV.WRITE_START_RATE || 2),
+    exec: execName,
+    startRate,
     timeUnit: '1s',
-    preAllocatedVUs: Number(__ENV.WRITE_PRE_ALLOCATED_VUS || 10),
-    maxVUs: Number(__ENV.WRITE_MAX_VUS || 40),
-    stages: [
-      { target: Number(__ENV.WRITE_STAGE_ONE_RATE || 5), duration: __ENV.WRITE_STAGE_ONE_DURATION || '30s' },
-      { target: Number(__ENV.WRITE_STAGE_TWO_RATE || 10), duration: __ENV.WRITE_STAGE_TWO_DURATION || '30s' },
-    ],
-  },
-  like_idempotent_add_race: {
-    executor: 'constant-vus',
-    exec: 'likeAddRace',
-    vus: Number(__ENV.LIKE_ADD_VUS || 30),
-    duration: __ENV.LIKE_ADD_DURATION || '45s',
-  },
-  like_idempotent_remove_race: {
-    executor: 'constant-vus',
-    exec: 'likeRemoveRace',
-    vus: Number(__ENV.LIKE_REMOVE_VUS || 30),
-    duration: __ENV.LIKE_REMOVE_DURATION || '45s',
-  },
-};
-
-if (bookmarkMixedVus > 0) {
-  scenarios.bookmark_mixed_race = {
-    executor: 'constant-vus',
-    exec: 'bookmarkMixedRace',
-    vus: bookmarkMixedVus,
-    duration: __ENV.BOOKMARK_MIXED_DURATION || '45s',
+    preAllocatedVUs,
+    maxVUs,
+    stages,
   };
 }
 
-if (followMixedVus > 0) {
-  scenarios.follow_mixed_race = {
+function addConstantVusScenario(name, execName, vus, duration, ...profiles) {
+  if (vus <= 0 || !isProfileEnabled(...profiles)) {
+    return;
+  }
+
+  scenarios[name] = {
     executor: 'constant-vus',
-    exec: 'followMixedRace',
-    vus: followMixedVus,
-    duration: __ENV.FOLLOW_MIXED_DURATION || '45s',
+    exec: execName,
+    vus,
+    duration,
   };
 }
 
-if (blockMixedVus > 0) {
-  scenarios.block_mixed_race = {
-    executor: 'constant-vus',
-    exec: 'blockMixedRace',
-    vus: blockMixedVus,
-    duration: __ENV.BLOCK_MIXED_DURATION || '45s',
-  };
-}
+addConstantArrivalScenario(
+  'browse_board_feed',
+  'browseBoardFeed',
+  Number(__ENV.BROWSE_RATE || 30),
+  __ENV.BROWSE_DURATION || '1m',
+  Number(__ENV.BROWSE_PRE_ALLOCATED_VUS || 20),
+  Number(__ENV.BROWSE_MAX_VUS || 60),
+  'browse_search'
+);
 
-if (notificationMixedVus > 0) {
-  scenarios.notification_read_write_mixed = {
-    executor: 'constant-vus',
-    exec: 'notificationReadWriteMixed',
-    vus: notificationMixedVus,
-    duration: __ENV.NOTIFICATION_MIXED_DURATION || '45s',
-  };
-}
+addConstantArrivalScenario(
+  'hot_post_details',
+  'hotPostDetails',
+  Number(__ENV.HOT_POST_RATE || 40),
+  __ENV.HOT_POST_DURATION || '1m',
+  Number(__ENV.HOT_POST_PRE_ALLOCATED_VUS || 20),
+  Number(__ENV.HOT_POST_MAX_VUS || 80),
+  'browse_search'
+);
+
+addConstantArrivalScenario(
+  'search_catalog',
+  'searchCatalog',
+  Number(__ENV.SEARCH_RATE || 15),
+  __ENV.SEARCH_DURATION || '1m',
+  Number(__ENV.SEARCH_PRE_ALLOCATED_VUS || 10),
+  Number(__ENV.SEARCH_MAX_VUS || 40),
+  'browse_search'
+);
+
+addRampingArrivalScenario(
+  'write_posts_and_comments',
+  'writePostsAndComments',
+  Number(__ENV.WRITE_START_RATE || 2),
+  [
+    { target: Number(__ENV.WRITE_STAGE_ONE_RATE || 5), duration: __ENV.WRITE_STAGE_ONE_DURATION || '30s' },
+    { target: Number(__ENV.WRITE_STAGE_TWO_RATE || 10), duration: __ENV.WRITE_STAGE_TWO_DURATION || '30s' },
+  ],
+  Number(__ENV.WRITE_PRE_ALLOCATED_VUS || 10),
+  Number(__ENV.WRITE_MAX_VUS || 40),
+  'write'
+);
+
+addConstantVusScenario(
+  'like_idempotent_add_race',
+  'likeAddRace',
+  Number(__ENV.LIKE_ADD_VUS || 30),
+  __ENV.LIKE_ADD_DURATION || '45s',
+  'relation_mixed'
+);
+
+addConstantVusScenario(
+  'like_idempotent_remove_race',
+  'likeRemoveRace',
+  Number(__ENV.LIKE_REMOVE_VUS || 30),
+  __ENV.LIKE_REMOVE_DURATION || '45s',
+  'relation_mixed'
+);
+
+addConstantVusScenario(
+  'bookmark_mixed_race',
+  'bookmarkMixedRace',
+  bookmarkMixedVus,
+  __ENV.BOOKMARK_MIXED_DURATION || '45s',
+  'relation_mixed'
+);
+
+addConstantVusScenario(
+  'follow_mixed_race',
+  'followMixedRace',
+  followMixedVus,
+  __ENV.FOLLOW_MIXED_DURATION || '45s',
+  'relation_mixed'
+);
+
+addConstantVusScenario(
+  'block_mixed_race',
+  'blockMixedRace',
+  blockMixedVus,
+  __ENV.BLOCK_MIXED_DURATION || '45s',
+  'relation_mixed'
+);
+
+addConstantVusScenario(
+  'notification_read_write_mixed',
+  'notificationReadWriteMixed',
+  notificationMixedVus,
+  __ENV.NOTIFICATION_MIXED_DURATION || '45s',
+  'notification'
+);
 
 export const options = {
   scenarios,
