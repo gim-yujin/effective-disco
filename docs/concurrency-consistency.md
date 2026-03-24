@@ -357,6 +357,33 @@
 - 이번 실패 원인은 정합성 깨짐이 아니라 `db-pool-timeout` 과 `unexpected-response` 였다.
 - 결론적으로 clean short soak 에서 `dbPoolTimeouts=0` 이 확인됐더라도, 같은 최신 코드 기준 반복 ramp-up 재현성까지 확보된 것은 아니다. 현재 로컬 환경에서 `0.7` 도 아직 안정 구간이라고 볼 수 없다.
 
+## 13차 결과
+
+상태: 완료
+
+검증 날짜:
+
+- 2026-03-24
+
+검증 범위:
+
+- clean `loadtest` 인스턴스(`18081`)에서 `0.6 / 0.65 / 0.7` 반복 ramp-up 재측정
+- `RUNS=5`, `STOP_ON_HTTP_P99_MS=800`, `STOP_ON_K6_THRESHOLD=0`
+- soak 기준 factor 를 보수적으로 다시 찾기 위한 하위 구간 탐색
+
+핵심 결론:
+
+- [sub-stability-20260324-122527.md](/home/admin0/effective-disco/loadtest/results/sub-stability-20260324-122527.md) 기준 `highest stable factor` 는 여전히 `n/a` 였다.
+- `0.6` 은 `3/5 PASS`, `2/5 LIMIT` 이었다.
+- `0.65` 는 도달한 `3회` 중 `2/3 PASS`, `1/3 LIMIT` 이었다.
+- `0.7` 은 도달한 `2회` 모두 `PASS` 가 아니었고, `2/2 LIMIT` 이었다.
+- `0.6` 의 최대 `p99` 는 `584.11ms`, `dbPoolTimeouts` 최대치는 `1` 이었다.
+- `0.65` 의 최대 `p99` 는 `667.72ms`, `dbPoolTimeouts` 최대치는 `1` 이었다.
+- `0.7` 의 최대 `p99` 는 `626.59ms`, `dbPoolTimeouts` 최대치는 `1` 이었다.
+- 전 런에서 [sub-stability-20260324-122527.tsv](/home/admin0/effective-disco/loadtest/results/sub-stability-20260324-122527.tsv) 기준 `duplicateKeyConflicts=0`, 관계 중복 row `0`, `postLike/comment/unread mismatch=0` 으로 정합성 불변식은 계속 유지됐다.
+- 이번 하위 구간 탐색에서는 `unexpected-response` 없이 모두 `db-pool-timeout` 만 LIMIT 신호로 나타났다.
+- 결론적으로 현재 로컬 환경에서는 `0.6` 조차 `5/5 PASS` 재현성을 확보하지 못했다. 즉 지금 시점에는 soak 기준 factor 를 아직 확정할 수 없다.
+
 ## 1차에서 보장한 불변식
 
 ### 관계형 쓰기 경로

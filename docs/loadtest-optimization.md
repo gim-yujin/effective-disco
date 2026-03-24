@@ -1171,3 +1171,57 @@ GRADLE_USER_HOME=/tmp/gradle-home ./gradlew test --no-daemon
 - `0.6 / 0.7` 을 다시 비교해서 soak 기준 factor 를 보수적으로 재확정
 - `browse/search` 와 mixed write latency 를 더 잘게 분리해 threshold 초과 원인을 좁히기
 - 필요하면 `post.list` 이후 hot path 를 다시 프로파일링해 다음 최적화 우선순위를 재정렬
+
+## 2026-03-24 `0.6 / 0.65 / 0.7` clean 반복 ramp-up 재측정
+
+상태: 완료
+
+### 배경
+
+- 직전 clean 반복 측정 [sub-stability-20260324-120211.md](/home/admin0/effective-disco/loadtest/results/sub-stability-20260324-120211.md) 에서 `0.7` 과 `0.8` 은 안정 구간으로 확정되지 못했다.
+- 그래서 soak 기준 factor 를 다시 잡기 위해 `0.6 / 0.65 / 0.7` 하위 구간을 clean `18081` 인스턴스에서 `RUNS=5` 로 다시 측정했다.
+
+### 실행 결과
+
+실행 artifact:
+
+- [sub-stability-20260324-122527.md](/home/admin0/effective-disco/loadtest/results/sub-stability-20260324-122527.md)
+- [sub-stability-20260324-122527.tsv](/home/admin0/effective-disco/loadtest/results/sub-stability-20260324-122527.tsv)
+- [sub-stability-20260324-122527-aggregate.tsv](/home/admin0/effective-disco/loadtest/results/sub-stability-20260324-122527-aggregate.tsv)
+
+최종 결과:
+
+- `0.6`: `3/5 PASS`, `2/5 LIMIT`
+- `0.65`: `2/3 PASS`, `1/3 LIMIT`
+- `0.7`: `0/2 PASS`, `2/2 LIMIT`
+- `highest stable factor = n/a`
+
+세부 수치:
+
+- `0.6` max `http p99 = 584.11ms`
+- `0.6` max `dbPoolTimeouts = 1`
+- `0.65` max `http p99 = 667.72ms`
+- `0.65` max `dbPoolTimeouts = 1`
+- `0.7` max `http p99 = 626.59ms`
+- `0.7` max `dbPoolTimeouts = 1`
+
+정합성:
+
+- 전 런 `duplicateKeyConflicts = 0`
+- 관계 중복 row = `0`
+- `postLikeMismatchPosts = 0`
+- `postCommentMismatchPosts = 0`
+- `unreadNotificationMismatchUsers = 0`
+
+### 해석
+
+- `0.7` 불안정은 다시 확인됐고, 이번에는 하위 구간으로 내려가도 `0.6` 이 `5/5 PASS` 를 만들지 못했다.
+- 즉 현재 mixed 반복 부하에서 남아 있는 문제는 단순 threshold 초과가 아니라, 아주 작은 수준의 `dbPoolTimeouts` 도 재현성 있게 사라지지 않는다는 점이다.
+- `0.65` 역시 아직 안정 구간으로 채택할 수 없다. `0.6` 이 안정적이지 않은 상태에서 `0.65` 는 더 위태롭다.
+- 이번 하위 구간 탐색에서는 `unexpected-response` 가 사라졌기 때문에, 남은 실패 원인은 더 분명해졌다. 지금 병목은 정합성이 아니라 `Hikari timeout` 이다.
+
+### 남은 과제
+
+- `0.5 / 0.55 / 0.6` 으로 한 번 더 내려 실제 soak 기준 factor 를 확보
+- `browse/search` 와 mixed write 를 더 쪼개서 어떤 시나리오가 가장 먼저 `db-pool-timeout` 을 만드는지 분리
+- `post.list` 이후 hot path 재프로파일링 또는 환경 분리 필요성 검토
