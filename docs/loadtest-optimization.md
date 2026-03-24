@@ -1584,3 +1584,85 @@ run detail 핵심:
 - 새 hot path 기준으로 `browse_board_feed + search_catalog + like_mixed` short soak 재측정
 - `post.list.browse.rows`, `post.list.search.rows`, `post.list.tag.rows` 중 어느 profile 이 먼저 커지는지 확인
 - 그 결과에 따라 feed list query 또는 search rows query 를 다음 최적화 대상으로 확정
+
+## 2026-03-25 like-focused short soak 재측정
+
+상태: 완료
+
+### 배경
+
+- 앞 단계에서 `post.list` 세분화 계측과 `/api/posts/slice` 전환을 넣었다.
+- 따라서 기존 like-focused 최소 재현 조합이 최신 hot path 기준으로도 여전히 같은 방식으로 깨지는지 다시 확인할 필요가 있었다.
+
+### 실행 artifact
+
+- fresh `loadtest` 인스턴스: `18082`
+- `0.5 baseline`
+  - [report](/home/admin0/effective-disco/loadtest/results/soak-20260325-055840.md)
+  - [server](/home/admin0/effective-disco/loadtest/results/soak-20260325-055840-server.json)
+- `0.6 reproduction`
+  - [report](/home/admin0/effective-disco/loadtest/results/soak-20260325-055919.md)
+  - [server](/home/admin0/effective-disco/loadtest/results/soak-20260325-055919-server.json)
+
+### 비교 결과
+
+- broad health
+  - `0.5`: `p95=134.77ms`, `p99=156.79ms`, `dbPoolTimeouts=0`
+  - `0.6`: `p95=169.70ms`, `p99=200.12ms`, `dbPoolTimeouts=0`
+- `post.list.browse.rows`
+  - `averageSqlExecutionTimeMs = 59.49 -> 62.84`
+  - `averageSqlStatementCount = 1.00 -> 1.00`
+- `post.list.search.rows`
+  - `averageSqlExecutionTimeMs = 47.90 -> 49.59`
+  - `averageSqlStatementCount = 1.00 -> 1.00`
+- `post.list.tag.rows`
+  - `averageSqlExecutionTimeMs = 82.90 -> 85.32`
+  - `averageSqlStatementCount = 1.00 -> 1.00`
+- `post.like.add/remove`
+  - 둘 다 `averageSqlExecutionTimeMs ≈ 17~18ms`
+  - `averageSqlStatementCount = 4.00`
+
+### 해석
+
+- `/api/posts/slice` 전환 후 like-focused 최소 재현 조합은 short soak 기준으로 더 이상 깨지지 않았다.
+- 이 시점의 병목 우선순위는 `like add/remove` 가 아니라 read path 이고, 세분화 profile 로 보면 `search rows`보다 `tag rows` 가 더 비싸다.
+- 특히 browse/search/tag rows 는 모두 `averageSqlStatementCount = 1.00` 으로 내려갔기 때문에, 이전 `Page + count(*)` hot path 와는 병목 성격이 달라졌다.
+
+## 2026-03-25 like-focused 반복 안정성 재측정
+
+상태: 완료
+
+### 실행 artifact
+
+- [suite](/home/admin0/effective-disco/loadtest/results/scenario-browse_board_feed+search_catalog+like_mixed-20260325-060233/sub-stability-20260325-060233.md)
+- [aggregate](/home/admin0/effective-disco/loadtest/results/scenario-browse_board_feed+search_catalog+like_mixed-20260325-060233/sub-stability-20260325-060233-aggregate.tsv)
+
+조건:
+
+- fresh `loadtest` 인스턴스 `18082`
+- `RUNS=5`
+- `STAGE_FACTORS=0.6,0.7`
+- `SCENARIO_PROFILE=browse_board_feed+search_catalog+like_mixed`
+
+### 결과
+
+- `0.6`: `5/5 PASS`
+  - max `p99 = 341.31ms`
+  - max `dbPoolTimeouts = 0`
+  - max `waiting = 95`
+- `0.7`: `3/5 PASS`, `2/5 FAIL`
+  - max `p99 = 822.23ms`
+  - max `dbPoolTimeouts = 6`
+  - max `waiting = 156`
+- `highest stable factor = 0.6`
+
+### 해석
+
+- 최신 hot path 기준으로 like-focused 최소 재현 조합의 current baseline 은 `0.6 안정 / 0.7 불안정` 이다.
+- 즉 예전처럼 `0.55/0.6` 에서 바로 무너지던 상태는 넘겼고, `slice API + post.list 세분화` 가 실제로 기준선을 끌어올린 것으로 봐도 된다.
+
+### 다음 액션
+
+- broad mixed 를 다시 측정해 like-focused 개선이 전체 mixed 에도 전파되는지 확인
+- `tag rows` 가 실제로 다음 병목인지 검증
+- 필요하면 tag filter query 를 다음 최적화 대상으로 전환

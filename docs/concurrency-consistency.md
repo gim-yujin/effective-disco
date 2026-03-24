@@ -525,6 +525,76 @@
 - 정합성 불변식은 계속 유지됐다. `duplicateKeyConflicts=0`, 관계 중복 row `0`, `postLike/comment/unread mismatch=0`.
 - 따라서 현재 1순위 추적 대상은 `비싼 like SQL 자체`가 아니라, `feed/search read pressure 로 커진 post.list` 위에 `like add/remove` 가 lock/WAL pressure 를 얹는 조합이다.
 
+## 19차 결과
+
+상태: 완료
+
+검증 날짜:
+
+- 2026-03-25
+
+검증 범위:
+
+- `post.list` 세분화 계측 + `/api/posts/slice` 전환 후 `browse_board_feed + search_catalog + like_mixed` short soak 재측정
+- fresh `loadtest` 인스턴스(`18082`)에서 `0.5 baseline` 과 `0.6 reproduction` 비교
+- `post.list.browse.rows`, `post.list.search.rows`, `post.list.tag.rows`, `post.like.add/remove` 동시 비교
+
+핵심 결론:
+
+- 유효한 실행 artifact:
+  - [0.5 report](/home/admin0/effective-disco/loadtest/results/soak-20260325-055840.md)
+  - [0.5 server](/home/admin0/effective-disco/loadtest/results/soak-20260325-055840-server.json)
+  - [0.6 report](/home/admin0/effective-disco/loadtest/results/soak-20260325-055919.md)
+  - [0.6 server](/home/admin0/effective-disco/loadtest/results/soak-20260325-055919-server.json)
+- `0.5` 는 `http p95=134.77ms`, `p99=156.79ms`, `dbPoolTimeouts=0`, `unexpected_response_rate=0.0000` 이었다.
+- `0.6` 도 `http p95=169.70ms`, `p99=200.12ms`, `dbPoolTimeouts=0`, `unexpected_response_rate=0.0000` 으로 short soak 기준 안정적이었다.
+- 세분화 profile 기준으로 가장 비싼 read path 는 `search rows` 가 아니라 `tag rows` 였다.
+  - `post.list.browse.rows averageSqlExecutionTimeMs = 59.49 -> 62.84`
+  - `post.list.search.rows averageSqlExecutionTimeMs = 47.90 -> 49.59`
+  - `post.list.tag.rows averageSqlExecutionTimeMs = 82.90 -> 85.32`
+- `post.like.add/remove` 는 평균 `~18ms` 수준으로 유지됐다.
+  - `post.like.add averageSqlExecutionTimeMs = 18.08 -> 17.58`
+  - `post.like.remove averageSqlExecutionTimeMs = 17.67 -> 17.48`
+- PostgreSQL peak 도 짧은 구간에서는 억제됐다.
+  - `longestQueryMs = 84 -> 84`
+  - `longestTransactionMs = 93 -> 95`
+  - wait 는 여전히 `Lock/tuple`, `Lock/transactionid` 가 보였지만 timeout으로 이어지지 않았다.
+- 정합성 불변식은 계속 유지됐다. `duplicateKeyConflicts=0`, 관계 중복 row `0`, `postLike/comment/unread mismatch=0`.
+- 따라서 slice API 전환 후 like-focused 최소 재현 조합은 short soak 기준으로는 사실상 재현이 해소됐고, 남은 read path 후보는 `browse/search` 보다 `tag rows` 쪽이 더 비싼 상태다.
+
+## 20차 결과
+
+상태: 완료
+
+검증 날짜:
+
+- 2026-03-25
+
+검증 범위:
+
+- 같은 최신 코드 기준으로 `browse_board_feed + search_catalog + like_mixed` 반복 안정성 재측정
+- fresh `loadtest` 인스턴스(`18082`)에서 `RUNS=5`, `STAGE_FACTORS=0.6,0.7`
+
+핵심 결론:
+
+- 실행 artifact:
+  - [suite](/home/admin0/effective-disco/loadtest/results/scenario-browse_board_feed+search_catalog+like_mixed-20260325-060233/sub-stability-20260325-060233.md)
+  - [aggregate](/home/admin0/effective-disco/loadtest/results/scenario-browse_board_feed+search_catalog+like_mixed-20260325-060233/sub-stability-20260325-060233-aggregate.tsv)
+- `0.6` 은 `5/5 PASS` 였다.
+  - max `http p99 = 341.31ms`
+  - max `dbPoolTimeouts = 0`
+  - max `waiting = 95`
+- `0.7` 은 `3/5 PASS`, `2/5 FAIL` 이었다.
+  - max `http p99 = 822.23ms`
+  - max `dbPoolTimeouts = 6`
+  - max `waiting = 156`
+- `highest stable factor = 0.6`
+- 실패한 `0.7` run 들도 정합성 불변식은 유지됐다.
+  - `duplicateKeyConflicts = 0`
+  - 관계 중복 row = `0`
+  - `postLike/comment/unread mismatch = 0`
+- 따라서 최신 `slice API + post.list 세분화` 기준으로 like-focused 최소 재현 조합의 현재 기준선은 `0.6 안정 / 0.7 불안정` 이다.
+
 ## 1차에서 보장한 불변식
 
 ### 관계형 쓰기 경로
