@@ -1119,3 +1119,55 @@ GRADLE_USER_HOME=/tmp/gradle-home ./gradlew test --no-daemon
   - `post.list`가 여전히 1순위인지
   - 아니면 `createComment`, mixed scenario latency가 앞서는지
 - 필요하면 `browse/search` 계열 threshold 초과 원인을 별도 분리 측정
+
+## 2026-03-24 `0.7 / 0.8` clean 반복 ramp-up 재측정
+
+상태: 완료
+
+### 배경
+
+- clean short soak [soak-20260324-115314.md](/home/admin0/effective-disco/loadtest/results/soak-20260324-115314.md) 에서는 `dbPoolTimeouts=0`, `unexpected_response_rate=0` 이었고, 실패 원인도 latency threshold 뿐이었다.
+- 하지만 short soak 한 번만으로는 재현성 있는 안정 구간이라고 결론낼 수 없으므로, 같은 최신 코드 기준으로 `0.7 / 0.8` 을 `RUNS=5` 반복 측정했다.
+
+### 실행 결과
+
+실행 artifact:
+
+- [sub-stability-20260324-120211.md](/home/admin0/effective-disco/loadtest/results/sub-stability-20260324-120211.md)
+- [sub-stability-20260324-120211.tsv](/home/admin0/effective-disco/loadtest/results/sub-stability-20260324-120211.tsv)
+- [sub-stability-20260324-120211-aggregate.tsv](/home/admin0/effective-disco/loadtest/results/sub-stability-20260324-120211-aggregate.tsv)
+
+최종 결과:
+
+- `0.7`: `2/5 PASS`, `3/5 LIMIT`
+- `0.8`: `0/2 PASS`, `1/2 LIMIT`, `1/2 FAIL`
+- `highest stable factor = n/a`
+
+세부 수치:
+
+- `0.7` max `http p99 = 599.81ms`
+- `0.7` max `dbPoolTimeouts = 1`
+- `0.8` max `http p99 = 843.34ms`
+- `0.8` max `dbPoolTimeouts = 3`
+- `0.8` FAIL 런은 `unexpected_response_rate = 0.0001`
+
+정합성:
+
+- 전 런 `duplicateKeyConflicts = 0`
+- 관계 중복 row = `0`
+- `postLikeMismatchPosts = 0`
+- `postCommentMismatchPosts = 0`
+- `unreadNotificationMismatchUsers = 0`
+
+### 해석
+
+- clean short soak 에서 `dbPoolTimeouts=0` 이 나온 것은 사실이지만, 그 결과가 곧바로 반복 ramp-up 안정성으로 이어지지는 않았다.
+- `0.7` 은 완전한 실패는 아니지만, `5/5 PASS` 를 만족하지 못했기 때문에 안정 구간으로 채택할 수 없다.
+- `0.8` 은 여전히 명확한 불안정 구간이다. 이번에는 `unexpected-response` 까지 다시 나타났다.
+- 즉 `post.list row-width 축소` 와 `notification read path` 개선은 실제로 병목을 줄였지만, 현재 로컬 환경에서 mixed 반복 부하의 재현성까지 회복시키기에는 아직 부족하다.
+
+### 남은 과제
+
+- `0.6 / 0.7` 을 다시 비교해서 soak 기준 factor 를 보수적으로 재확정
+- `browse/search` 와 mixed write latency 를 더 잘게 분리해 threshold 초과 원인을 좁히기
+- 필요하면 `post.list` 이후 hot path 를 다시 프로파일링해 다음 최적화 우선순위를 재정렬

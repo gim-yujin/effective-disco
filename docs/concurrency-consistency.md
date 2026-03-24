@@ -332,6 +332,31 @@
 - 장시간 타임라인 [soak-20260324-104517-metrics.jsonl](/home/admin0/effective-disco/loadtest/results/soak-20260324-104517-metrics.jsonl) 에서는 `WALWrite`, `WALSync`, `transactionid`, `tuple` wait 가 반복적으로 관측됐다.
 - 결론적으로 `0.8` 은 반복 ramp-up 기준 안정 구간이지만, `30분 soak` 기준 안정 구간은 아니다. 현재 시스템은 정합성은 유지하지만 장시간 mixed load 에서는 여전히 DB pool 포화와 읽기 경로 점유 시간 때문에 무너진다.
 
+## 12차 결과
+
+상태: 완료
+
+검증 날짜:
+
+- 2026-03-24
+
+검증 범위:
+
+- clean `loadtest` 인스턴스(`18081`)에서 `0.7 / 0.8` 반복 ramp-up 재측정
+- `RUNS=5`, `STOP_ON_HTTP_P99_MS=800`, `STOP_ON_K6_THRESHOLD=0`
+- 최신 `post.list row-width 축소 + notification read path` 변경 이후 재현성 검증
+
+핵심 결론:
+
+- [sub-stability-20260324-120211.md](/home/admin0/effective-disco/loadtest/results/sub-stability-20260324-120211.md) 기준 `highest stable factor` 는 다시 `n/a` 였다.
+- `0.7` 은 `2/5 PASS`, `3/5 LIMIT` 이었다.
+- `0.8` 은 도달한 `2회` 모두 `PASS` 가 아니었고, `1/2 LIMIT`, `1/2 FAIL` 이었다.
+- `0.7` 의 최대 `p99` 는 `599.81ms`, `dbPoolTimeouts` 최대치는 `1` 이었다.
+- `0.8` 의 최대 `p99` 는 `843.34ms`, `dbPoolTimeouts` 최대치는 `3` 이었다.
+- 전 런에서 [sub-stability-20260324-120211.tsv](/home/admin0/effective-disco/loadtest/results/sub-stability-20260324-120211.tsv) 기준 `duplicateKeyConflicts=0`, 관계 중복 row `0`, `postLike/comment/unread mismatch=0` 으로 정합성 불변식은 계속 유지됐다.
+- 이번 실패 원인은 정합성 깨짐이 아니라 `db-pool-timeout` 과 `unexpected-response` 였다.
+- 결론적으로 clean short soak 에서 `dbPoolTimeouts=0` 이 확인됐더라도, 같은 최신 코드 기준 반복 ramp-up 재현성까지 확보된 것은 아니다. 현재 로컬 환경에서 `0.7` 도 아직 안정 구간이라고 볼 수 없다.
+
 ## 1차에서 보장한 불변식
 
 ### 관계형 쓰기 경로
