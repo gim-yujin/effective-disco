@@ -143,10 +143,23 @@
 
         <!-- 댓글 목록 -->
         <div class="comments-section" id="comments">
-            <h3>댓글 <span th:text="${#lists.size(comments)}">0</span>개</h3>
+            <h3>댓글 <span th:text="${post.commentCount}">0</span>개</h3>
 
             <div th:if="${#lists.isEmpty(comments)}" class="comment-item">
                 <span style="color:#aaa;">첫 댓글을 남겨보세요.</span>
+            </div>
+
+            <div class="pagination" th:if="${commentsPage != null and commentsPage.totalPages > 1}">
+                <a th:if="${!commentsPage.first}"
+                   th:href="|/posts/${post.id}?commentPage=${commentsPage.number - 1}&commentSize=${commentsPage.size}#comments|">&laquo; 이전 댓글</a>
+                <th:block th:each="i : ${#numbers.sequence(0, commentsPage.totalPages - 1)}">
+                    <span th:if="${i == commentsPage.number}" class="current" th:text="${i + 1}">1</span>
+                    <a th:unless="${i == commentsPage.number}"
+                       th:href="|/posts/${post.id}?commentPage=${i}&commentSize=${commentsPage.size}#comments|"
+                       th:text="${i + 1}">1</a>
+                </th:block>
+                <a th:if="${!commentsPage.last}"
+                   th:href="|/posts/${post.id}?commentPage=${commentsPage.number + 1}&commentSize=${commentsPage.size}#comments|">다음 댓글 &raquo;</a>
             </div>
 
             <!-- 차단된 사용자의 댓글·대댓글 블록 전체를 건너뛴다 -->
@@ -183,6 +196,8 @@
                                 <form th:action="@{/posts/{postId}/comments/{id}/delete(postId=${post.id}, id=${c.id})}"
                                       method="post" style="display:inline">
                                     <input type="hidden" th:name="${_csrf.parameterName}" th:value="${_csrf.token}">
+                                    <input type="hidden" name="commentPage" th:value="${commentsPage.number}">
+                                    <input type="hidden" name="commentSize" th:value="${commentsPage.size}">
                                     <button class="btn btn-sm btn-danger" type="submit">[삭제]</button>
                                 </form>
                             </th:block>
@@ -215,6 +230,8 @@
                         <form th:action="@{/posts/{postId}/comments/{id}/edit(postId=${post.id}, id=${c.id})}"
                               method="post">
                             <input type="hidden" th:name="${_csrf.parameterName}" th:value="${_csrf.token}">
+                            <input type="hidden" name="commentPage" th:value="${commentsPage.number}">
+                            <input type="hidden" name="commentSize" th:value="${commentsPage.size}">
                             <textarea name="content" th:text="${c.content}"></textarea>
                             <div>
                                 <button class="btn btn-primary btn-sm" type="submit">[수정 완료]</button>
@@ -246,6 +263,7 @@
                 <!-- 대댓글 목록 -->
                 <div class="replies-wrap" th:if="${!#lists.isEmpty(c.replies)}">
                     <th:block th:each="r : ${c.replies}">
+                    <th:block th:unless="${blockedUsernames != null and blockedUsernames.contains(r.author)}">
                     <div class="reply-item" th:id="'comment-' + ${r.id}">
                         <span class="reply-author">
                             <span class="reply-arrow">↳</span>
@@ -274,6 +292,8 @@
                                     <form th:action="@{/posts/{postId}/comments/{id}/delete(postId=${post.id}, id=${r.id})}"
                                           method="post" style="display:inline">
                                         <input type="hidden" th:name="${_csrf.parameterName}" th:value="${_csrf.token}">
+                                        <input type="hidden" name="commentPage" th:value="${commentsPage.number}">
+                                        <input type="hidden" name="commentSize" th:value="${commentsPage.size}">
                                         <button class="btn btn-sm btn-danger" type="submit">[삭제]</button>
                                     </form>
                                 </th:block>
@@ -287,6 +307,8 @@
                             <form th:action="@{/posts/{postId}/comments/{id}/edit(postId=${post.id}, id=${r.id})}"
                                   method="post">
                                 <input type="hidden" th:name="${_csrf.parameterName}" th:value="${_csrf.token}">
+                                <input type="hidden" name="commentPage" th:value="${commentsPage.number}">
+                                <input type="hidden" name="commentSize" th:value="${commentsPage.size}">
                                 <textarea name="content" th:text="${r.content}"></textarea>
                                 <div>
                                     <button class="btn btn-primary btn-sm" type="submit">[수정 완료]</button>
@@ -297,6 +319,7 @@
                         </div>
                     </sec:authorize>
                     </th:block>
+                    </th:block>
                 </div>
 
                 <!-- 대댓글 작성 폼 (토글) -->
@@ -305,6 +328,8 @@
                         <form th:action="@{/posts/{postId}/comments/{id}/replies(postId=${post.id}, id=${c.id})}"
                               method="post">
                             <input type="hidden" th:name="${_csrf.parameterName}" th:value="${_csrf.token}">
+                            <input type="hidden" name="commentPage" th:value="${commentsPage.number}">
+                            <input type="hidden" name="commentSize" th:value="${commentsPage.size}">
                             <textarea name="content" placeholder="답글을 입력하세요"></textarea>
                             <div>
                                 <button class="btn btn-primary btn-sm" type="submit">[답글 등록]</button>
@@ -321,6 +346,7 @@
                 <div class="comment-form">
                     <form th:action="@{/posts/{postId}/comments(postId=${post.id})}" method="post">
                         <input type="hidden" th:name="${_csrf.parameterName}" th:value="${_csrf.token}">
+                        <input type="hidden" name="commentSize" th:value="${commentsPage.size}">
                         <div class="form-group">
                             <textarea name="content" placeholder="댓글을 입력하세요"></textarea>
                         </div>

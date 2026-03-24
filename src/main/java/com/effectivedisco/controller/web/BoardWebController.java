@@ -3,6 +3,7 @@ package com.effectivedisco.controller.web;
 import com.effectivedisco.dto.request.CommentRequest;
 import com.effectivedisco.dto.request.PostRequest;
 import com.effectivedisco.dto.response.BoardResponse;
+import com.effectivedisco.dto.response.CommentResponse;
 import com.effectivedisco.dto.response.PostScrollCursor;
 import com.effectivedisco.dto.response.PostScrollResponse;
 import com.effectivedisco.dto.response.PostResponse;
@@ -14,6 +15,7 @@ import com.effectivedisco.service.ImageService;
 import com.effectivedisco.service.PostService;
 import jakarta.servlet.http.HttpSession;
 import lombok.RequiredArgsConstructor;
+import org.springframework.data.domain.Page;
 import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.security.core.userdetails.UserDetails;
@@ -209,6 +211,8 @@ public class BoardWebController {
      */
     @GetMapping("/posts/{id}")
     public String postDetail(@PathVariable Long id,
+                             @RequestParam(defaultValue = "0") int commentPage,
+                             @RequestParam(defaultValue = "50") int commentSize,
                              Model model,
                              @AuthenticationPrincipal UserDetails userDetails,
                              HttpSession session) {
@@ -235,8 +239,10 @@ public class BoardWebController {
             }
         }
 
+        Page<CommentResponse> commentsPage = commentService.getCommentsPage(id, commentPage, commentSize);
         model.addAttribute("post",           post);
-        model.addAttribute("comments",       commentService.getComments(id));
+        model.addAttribute("comments",       commentsPage.getContent());
+        model.addAttribute("commentsPage",   commentsPage);
         model.addAttribute("commentRequest", new CommentRequest());
 
         boolean liked      = userDetails != null && postService.isLikedByUser(id, userDetails.getUsername());
@@ -365,9 +371,12 @@ public class BoardWebController {
     @PostMapping("/posts/{postId}/comments")
     public String addComment(@PathVariable Long postId,
                              @ModelAttribute CommentRequest commentRequest,
+                             @RequestParam(defaultValue = "50") int commentSize,
                              @AuthenticationPrincipal UserDetails userDetails) {
         commentService.createComment(postId, commentRequest, userDetails.getUsername());
-        return "redirect:/posts/" + postId + "#comments";
+        int lastCommentPage = commentService.getLastTopLevelCommentPage(postId, commentSize);
+        return "redirect:/posts/" + postId + "?commentPage=" + lastCommentPage
+                + "&commentSize=" + commentSize + "#comments";
     }
 
     /** 대댓글 작성 (댓글에 달리는 1단계 답글) */
@@ -375,9 +384,12 @@ public class BoardWebController {
     public String addReply(@PathVariable Long postId,
                            @PathVariable Long id,
                            @ModelAttribute CommentRequest commentRequest,
+                           @RequestParam(defaultValue = "0") int commentPage,
+                           @RequestParam(defaultValue = "50") int commentSize,
                            @AuthenticationPrincipal UserDetails userDetails) {
         commentService.createReply(postId, id, commentRequest, userDetails.getUsername());
-        return "redirect:/posts/" + postId + "#comment-" + id;
+        return "redirect:/posts/" + postId + "?commentPage=" + commentPage
+                + "&commentSize=" + commentSize + "#comment-" + id;
     }
 
     /**
@@ -389,18 +401,24 @@ public class BoardWebController {
     public String editComment(@PathVariable Long postId,
                               @PathVariable Long id,
                               @ModelAttribute CommentRequest commentRequest,
+                              @RequestParam(defaultValue = "0") int commentPage,
+                              @RequestParam(defaultValue = "50") int commentSize,
                               @AuthenticationPrincipal UserDetails userDetails) {
         commentService.updateComment(postId, id, commentRequest, userDetails.getUsername());
-        return "redirect:/posts/" + postId + "#comment-" + id;
+        return "redirect:/posts/" + postId + "?commentPage=" + commentPage
+                + "&commentSize=" + commentSize + "#comment-" + id;
     }
 
     /** 댓글·대댓글 삭제 */
     @PostMapping("/posts/{postId}/comments/{id}/delete")
     public String deleteComment(@PathVariable Long postId,
                                 @PathVariable Long id,
+                                @RequestParam(defaultValue = "0") int commentPage,
+                                @RequestParam(defaultValue = "50") int commentSize,
                                 @AuthenticationPrincipal UserDetails userDetails) {
         commentService.deleteComment(postId, id, userDetails.getUsername());
-        return "redirect:/posts/" + postId + "#comments";
+        return "redirect:/posts/" + postId + "?commentPage=" + commentPage
+                + "&commentSize=" + commentSize + "#comments";
     }
 
     /**
@@ -414,8 +432,10 @@ public class BoardWebController {
     public String findCommentPost(@PathVariable Long commentId) {
         try {
             Long postId = commentService.getPostIdByCommentId(commentId);
+            int commentPage = commentService.getCommentPageForAnchor(postId, commentId, 50);
             // 해당 댓글 앵커(#comment-{id})로 바로 스크롤
-            return "redirect:/posts/" + postId + "#comment-" + commentId;
+            return "redirect:/posts/" + postId + "?commentPage=" + commentPage
+                    + "&commentSize=50#comment-" + commentId;
         } catch (IllegalArgumentException e) {
             // 댓글이 삭제됐거나 존재하지 않으면 홈으로
             return "redirect:/";

@@ -55,6 +55,27 @@ public class CommentResponse {
         this(comment, authorUsername, authorProfileImageUrl, List.of());
     }
 
+    /**
+     * 문제 해결:
+     * 상세 댓글 목록은 엔티티 LAZY 그래프를 재귀 순회하지 말고,
+     * projection row + batch replies 결과만으로 DTO 를 조립해야 한다.
+     */
+    public CommentResponse(Long id,
+                           String content,
+                           String author,
+                           LocalDateTime createdAt,
+                           LocalDateTime updatedAt,
+                           String authorProfileImageUrl,
+                           List<CommentResponse> replies) {
+        this.id = id;
+        this.content = content;
+        this.author = author;
+        this.createdAt = createdAt;
+        this.updatedAt = updatedAt;
+        this.authorProfileImageUrl = authorProfileImageUrl;
+        this.replies = List.copyOf(replies);
+    }
+
     private CommentResponse(Comment comment,
                             String authorUsername,
                             String authorProfileImageUrl,

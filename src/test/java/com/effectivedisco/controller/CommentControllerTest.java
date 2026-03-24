@@ -97,7 +97,8 @@ class CommentControllerTest {
     void getComments_noAuth_returns200() throws Exception {
         mockMvc.perform(get("/api/posts/{postId}/comments", post.getId()))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$").isArray());
+                .andExpect(jsonPath("$.content").isArray())
+                .andExpect(jsonPath("$.number").value(0));
     }
 
     /**
@@ -111,8 +112,9 @@ class CommentControllerTest {
 
         mockMvc.perform(get("/api/posts/{postId}/comments", post.getId()))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$[0].content").value("테스트 댓글"))
-                .andExpect(jsonPath("$[0].author").value("owner"));
+                .andExpect(jsonPath("$.content[0].content").value("테스트 댓글"))
+                .andExpect(jsonPath("$.content[0].author").value("owner"))
+                .andExpect(jsonPath("$.totalElements").value(1));
     }
 
     // ── POST 댓글 작성 ────────────────────────────────────────

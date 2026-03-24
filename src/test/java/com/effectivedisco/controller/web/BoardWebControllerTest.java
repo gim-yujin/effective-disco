@@ -236,7 +236,7 @@ class BoardWebControllerTest {
 
     /**
      * 공개 게시물 상세 조회는 인증 없이도 200을 반환해야 한다.
-     * 모델에 post, comments 속성이 포함되고 뷰는 "post/detail" 여야 한다.
+     * 모델에 post, comments, commentsPage 속성이 포함되고 뷰는 "post/detail" 여야 한다.
      */
     @Test
     void postDetail_public_returns200() throws Exception {
@@ -245,7 +245,7 @@ class BoardWebControllerTest {
 
         mockMvc.perform(get("/posts/{id}", post.getId()))
                 .andExpect(status().isOk())
-                .andExpect(model().attributeExists("post", "comments"))
+                .andExpect(model().attributeExists("post", "comments", "commentsPage"))
                 .andExpect(view().name("post/detail"));
     }
 
@@ -425,7 +425,7 @@ class BoardWebControllerTest {
                         .with(user("otheruser"))
                         .param("content", "테스트 댓글 내용입니다."))
                 .andExpect(status().is3xxRedirection())
-                .andExpect(redirectedUrl("/posts/" + post.getId() + "#comments"));
+                .andExpect(redirectedUrl("/posts/" + post.getId() + "?commentPage=0&commentSize=50#comments"));
     }
 
     /**
@@ -459,7 +459,7 @@ class BoardWebControllerTest {
                         .with(user("otheruser"))
                         .param("content", "대댓글 내용입니다."))
                 .andExpect(status().is3xxRedirection())
-                .andExpect(redirectedUrl("/posts/" + post.getId() + "#comment-" + parent.getId()));
+                .andExpect(redirectedUrl("/posts/" + post.getId() + "?commentPage=0&commentSize=50#comment-" + parent.getId()));
     }
 
     /**
@@ -477,7 +477,7 @@ class BoardWebControllerTest {
                         .with(csrf())
                         .with(user("testuser")))
                 .andExpect(status().is3xxRedirection())
-                .andExpect(redirectedUrl("/posts/" + post.getId() + "#comments"));
+                .andExpect(redirectedUrl("/posts/" + post.getId() + "?commentPage=0&commentSize=50#comments"));
     }
 
     /**
@@ -496,6 +496,6 @@ class BoardWebControllerTest {
                         .with(user("testuser"))
                         .param("content", "수정 후 댓글"))
                 .andExpect(status().is3xxRedirection())
-                .andExpect(redirectedUrl("/posts/" + post.getId() + "#comment-" + comment.getId()));
+                .andExpect(redirectedUrl("/posts/" + post.getId() + "?commentPage=0&commentSize=50#comment-" + comment.getId()));
     }
 }

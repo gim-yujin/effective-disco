@@ -10,12 +10,18 @@ import com.effectivedisco.repository.PostRepository;
 import com.effectivedisco.repository.UserRepository;
 import jakarta.persistence.EntityManager;
 import lombok.RequiredArgsConstructor;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageImpl;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.core.userdetails.UsernameNotFoundException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 
 @Service
 @RequiredArgsConstructor
@@ -27,9 +33,70 @@ public class CommentService {
     private final NotificationService notificationService;
     private final EntityManager       entityManager;
 
+    @Transactional(readOnly = true)
+    public Page<CommentResponse> getCommentsPage(Long postId, int page, int size) {
+        int pageNumber = Math.max(page, 0);
+        int pageSize = Math.max(1, Math.min(size, 100));
+        PageRequest pageable = PageRequest.of(pageNumber, pageSize);
+
+        Page<CommentRepository.CommentViewRow> topLevelComments =
+                commentRepository.findTopLevelCommentRowsByPostIdOrderByCreatedAtAsc(postId, pageable);
+
+        List<Long> parentIds = topLevelComments.getContent().stream()
+                .map(CommentRepository.CommentViewRow::getId)
+                .toList();
+
+        Map<Long, List<CommentResponse>> repliesByParentId = new LinkedHashMap<>();
+        if (!parentIds.isEmpty()) {
+            for (CommentRepository.CommentViewRow replyRow :
+                    commentRepository.findReplyRowsByParentIdInOrderByCreatedAtAsc(parentIds)) {
+                repliesByParentId.computeIfAbsent(replyRow.getParentId(), ignored -> new ArrayList<>())
+                        .add(toCommentResponse(replyRow, List.of()));
+            }
+        }
+
+        List<CommentResponse> content = topLevelComments.getContent().stream()
+                .map(comment -> toCommentResponse(
+                        comment,
+                        repliesByParentId.getOrDefault(comment.getId(), List.of())
+                ))
+                .toList();
+
+        return new PageImpl<>(content, pageable, topLevelComments.getTotalElements());
+    }
+
+    @Transactional(readOnly = true)
     public List<CommentResponse> getComments(Long postId) {
-        return commentRepository.findByPostIdAndParentIsNullOrderByCreatedAtAsc(postId)
-                .stream().map(CommentResponse::new).toList();
+        return getCommentsPage(postId, 0, 50).getContent();
+    }
+
+    @Transactional(readOnly = true)
+    public int getLastTopLevelCommentPage(Long postId, int size) {
+        int pageSize = Math.max(1, Math.min(size, 100));
+        long topLevelCount = commentRepository.countByPostIdAndParentIsNull(postId);
+        if (topLevelCount == 0) {
+            return 0;
+        }
+        return (int) ((topLevelCount - 1) / pageSize);
+    }
+
+    @Transactional(readOnly = true)
+    public int getCommentPageForAnchor(Long postId, Long commentId, int size) {
+        int pageSize = Math.max(1, Math.min(size, 100));
+        Long topLevelCommentId = commentRepository.findTopLevelCommentIdByCommentId(commentId);
+        if (topLevelCommentId == null) {
+            throw new IllegalArgumentException("Comment not found: " + commentId);
+        }
+        CommentRepository.TopLevelCommentCursor cursor =
+                commentRepository.findTopLevelCommentCursorById(topLevelCommentId);
+        if (cursor == null) {
+            throw new IllegalArgumentException("Comment not found: " + commentId);
+        }
+        long rank = commentRepository.countTopLevelCommentsBeforeOrAt(postId, cursor.getCreatedAt(), cursor.getId());
+        if (rank == 0) {
+            return 0;
+        }
+        return (int) ((rank - 1) / pageSize);
     }
 
     @Transactional
@@ -165,5 +232,18 @@ public class CommentService {
         if (!ownerUsername.equals(requestUsername)) {
             throw new AccessDeniedException("No permission to modify this resource");
         }
+    }
+
+    private CommentResponse toCommentResponse(CommentRepository.CommentViewRow comment,
+                                              List<CommentResponse> replies) {
+        return new CommentResponse(
+                comment.getId(),
+                comment.getContent(),
+                comment.getAuthorUsername(),
+                comment.getCreatedAt(),
+                comment.getUpdatedAt(),
+                comment.getAuthorProfileImageUrl(),
+                replies
+        );
     }
 }

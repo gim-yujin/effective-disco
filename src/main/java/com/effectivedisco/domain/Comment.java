@@ -11,7 +11,9 @@ import java.util.List;
 
 @Entity
 @Table(name = "comments", indexes = {
-        @Index(name = "idx_comment_post", columnList = "post_id")
+        @Index(name = "idx_comment_post", columnList = "post_id"),
+        @Index(name = "idx_comment_post_parent_created_at", columnList = "post_id, parent_id, created_at"),
+        @Index(name = "idx_comment_parent_created_at", columnList = "parent_id, created_at")
 })
 @Getter
 @NoArgsConstructor

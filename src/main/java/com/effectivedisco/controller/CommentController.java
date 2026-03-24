@@ -11,13 +11,12 @@ import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
+import org.springframework.data.domain.Page;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.web.bind.annotation.*;
-
-import java.util.List;
 
 /**
  * 댓글 REST API 컨트롤러.
@@ -33,14 +32,18 @@ public class CommentController {
 
     private final CommentService commentService;
 
-    @Operation(summary = "댓글 목록 조회", description = "게시물에 달린 최상위 댓글(대댓글 포함)을 등록순으로 반환합니다.")
+    @Operation(summary = "댓글 목록 조회", description = "최상위 댓글 페이지를 반환하고, 각 댓글에는 1단계 대댓글이 포함됩니다.")
     @ApiResponses({
         @ApiResponse(responseCode = "200", description = "목록 조회 성공")
     })
     @GetMapping
-    public ResponseEntity<List<CommentResponse>> getComments(
-            @Parameter(description = "게시물 ID") @PathVariable Long postId) {
-        return ResponseEntity.ok(commentService.getComments(postId));
+    public ResponseEntity<Page<CommentResponse>> getComments(
+            @Parameter(description = "게시물 ID") @PathVariable Long postId,
+            @Parameter(description = "댓글 페이지 번호 (0부터 시작)", example = "0")
+            @RequestParam(defaultValue = "0") int page,
+            @Parameter(description = "댓글 페이지 크기", example = "50")
+            @RequestParam(defaultValue = "50") int size) {
+        return ResponseEntity.ok(commentService.getCommentsPage(postId, page, size));
     }
 
     @Operation(summary = "댓글 작성", security = @SecurityRequirement(name = "bearerAuth"))
