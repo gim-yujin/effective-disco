@@ -200,3 +200,55 @@
   - `content` 를 목록 응답에서 제외
   - trigram 을 `title` 까지 확장할지 여부
   - 한국어 검색 품질 향상을 위한 별도 검색 전략
+
+## 후속 구현과 실측 결과
+
+2026-03-24 후속 측정에서 드러난 사실은 하나였다.
+`FTS + pg_trgm` 를 넣는 것만으로는 충분하지 않았고, PostgreSQL 이 실제로 그 인덱스를 쓰게 만드는 `query shape` 가 더 중요했다.
+
+### 왜 추가 rewrite 가 필요했는가
+
+- 초기 구현은 `FTS OR username LIKE` 를 한 predicate 로 묶고 있었다.
+- 이 상태에서는 PostgreSQL 이 `idx_posts_search_fts` 를 핵심 플랜으로 채택하지 못했고, `board/draft` 범위를 먼저 읽은 뒤 FTS/LIKE 를 필터링하는 형태가 남았다.
+- 즉 기술 도입 근거는 맞았지만, 구현 shape 가 그 근거를 충분히 살리지 못했다.
+
+### 추가로 적용한 구조
+
+- `title/content` 검색은 `FTS branch`
+- `username` 검색은 `pg_trgm` 기반 `LIKE branch`
+- 두 branch 는 `post id` 만 뽑아 `UNION` 으로 합치고, dedup 된 id 집합으로 본문/카운트를 계산
+
+이 구조를 택한 이유:
+
+- FTS 와 trigram 인덱스를 서로 독립적으로 최적화하게 만들기 위해서다.
+- `OR` predicate 를 없애야 PostgreSQL 이 각 branch 의 인덱스를 별도 플랜으로 잡을 수 있었다.
+
+### 실측 결과
+
+`EXPLAIN ANALYZE`:
+
+- `board + keyword list`: `65.411ms -> 14.852ms`
+- `board + keyword count(*)`: `155.216ms -> 6.334ms`
+- `tag count(*)`: `12.660ms -> 13.781ms`
+
+관측된 실행계획:
+
+- `idx_posts_search_fts` 사용
+- `idx_users_username_trgm` 사용
+- `idx_post_tags_tag_post` 사용
+
+검색 집중 soak:
+
+- 이전: `p95=1827.55ms`, `p99=1984.91ms`, `unexpected_response_rate=0.1274`, `dbPoolTimeouts=503`
+- 이후: `p95=437.57ms`, `p99=639.39ms`, `unexpected_response_rate=0.0001`, `dbPoolTimeouts=1`
+
+반복 ramp-up:
+
+- 이전: `0.6` 도 `5/5 FAIL`, `highest stable factor = n/a`
+- 이후: `0.6/0.7/0.8` 모두 `5/5 PASS`, `highest stable factor = 0.8`
+
+### 결론
+
+- 이 프로젝트에서 PostgreSQL 검색 최적화의 핵심 근거는 "`FTS` 와 `pg_trgm` 을 쓴다" 자체가 아니라, "검색 의미를 유지하면서 각 인덱스가 실제로 선택되는 query shape 로 분리한다" 에 있다.
+- 즉 기술 선택과 query shape 는 분리된 문제가 아니다.
+- 이번 실측은 `FTS + pg_trgm + branch/UNION rewrite` 조합이 현재 검색 병목에 대해 실효성이 있다는 근거다.

@@ -282,6 +282,31 @@
 - 가장 자주 관측된 느린 query 는 목록 본문 `post.list`, `board + keyword count(*)`, `tag count(*)` 였다.
 - 결론적으로 현재 로컬 환경과 최신 코드 기준으로는 `0.6` 도 더 이상 안정 factor 가 아니며, 먼저 깨지는 것은 정합성이 아니라 DB pool 포화와 read pressure 다.
 
+## 10차 결과
+
+상태: 완료
+
+검증 날짜:
+
+- 2026-03-24
+
+검증 범위:
+
+- PostgreSQL 검색 query shape rewrite 이후 `EXPLAIN ANALYZE` 재측정
+- 검색 집중 soak 재측정
+- `sub-1.0` 반복 ramp-up 재측정 5회
+- `FTS branch + username trigram branch + UNION/ID dedup` 구조의 실효성 검증
+
+핵심 결론:
+
+- 새 query shape 기준 `EXPLAIN ANALYZE` 에서 `idx_posts_search_fts`, `idx_users_username_trgm`, `idx_post_tags_tag_post` 가 실제 실행계획에 사용됐다.
+- [board-keyword-list.txt](/home/admin0/effective-disco/loadtest/results/explain-20260324-rewrite/board-keyword-list.txt) 기준 `board + keyword list` 는 `14.852ms`, [board-keyword-count.txt](/home/admin0/effective-disco/loadtest/results/explain-20260324-rewrite/board-keyword-count.txt) 기준 `board + keyword count(*)` 는 `6.334ms` 였다.
+- 검색 집중 soak [soak-20260324-101110.md](/home/admin0/effective-disco/loadtest/results/soak-20260324-101110.md) 는 전체 status 는 `FAIL` 이었지만, `http p95=437.57ms`, `p99=639.39ms`, `unexpected_response_rate=0.0001`, `dbPoolTimeouts=1` 로 이전 검색 집중 측정 대비 크게 개선됐다.
+- 같은 검색 집중 측정의 최종 서버 스냅샷 [soak-20260324-101110-server.json](/home/admin0/effective-disco/loadtest/results/soak-20260324-101110-server.json) 기준 `duplicateKeyConflicts=0`, `relationDuplicateRows=0`, `postLike/comment/unread mismatch=0` 으로 정합성 불변식은 계속 유지됐다.
+- 반복 ramp-up [sub-stability-20260324-101158.md](/home/admin0/effective-disco/loadtest/results/sub-stability-20260324-101158.md) 기준 `0.6`, `0.7`, `0.8` 이 모두 `5/5 PASS` 였고, `highest stable factor = 0.8` 이었다.
+- 반복 ramp-up 전 런에서 `dbPoolTimeouts=0`, `unexpected_response_rate=0.0000`, 관계 중복 row `0`, SQL mismatch `0` 이었다.
+- 결론적으로 이번 검색 query shape rewrite 는 정합성을 해치지 않으면서, 검색 병목을 실제로 줄여 안정 factor 를 `n/a` 수준에서 `0.8` 까지 회복시켰다.
+
 ## 1차에서 보장한 불변식
 
 ### 관계형 쓰기 경로

@@ -746,3 +746,123 @@ PostgreSQL wait 타임라인:
 상세 근거:
 
 - 별도 설계 문서 [postgres-search-strategy.md](/home/admin0/effective-disco/docs/postgres-search-strategy.md) 참조
+
+## 2026-03-24 PostgreSQL 검색 query shape rewrite + 재측정
+
+상태: 완료
+
+### 배경
+
+- `FTS + pg_trgm` 자체는 도입했지만, 초기 구현은 `FTS OR username LIKE` 를 한 조건으로 묶은 형태였다.
+- 그 상태의 `EXPLAIN ANALYZE` 에서는 PostgreSQL 이 `idx_posts_search_fts` 를 핵심 플랜으로 쓰지 못했고, `board/draft` 범위를 먼저 잡은 뒤 FTS/LIKE 를 필터링하는 경향이 남아 있었다.
+- 실제 측정도 이를 뒷받침했다.
+  - [board-keyword-list.txt](/home/admin0/effective-disco/loadtest/results/explain-20260324-fts/board-keyword-list.txt): `65.411ms`
+  - [board-keyword-count.txt](/home/admin0/effective-disco/loadtest/results/explain-20260324-fts/board-keyword-count.txt): `155.216ms`
+  - 검색 집중 soak [soak-20260324-085547.md](/home/admin0/effective-disco/loadtest/results/soak-20260324-085547.md): `p95=1827.55ms`, `p99=1984.91ms`, `unexpected_response_rate=0.1274`, `dbPoolTimeouts=503`
+- 즉 기술 선택은 맞았지만, 플래너가 그 기술을 제대로 활용하지 못하는 `query shape` 문제가 남아 있었다.
+
+### 원인
+
+- `title/content FTS` 와 `username LIKE` 를 하나의 `OR` predicate 로 묶으면, PostgreSQL 은 두 경로를 독립적으로 최적화하기보다 큰 `posts` 범위를 먼저 잡고 뒤에서 필터링하는 선택을 하기 쉬웠다.
+- 특히 최신순 정렬과 게시판 조건이 함께 있을 때, 플래너는 `board/draft/created_at` 쪽 접근을 선호했고 FTS 인덱스는 보조 필터 수준으로 밀렸다.
+- 결과적으로 `FTS + pg_trgm` 를 넣어도 본문/카운트 쿼리의 핵심 비용은 충분히 줄지 않았다.
+
+### 적용한 변경
+
+- [PostRepositoryImpl.java](/home/admin0/effective-disco/src/main/java/com/effectivedisco/repository/PostRepositoryImpl.java)
+  - `FTS branch` 와 `username trigram branch` 를 분리
+  - 두 branch 에서 `post id` 만 먼저 가져오고 `UNION` 으로 결합
+  - 중복 `post id` 는 dedup 한 뒤 본문 projection / `count(*)` 계산에 재사용
+- 이 구조로 PostgreSQL 이 `idx_posts_search_fts` 와 `idx_users_username_trgm` 를 독립적으로 고려한 뒤, 결과 id 집합만 합치도록 유도했다.
+- 검색 의미는 바꾸지 않았다.
+  - `title/content`: FTS
+  - `username`: substring semantics 유지
+
+### EXPLAIN 재측정
+
+실행 결과 디렉터리:
+
+- [explain-20260324-rewrite](/home/admin0/effective-disco/loadtest/results/explain-20260324-rewrite)
+
+전후 비교:
+
+- `board + keyword list`
+  - 이전: `65.411ms`
+  - 이후: `14.852ms`
+- `board + keyword count(*)`
+  - 이전: `155.216ms`
+  - 이후: `6.334ms`
+- `tag count(*)`
+  - 이전: `12.660ms`
+  - 이후: `13.781ms`
+
+실행계획 관찰:
+
+- [board-keyword-list.txt](/home/admin0/effective-disco/loadtest/results/explain-20260324-rewrite/board-keyword-list.txt)
+  - `idx_posts_search_fts` `Bitmap Index Scan` 사용
+  - `idx_users_username_trgm` `Bitmap Index Scan` 사용
+  - branch 결과는 `HashAggregate` 로 dedup 후 본문 row 를 조립
+- [board-keyword-count.txt](/home/admin0/effective-disco/loadtest/results/explain-20260324-rewrite/board-keyword-count.txt)
+  - `idx_posts_search_fts` 사용
+  - `username` branch 는 trigram index 후보로 남은 채 결과 id 를 합산
+- [tag-count.txt](/home/admin0/effective-disco/loadtest/results/explain-20260324-rewrite/tag-count.txt)
+  - `idx_post_tags_tag_post` `Index Only Scan` 유지
+
+### 검색 집중 soak 재측정
+
+실행 결과:
+
+- [soak-20260324-101110.md](/home/admin0/effective-disco/loadtest/results/soak-20260324-101110.md)
+- [soak-20260324-101110-server.json](/home/admin0/effective-disco/loadtest/results/soak-20260324-101110-server.json)
+
+전후 비교:
+
+- `http p95`: `1827.55ms -> 437.57ms`
+- `http p99`: `1984.91ms -> 639.39ms`
+- `unexpected_response_rate`: `0.1274 -> 0.0001`
+- `dbPoolTimeouts`: `503 -> 1`
+
+서버 프로파일:
+
+- `post.list averageWallTimeMs = 76.11`
+- `post.list averageSqlExecutionTimeMs = 72.42`
+- `post.list averageSqlStatementCount = 4.67`
+- `jwt.auth.load-user.db averageWallTimeMs = 149.62`
+- `maxActiveConnections = 28`
+- `maxThreadsAwaitingConnection = 106`
+
+해석:
+
+- 검색 query shape rewrite 는 검색 집중 부하에서 체감 가능한 개선을 만들었다.
+- status 는 여전히 `FAIL` 이지만, 이전처럼 search path 자체가 시스템을 무너뜨리는 수준은 아니었다.
+- 남은 hot path 는 검색 branch 자체보다 여전히 `post.list` SQL 실행 시간이다.
+
+### 반복 ramp-up 재측정
+
+실행 결과:
+
+- [sub-stability-20260324-101158.md](/home/admin0/effective-disco/loadtest/results/sub-stability-20260324-101158.md)
+- [sub-stability-20260324-101158-aggregate.tsv](/home/admin0/effective-disco/loadtest/results/sub-stability-20260324-101158-aggregate.tsv)
+
+최종 결과:
+
+- `0.6`: `5/5 PASS`, max `p99=447.57ms`
+- `0.7`: `5/5 PASS`, max `p99=497.31ms`
+- `0.8`: `5/5 PASS`, max `p99=681.46ms`
+- `highest stable factor = 0.8`
+- 전 런 `dbPoolTimeouts=0`, `unexpected_response_rate=0.0000`
+
+비교 기준:
+
+- 이전 [sub-stability-20260324-085905.md](/home/admin0/effective-disco/loadtest/results/sub-stability-20260324-085905.md) 에서는 `0.6` 도 `5/5 FAIL`, `highest stable factor = n/a`
+
+### 해석
+
+- 이번 단계의 핵심은 "FTS/pg_trgm 도입" 자체보다 "`OR` 를 `branch + UNION/ID dedup` 으로 바꿔서 플래너가 인덱스를 실제로 쓰게 만든 것" 이다.
+- query shape 가 바뀐 뒤에는 검색 `list/count` 가 실제로 빨라졌고, mixed ramp-up 안정 factor 도 `n/a` 에서 `0.8` 로 올라갔다.
+- 즉 이번 개선은 마이크로 쿼리 개선과 매크로 안정성 회복 둘 다 확인된 드문 사례다.
+
+### 남은 과제
+
+- 새 기준 `0.8` 로 `30분 -> 1시간 -> 2시간` soak 를 다시 돌린다.
+- 검색 병목은 많이 줄었으므로, 이후 남는 병목은 `post.list` 본문 SQL 자체와 mixed write 경로 경합인지 다시 분리해서 본다.
