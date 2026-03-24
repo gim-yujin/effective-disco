@@ -6,6 +6,7 @@ import com.effectivedisco.domain.User;
 import org.springframework.data.jpa.repository.EntityGraph;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Slice;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
@@ -157,7 +158,7 @@ public interface PostRepository extends JpaRepository<Post, Long>, PostRepositor
             LEFT JOIN p.board b
             WHERE p.board = :board
               AND p.draft = false
-            ORDER BY p.createdAt DESC
+            ORDER BY p.createdAt DESC, p.id DESC
             """,
             countQuery = """
             SELECT COUNT(p)
@@ -166,6 +167,132 @@ public interface PostRepository extends JpaRepository<Post, Long>, PostRepositor
               AND p.draft = false
             """)
     Page<PostListRow> findPublicPostListRowsByBoardOrderByCreatedAtDesc(@Param("board") Board board, Pageable pageable);
+
+    @Query("""
+            SELECT
+                p.id AS id,
+                p.title AS title,
+                p.content AS content,
+                p.createdAt AS createdAt,
+                p.updatedAt AS updatedAt,
+                p.commentCount AS commentCount,
+                p.likeCount AS likeCount,
+                p.viewCount AS viewCount,
+                p.pinned AS pinned,
+                p.draft AS draft,
+                p.imageUrl AS legacyImageUrl,
+                a.username AS authorUsername,
+                b.name AS boardName,
+                b.slug AS boardSlug
+            FROM Post p
+            JOIN p.author a
+            LEFT JOIN p.board b
+            WHERE p.board = :board
+              AND p.draft = false
+            ORDER BY p.createdAt DESC, p.id DESC
+            """)
+    Slice<PostListRow> findScrollPostListRowsByBoardOrderByCreatedAtDesc(@Param("board") Board board, Pageable pageable);
+
+    @Query("""
+            SELECT
+                p.id AS id,
+                p.title AS title,
+                p.content AS content,
+                p.createdAt AS createdAt,
+                p.updatedAt AS updatedAt,
+                p.commentCount AS commentCount,
+                p.likeCount AS likeCount,
+                p.viewCount AS viewCount,
+                p.pinned AS pinned,
+                p.draft AS draft,
+                p.imageUrl AS legacyImageUrl,
+                a.username AS authorUsername,
+                b.name AS boardName,
+                b.slug AS boardSlug
+            FROM Post p
+            JOIN p.author a
+            LEFT JOIN p.board b
+            WHERE p.board = :board
+              AND p.draft = false
+              AND a.username NOT IN :blockedUsernames
+            ORDER BY p.createdAt DESC, p.id DESC
+            """)
+    Slice<PostListRow> findScrollPostListRowsByBoardOrderByCreatedAtDescAndAuthorUsernameNotIn(
+            @Param("board") Board board,
+            @Param("blockedUsernames") List<String> blockedUsernames,
+            Pageable pageable);
+
+    /**
+     * 문제 해결:
+     * 게시판 최신 목록 무한 스크롤은 offset/page 기반 Page 를 계속 넘기면 count(*)를 매번 치고,
+     * 새 글 유입 시 중복/누락도 생긴다. createdAt+id seek cursor 로 다음 batch 만 잘라 읽는다.
+     */
+    @Query("""
+            SELECT
+                p.id AS id,
+                p.title AS title,
+                p.content AS content,
+                p.createdAt AS createdAt,
+                p.updatedAt AS updatedAt,
+                p.commentCount AS commentCount,
+                p.likeCount AS likeCount,
+                p.viewCount AS viewCount,
+                p.pinned AS pinned,
+                p.draft AS draft,
+                p.imageUrl AS legacyImageUrl,
+                a.username AS authorUsername,
+                b.name AS boardName,
+                b.slug AS boardSlug
+            FROM Post p
+            JOIN p.author a
+            LEFT JOIN p.board b
+            WHERE p.board = :board
+              AND p.draft = false
+              AND (
+                p.createdAt < :cursorCreatedAt
+                OR (p.createdAt = :cursorCreatedAt AND p.id < :cursorId)
+              )
+            ORDER BY p.createdAt DESC, p.id DESC
+            """)
+    Slice<PostListRow> findScrollPostListRowsByBoardAndCreatedAtBefore(@Param("board") Board board,
+                                                                       @Param("cursorCreatedAt") LocalDateTime cursorCreatedAt,
+                                                                       @Param("cursorId") Long cursorId,
+                                                                       Pageable pageable);
+
+    @Query("""
+            SELECT
+                p.id AS id,
+                p.title AS title,
+                p.content AS content,
+                p.createdAt AS createdAt,
+                p.updatedAt AS updatedAt,
+                p.commentCount AS commentCount,
+                p.likeCount AS likeCount,
+                p.viewCount AS viewCount,
+                p.pinned AS pinned,
+                p.draft AS draft,
+                p.imageUrl AS legacyImageUrl,
+                a.username AS authorUsername,
+                b.name AS boardName,
+                b.slug AS boardSlug
+            FROM Post p
+            JOIN p.author a
+            LEFT JOIN p.board b
+            WHERE p.board = :board
+              AND p.draft = false
+              AND a.username NOT IN :blockedUsernames
+              AND (
+                p.createdAt < :cursorCreatedAt
+                OR (p.createdAt = :cursorCreatedAt AND p.id < :cursorId)
+              )
+            ORDER BY p.createdAt DESC, p.id DESC
+            """)
+    Slice<PostListRow> findScrollPostListRowsByBoardAndCreatedAtBeforeAndAuthorUsernameNotIn(
+            @Param("board") Board board,
+            @Param("cursorCreatedAt") LocalDateTime cursorCreatedAt,
+            @Param("cursorId") Long cursorId,
+            @Param("blockedUsernames") List<String> blockedUsernames,
+            Pageable pageable);
 
     @Query(value = """
             SELECT

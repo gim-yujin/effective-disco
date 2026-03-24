@@ -1,7 +1,10 @@
 package com.effectivedisco.controller;
 
+import com.effectivedisco.domain.Block;
+import com.effectivedisco.domain.Board;
 import com.effectivedisco.domain.Post;
 import com.effectivedisco.domain.User;
+import com.effectivedisco.repository.BoardRepository;
 import com.effectivedisco.repository.BlockRepository;
 import com.effectivedisco.repository.BookmarkRepository;
 import com.effectivedisco.repository.FollowRepository;
@@ -39,6 +42,7 @@ class PostControllerTest {
     @Autowired JwtTokenProvider jwtTokenProvider;
     @Autowired UserRepository userRepository;
     @Autowired PostRepository postRepository;
+    @Autowired BoardRepository boardRepository;
     @Autowired PostLikeRepository postLikeRepository;
     @Autowired NotificationRepository notificationRepository;
     @Autowired BookmarkRepository bookmarkRepository;
@@ -86,6 +90,45 @@ class PostControllerTest {
         mockMvc.perform(get("/api/posts"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.content").isArray());
+    }
+
+    @Test
+    void getBoardScrollPosts_latestBoard_returnsCursorBatch() throws Exception {
+        Board board = boardRepository.save(Board.builder()
+                .name("스크롤 게시판")
+                .slug("scroll-board")
+                .build());
+        postRepository.save(Post.builder().title("post-1").content("content").author(testUser).board(board).build());
+        postRepository.save(Post.builder().title("post-2").content("content").author(testUser).board(board).build());
+        postRepository.save(Post.builder().title("post-3").content("content").author(testUser).board(board).build());
+
+        mockMvc.perform(get("/api/posts/scroll")
+                        .param("boardSlug", "scroll-board")
+                        .param("size", "2"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.content.length()").value(2))
+                .andExpect(jsonPath("$.hasNext").value(true))
+                .andExpect(jsonPath("$.nextCursorId").isNumber())
+                .andExpect(jsonPath("$.nextCursorCreatedAt").isNotEmpty());
+    }
+
+    @Test
+    void getBoardScrollPosts_authenticated_filtersBlockedAuthors() throws Exception {
+        Board board = boardRepository.save(Board.builder()
+                .name("차단 스크롤 게시판")
+                .slug("blocked-scroll-board")
+                .build());
+        postRepository.save(Post.builder().title("visible").content("content").author(testUser).board(board).build());
+        postRepository.save(Post.builder().title("blocked").content("content").author(otherUser).board(board).build());
+        blockRepository.save(new Block(testUser, otherUser));
+
+        mockMvc.perform(get("/api/posts/scroll")
+                        .param("boardSlug", "blocked-scroll-board")
+                        .param("size", "10")
+                        .header("Authorization", "Bearer " + testUserToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.content.length()").value(1))
+                .andExpect(jsonPath("$.content[0].author").value("testuser"));
     }
 
     @Test

@@ -2,7 +2,9 @@ package com.effectivedisco.controller;
 
 import com.effectivedisco.dto.request.PostRequest;
 import com.effectivedisco.dto.response.LikeResponse;
+import com.effectivedisco.dto.response.PostScrollResponse;
 import com.effectivedisco.dto.response.PostResponse;
+import com.effectivedisco.service.BlockService;
 import com.effectivedisco.service.PostService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
@@ -17,7 +19,11 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.security.core.userdetails.UserDetails;
+import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.web.bind.annotation.*;
+
+import java.time.LocalDateTime;
+import java.util.Set;
 
 @Tag(name = "Posts", description = "게시물 CRUD 및 좋아요 API")
 @RestController
@@ -26,6 +32,7 @@ import org.springframework.web.bind.annotation.*;
 public class PostController {
 
     private final PostService postService;
+    private final BlockService blockService;
 
     @Operation(summary = "게시물 목록 조회",
                description = "boardSlug·keyword·tag 조합으로 필터링 가능합니다. " +
@@ -48,6 +55,39 @@ public class PostController {
             @Parameter(description = "정렬 기준: latest | likes | comments")
             @RequestParam(defaultValue = "latest") String sort) {
         return ResponseEntity.ok(postService.getPosts(page, size, keyword, tag, boardSlug, sort));
+    }
+
+    @Operation(summary = "게시판 최신 목록 무한 스크롤 배치 조회",
+               description = "게시판 최신순 목록 전용 seek-cursor API입니다. " +
+                             "keyword/tag/likes/comments 정렬에는 사용하지 않습니다.")
+    @ApiResponses({
+        @ApiResponse(responseCode = "200", description = "무한 스크롤 배치 조회 성공"),
+        @ApiResponse(responseCode = "400", description = "잘못된 sort 또는 boardSlug")
+    })
+    @GetMapping("/scroll")
+    public ResponseEntity<PostScrollResponse> getBoardScrollPosts(
+            @Parameter(description = "페이지 크기", example = "20")
+            @RequestParam(defaultValue = "20") int size,
+            @Parameter(description = "게시판 슬러그", example = "free")
+            @RequestParam String boardSlug,
+            @Parameter(description = "정렬 기준: latest 만 허용")
+            @RequestParam(defaultValue = "latest") String sort,
+            @Parameter(description = "다음 배치를 위한 createdAt 커서")
+            @RequestParam(required = false)
+            @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME)
+            LocalDateTime cursorCreatedAt,
+            @Parameter(description = "다음 배치를 위한 ID 커서")
+            @RequestParam(required = false) Long cursorId,
+            @AuthenticationPrincipal UserDetails userDetails) {
+        if ((cursorCreatedAt == null) != (cursorId == null)) {
+            throw new IllegalArgumentException("cursorCreatedAt 과 cursorId 는 함께 전달해야 합니다.");
+        }
+        Set<String> blockedUsernames = userDetails == null
+                ? Set.of()
+                : blockService.getBlockedUsernames(userDetails.getUsername());
+        return ResponseEntity.ok(postService.getBoardScrollPosts(
+                size, boardSlug, sort, cursorCreatedAt, cursorId, blockedUsernames
+        ));
     }
 
     @Operation(summary = "게시물 단건 조회",

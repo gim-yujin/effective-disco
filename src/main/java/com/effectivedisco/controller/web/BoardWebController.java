@@ -3,6 +3,8 @@ package com.effectivedisco.controller.web;
 import com.effectivedisco.dto.request.CommentRequest;
 import com.effectivedisco.dto.request.PostRequest;
 import com.effectivedisco.dto.response.BoardResponse;
+import com.effectivedisco.dto.response.PostScrollCursor;
+import com.effectivedisco.dto.response.PostScrollResponse;
 import com.effectivedisco.dto.response.PostResponse;
 import com.effectivedisco.service.BlockService;
 import com.effectivedisco.service.BoardService;
@@ -12,6 +14,7 @@ import com.effectivedisco.service.ImageService;
 import com.effectivedisco.service.PostService;
 import jakarta.servlet.http.HttpSession;
 import lombok.RequiredArgsConstructor;
+import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.stereotype.Controller;
@@ -23,6 +26,7 @@ import org.springframework.web.servlet.mvc.support.RedirectAttributes;
 import java.util.Collections;
 import java.util.HashSet;
 import java.util.List;
+import java.time.LocalDateTime;
 import java.util.Set;
 
 /**
@@ -86,13 +90,25 @@ public class BoardWebController {
                                 @RequestParam(defaultValue = "latest") String sort,
                                 @AuthenticationPrincipal UserDetails userDetails,
                                 Model model) {
+        var posts = postService.getPosts(page, size, keyword, tag, slug, sort);
+        boolean infiniteScrollEnabled = page == 0
+                && (keyword == null || keyword.isBlank())
+                && (tag == null || tag.isBlank())
+                && (sort == null || sort.isBlank() || "latest".equalsIgnoreCase(sort));
+        PostScrollCursor scrollCursor = resolveScrollCursor(posts.getContent());
+
         // sort 파라미터를 서비스에 전달해 좋아요순/댓글순 정렬 지원
-        model.addAttribute("posts",       postService.getPosts(page, size, keyword, tag, slug, sort));
+        model.addAttribute("posts",       posts);
         model.addAttribute("pinnedPosts", postService.getPinnedPosts(slug));
         model.addAttribute("board",       boardService.getBoard(slug));
         model.addAttribute("keyword", keyword != null ? keyword : "");
         model.addAttribute("tag",     tag     != null ? tag     : "");
         model.addAttribute("sort",    sort);
+        model.addAttribute("infiniteScrollEnabled", infiniteScrollEnabled);
+        model.addAttribute("scrollPageSize", posts.getSize());
+        model.addAttribute("scrollHasNext", posts.hasNext());
+        model.addAttribute("scrollCursorCreatedAt", scrollCursor.createdAt());
+        model.addAttribute("scrollCursorId", scrollCursor.id());
         // 이 게시판 안에서 사용된 태그 목록 (태그 필터 바)
         model.addAttribute("allTags", postService.getAllTagNames());
         // 차단된 사용자명 집합 — 템플릿에서 해당 사용자의 게시물 행을 숨기는 데 사용
@@ -101,6 +117,33 @@ public class BoardWebController {
                 : Collections.emptySet();
         model.addAttribute("blockedUsernames", blocked);
         return "boards/list"; // templates/boards/list.html
+    }
+
+    @GetMapping("/boards/{slug}/scroll")
+    @ResponseBody
+    public PostScrollResponse boardScrollBatch(@PathVariable String slug,
+                                               @RequestParam(defaultValue = "20") int size,
+                                               @RequestParam(defaultValue = "latest") String sort,
+                                               @RequestParam(required = false)
+                                               @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME)
+                                               LocalDateTime cursorCreatedAt,
+                                               @RequestParam(required = false) Long cursorId,
+                                               @AuthenticationPrincipal UserDetails userDetails) {
+        if ((cursorCreatedAt == null) != (cursorId == null)) {
+            throw new IllegalArgumentException("cursorCreatedAt 과 cursorId 는 함께 전달해야 합니다.");
+        }
+        Set<String> blocked = userDetails != null
+                ? blockService.getBlockedUsernames(userDetails.getUsername())
+                : Collections.emptySet();
+        return postService.getBoardScrollPosts(size, slug, sort, cursorCreatedAt, cursorId, blocked);
+    }
+
+    private PostScrollCursor resolveScrollCursor(List<PostResponse> posts) {
+        if (posts == null || posts.isEmpty()) {
+            return new PostScrollCursor(null, null);
+        }
+        PostResponse last = posts.get(posts.size() - 1);
+        return new PostScrollCursor(last.getCreatedAt(), last.getId());
     }
 
     /* ══════════════════════════════════════════════════════════

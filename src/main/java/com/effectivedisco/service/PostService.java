@@ -8,6 +8,8 @@ import com.effectivedisco.domain.Tag;
 import com.effectivedisco.domain.User;
 import com.effectivedisco.dto.request.PostRequest;
 import com.effectivedisco.dto.response.LikeResponse;
+import com.effectivedisco.dto.response.PostScrollCursor;
+import com.effectivedisco.dto.response.PostScrollResponse;
 import com.effectivedisco.dto.response.PostResponse;
 import com.effectivedisco.loadtest.LoadTestStepProfiler;
 import com.effectivedisco.repository.BoardRepository;
@@ -22,6 +24,8 @@ import org.springframework.cache.annotation.Cacheable;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Slice;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.core.userdetails.UsernameNotFoundException;
 import org.springframework.stereotype.Service;
@@ -35,6 +39,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.time.LocalDateTime;
 import java.util.stream.Collectors;
 
 @Service
@@ -108,6 +113,42 @@ public class PostService {
         }
 
         return toPostResponseProjectionPage(posts);
+    }
+
+    @Transactional(readOnly = true)
+    public PostScrollResponse getBoardScrollPosts(int size,
+                                                  String boardSlug,
+                                                  String sort,
+                                                  LocalDateTime cursorCreatedAt,
+                                                  Long cursorId,
+                                                  Set<String> blockedUsernames) {
+        String sortKey = (sort != null) ? sort.trim().toLowerCase() : "latest";
+        if (!"latest".equals(sortKey)) {
+            throw new IllegalArgumentException("무한 스크롤은 최신순 게시판 목록만 지원합니다.");
+        }
+        if (boardSlug == null || boardSlug.isBlank()) {
+            throw new IllegalArgumentException("무한 스크롤에는 boardSlug가 필요합니다.");
+        }
+
+        Board board = boardRepository.findBySlug(boardSlug)
+                .orElseThrow(() -> new IllegalArgumentException("존재하지 않는 게시판: " + boardSlug));
+
+        // 문제 해결:
+        // 무한 스크롤은 page 번호와 total count 대신 seek cursor 만 유지해야 중복/누락과 count(*) 압박을 줄일 수 있다.
+        // 또한 size를 제한해 클라이언트가 과도한 batch를 요청하며 pool을 오래 점유하는 경로도 막는다.
+        int pageSize = Math.max(1, Math.min(size, 50));
+        Pageable limit = PageRequest.of(0, pageSize);
+        Slice<PostRepository.PostListRow> slice = loadBoardScrollSlice(
+                board,
+                limit,
+                cursorCreatedAt,
+                cursorId,
+                blockedUsernames == null ? Set.of() : blockedUsernames
+        );
+
+        List<PostResponse> content = toPostResponseProjectionList(slice.getContent());
+        PostScrollCursor nextCursor = resolveNextScrollCursor(slice);
+        return new PostScrollResponse(content, slice.hasNext(), nextCursor.createdAt(), nextCursor.id());
     }
 
     /**
@@ -391,6 +432,39 @@ public class PostService {
             return List.of(post.getLegacyImageUrl());
         }
         return List.of();
+    }
+
+    private Slice<PostRepository.PostListRow> loadBoardScrollSlice(Board board,
+                                                                   Pageable limit,
+                                                                   LocalDateTime cursorCreatedAt,
+                                                                   Long cursorId,
+                                                                   Set<String> blockedUsernames) {
+        List<String> blocked = blockedUsernames.stream()
+                .filter(username -> username != null && !username.isBlank())
+                .sorted()
+                .toList();
+
+        if (cursorCreatedAt == null || cursorId == null) {
+            return blocked.isEmpty()
+                    ? postRepository.findScrollPostListRowsByBoardOrderByCreatedAtDesc(board, limit)
+                    : postRepository.findScrollPostListRowsByBoardOrderByCreatedAtDescAndAuthorUsernameNotIn(
+                            board, blocked, limit
+                    );
+        }
+
+        return blocked.isEmpty()
+                ? postRepository.findScrollPostListRowsByBoardAndCreatedAtBefore(board, cursorCreatedAt, cursorId, limit)
+                : postRepository.findScrollPostListRowsByBoardAndCreatedAtBeforeAndAuthorUsernameNotIn(
+                        board, cursorCreatedAt, cursorId, blocked, limit
+                );
+    }
+
+    private PostScrollCursor resolveNextScrollCursor(Slice<PostRepository.PostListRow> slice) {
+        if (slice.isEmpty()) {
+            return new PostScrollCursor(null, null);
+        }
+        PostRepository.PostListRow last = slice.getContent().get(slice.getNumberOfElements() - 1);
+        return new PostScrollCursor(last.getCreatedAt(), last.getId());
     }
 
     private void preloadListRelations(List<Post> posts) {

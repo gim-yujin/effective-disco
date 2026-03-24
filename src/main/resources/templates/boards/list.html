@@ -107,11 +107,14 @@
         <!-- 게시물 목록 테이블: data-* 속성으로 무한 스크롤 JS에 초기값 전달 -->
         <table class="board-table" id="post-table"
                th:data-board-slug="${board.slug}"
-               th:data-total-pages="${posts.totalPages}"
-               th:data-current-page="${posts.number}"
+               th:data-page-size="${scrollPageSize}"
                th:data-tag="${tag}"
                th:data-keyword="${keyword}"
-               th:data-sort="${sort}">
+               th:data-sort="${sort}"
+               th:data-infinite-scroll-enabled="${infiniteScrollEnabled}"
+               th:data-scroll-has-next="${scrollHasNext}"
+               th:data-scroll-cursor-created-at="${scrollCursorCreatedAt}"
+               th:data-scroll-cursor-id="${scrollCursorId}">
             <thead>
                 <tr>
                     <th class="col-no">번호</th>
@@ -160,7 +163,7 @@
         </table>
 
         <!-- 무한 스크롤 감지용 sentinel. JS가 이 요소를 관찰한다. -->
-        <div id="scroll-sentinel"></div>
+        <div id="scroll-sentinel" th:if="${infiniteScrollEnabled}"></div>
 
         <!-- 페이지네이션: JS 로드 후 숨겨지고 무한 스크롤로 대체 -->
         <div class="pagination" id="pagination" th:if="${posts.totalPages > 1}">
@@ -188,34 +191,41 @@
     if (!table || !sentinel) return;
 
     const boardSlug  = table.dataset.boardSlug || '';
-    const tag        = table.dataset.tag        || '';
-    const keyword    = table.dataset.keyword    || '';
-    const sort       = table.dataset.sort       || 'latest'; // 정렬 기준 유지
-    const totalPages = parseInt(table.dataset.totalPages || '1', 10);
-    let   nextPage   = parseInt(table.dataset.currentPage || '0', 10) + 1;
+    const sort       = table.dataset.sort      || 'latest';
+    const pageSize   = parseInt(table.dataset.pageSize || '20', 10);
+    const enabled    = table.dataset.infiniteScrollEnabled === 'true';
+    let   hasNext    = table.dataset.scrollHasNext === 'true';
+    let   cursorCreatedAt = table.dataset.scrollCursorCreatedAt || '';
+    let   cursorId   = table.dataset.scrollCursorId || '';
     let   loading    = false;
 
-    // 페이지가 1장뿐이면 무한 스크롤 불필요
-    if (nextPage >= totalPages) { sentinel.remove(); return; }
+    if (!enabled || !hasNext || !cursorCreatedAt || !cursorId) {
+        if (sentinel) sentinel.remove();
+        return;
+    }
 
     // 서버 렌더링 페이지네이션 숨김 — 무한 스크롤로 대체
     if (pagination) pagination.style.display = 'none';
 
     /**
-     * /api/posts 에서 다음 페이지를 JSON으로 받아 <tr> 행을 생성 후 tbody에 추가한다.
+     * 문제 해결:
+     * 게시판 최신 목록은 page/offset 기반으로 이어 붙이면 첫 페이지 size와 다음 요청 size가 어긋나거나,
+     * 새 글 유입 시 중복/누락이 생길 수 있다. seek cursor(createdAt,id)로 다음 batch만 읽는다.
      */
     function loadMore() {
-        if (loading || nextPage >= totalPages) return;
+        if (loading || !hasNext) return;
         loading = true;
         sentinel.textContent = '불러오는 중…';
 
-        const params = new URLSearchParams({ page: nextPage, size: 10 });
-        if (boardSlug) params.set('boardSlug', boardSlug);
-        if (tag)       params.set('tag', tag);
-        if (keyword)   params.set('keyword', keyword);
-        if (sort)      params.set('sort', sort); // 정렬 기준을 API 요청에 포함
+        const params = new URLSearchParams({
+            boardSlug,
+            size: String(pageSize),
+            sort,
+            cursorCreatedAt,
+            cursorId: String(cursorId)
+        });
 
-        fetch('/api/posts?' + params)
+        fetch(`/boards/${encodeURIComponent(boardSlug)}/scroll?` + params)
             .then(r => r.json())
             .then(data => {
                 data.content.forEach(post => {
@@ -238,9 +248,11 @@
                         <td class="col-likes">${post.likeCount}</td>`;
                     tbody.appendChild(tr);
                 });
-                nextPage++;
+                hasNext = !!data.hasNext;
+                cursorCreatedAt = data.nextCursorCreatedAt || '';
+                cursorId = data.nextCursorId || '';
                 loading = false;
-                if (nextPage >= totalPages) {
+                if (!hasNext || !cursorCreatedAt || !cursorId) {
                     sentinel.textContent = '';
                     observer.disconnect();
                 } else {
