@@ -48,6 +48,21 @@ enable_profile_component() {
       SEARCH_PRE_ALLOCATED_VUS="${SEARCH_PRE_ALLOCATED_VUS_OVERRIDE:-20}"
       SEARCH_MAX_VUS="${SEARCH_MAX_VUS_OVERRIDE:-80}"
       ;;
+    browse_board_feed)
+      BROWSE_RATE="${BROWSE_RATE_OVERRIDE:-80}"
+      BROWSE_PRE_ALLOCATED_VUS="${BROWSE_PRE_ALLOCATED_VUS_OVERRIDE:-40}"
+      BROWSE_MAX_VUS="${BROWSE_MAX_VUS_OVERRIDE:-120}"
+      ;;
+    hot_post_details)
+      HOT_POST_RATE="${HOT_POST_RATE_OVERRIDE:-120}"
+      HOT_POST_PRE_ALLOCATED_VUS="${HOT_POST_PRE_ALLOCATED_VUS_OVERRIDE:-50}"
+      HOT_POST_MAX_VUS="${HOT_POST_MAX_VUS_OVERRIDE:-150}"
+      ;;
+    search_catalog)
+      SEARCH_RATE="${SEARCH_RATE_OVERRIDE:-40}"
+      SEARCH_PRE_ALLOCATED_VUS="${SEARCH_PRE_ALLOCATED_VUS_OVERRIDE:-20}"
+      SEARCH_MAX_VUS="${SEARCH_MAX_VUS_OVERRIDE:-80}"
+      ;;
     write)
       WRITE_START_RATE="${WRITE_START_RATE_OVERRIDE:-8}"
       WRITE_STAGE_ONE_RATE="${WRITE_STAGE_ONE_RATE_OVERRIDE:-20}"
@@ -60,6 +75,19 @@ enable_profile_component() {
       LIKE_REMOVE_VUS="${LIKE_REMOVE_VUS_OVERRIDE:-80}"
       BOOKMARK_MIXED_VUS="${BOOKMARK_MIXED_VUS_OVERRIDE:-60}"
       FOLLOW_MIXED_VUS="${FOLLOW_MIXED_VUS_OVERRIDE:-60}"
+      BLOCK_MIXED_VUS="${BLOCK_MIXED_VUS_OVERRIDE:-60}"
+      ;;
+    like_mixed)
+      LIKE_ADD_VUS="${LIKE_ADD_VUS_OVERRIDE:-80}"
+      LIKE_REMOVE_VUS="${LIKE_REMOVE_VUS_OVERRIDE:-80}"
+      ;;
+    bookmark_mixed)
+      BOOKMARK_MIXED_VUS="${BOOKMARK_MIXED_VUS_OVERRIDE:-60}"
+      ;;
+    follow_mixed)
+      FOLLOW_MIXED_VUS="${FOLLOW_MIXED_VUS_OVERRIDE:-60}"
+      ;;
+    block_mixed)
       BLOCK_MIXED_VUS="${BLOCK_MIXED_VUS_OVERRIDE:-60}"
       ;;
     notification)
@@ -93,6 +121,8 @@ export LIKE_ADD_VUS LIKE_REMOVE_VUS BOOKMARK_MIXED_VUS FOLLOW_MIXED_VUS BLOCK_MI
 # profile별로 관련 없는 scenario를 0으로 꺼서 원인 경로를 독립적으로 반복 측정한다.
 # 또한 `browse_search+relation_mixed` 같은 2-profile 조합도 같은 방식으로 켤 수 있어야
 # broad mixed 와 최소 재현 조합의 차이를 직접 비교할 수 있다.
+# 여기서 더 작은 component를 허용해 `browse_board_feed+like_mixed` 같은 최소 재현 후보도
+# 같은 러너로 바로 반복 측정할 수 있게 한다.
 printf 'scenario_profile=%s (%s)\n' "$SCENARIO_PROFILE" "$profile_description"
 printf 'result_dir=%s\n' "$RESULT_DIR"
 

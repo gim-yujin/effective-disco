@@ -44,6 +44,12 @@ SCENARIO_PROFILE=browse_search ./loadtest/run-bbs-scenario-sub-stability.sh
 SCENARIO_PROFILE=browse_search+relation_mixed ./loadtest/run-bbs-scenario-sub-stability.sh
 ```
 
+세분화된 read/relation 조합 반복 탐색:
+
+```bash
+SCENARIO_PROFILE=browse_board_feed+search_catalog+relation_mixed ./loadtest/run-bbs-scenario-sub-stability.sh
+```
+
 시나리오 matrix 비교:
 
 ```bash
@@ -73,10 +79,18 @@ SCENARIO_PROFILE=browse_search+relation_mixed ./loadtest/run-bbs-scenario-sub-st
 
 - `full`: 기존 broad mixed 전체 시나리오
 - `browse_search`: 목록/상세/검색 읽기 경로만 측정
+- `browse_board_feed`: 게시판 목록 조회만 측정
+- `hot_post_details`: 인기 게시물 상세 조회만 측정
+- `search_catalog`: 검색 경로만 측정
 - `write`: 게시물 작성/댓글 작성만 측정
 - `relation_mixed`: like/follow/bookmark/block 혼합 경쟁만 측정
+- `like_mixed`: 좋아요 add/remove 경쟁만 측정
+- `bookmark_mixed`: 북마크 add/remove 경쟁만 측정
+- `follow_mixed`: 팔로우/언팔로우 경쟁만 측정
+- `block_mixed`: 차단/해제 경쟁만 측정
 - `notification`: 알림 생성/읽음 처리만 측정
 - `browse_search+relation_mixed`: `+` 로 이어 붙인 2-profile 조합도 지원
+- `browse_board_feed+search_catalog+relation_mixed`: 세분화된 3-profile 조합도 지원
 
 matrix 예시:
 
@@ -85,6 +99,16 @@ BASE_URL=http://localhost:18081 \
 RUNS=5 \
 STAGE_FACTORS=0.5,0.55,0.6 \
 SCENARIO_PROFILES=browse_search+relation_mixed,browse_search+notification,write+relation_mixed \
+./loadtest/run-bbs-scenario-matrix.sh
+```
+
+세분화 예시:
+
+```bash
+BASE_URL=http://localhost:18081 \
+RUNS=5 \
+STAGE_FACTORS=0.5,0.55,0.6 \
+SCENARIO_PROFILES=browse_board_feed+relation_mixed,search_catalog+relation_mixed,browse_board_feed+search_catalog+relation_mixed \
 ./loadtest/run-bbs-scenario-matrix.sh
 ```
 

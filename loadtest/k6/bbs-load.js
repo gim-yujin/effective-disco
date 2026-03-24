@@ -37,6 +37,8 @@ const scenarios = {};
 // broad mixed load만 계속 돌리면 어느 시나리오가 먼저 Hikari timeout을 만들었는지 분리할 수 없다.
 // scenario profile을 두어 read / write / relation mixed / notification 경로를 각각 독립적으로 켜고 끌 수 있게 한다.
 // 또한 2-profile 조합 실험을 위해 `browse_search+relation_mixed` 같은 조합 문자열도 그대로 해석한다.
+// 여기서 한 단계 더 나아가 browse/search 와 relation mixed 를 더 작은 조합으로 쪼개야
+// "어느 read path + 어느 relation write" 가 최소 재현 조합인지 직접 잡아낼 수 있다.
 function isProfileEnabled(...profiles) {
   return enabledScenarioProfiles.includes('full')
     || profiles.some((profile) => enabledScenarioProfiles.includes(profile));
@@ -95,7 +97,8 @@ addConstantArrivalScenario(
   __ENV.BROWSE_DURATION || '1m',
   Number(__ENV.BROWSE_PRE_ALLOCATED_VUS || 20),
   Number(__ENV.BROWSE_MAX_VUS || 60),
-  'browse_search'
+  'browse_search',
+  'browse_board_feed'
 );
 
 addConstantArrivalScenario(
@@ -105,7 +108,8 @@ addConstantArrivalScenario(
   __ENV.HOT_POST_DURATION || '1m',
   Number(__ENV.HOT_POST_PRE_ALLOCATED_VUS || 20),
   Number(__ENV.HOT_POST_MAX_VUS || 80),
-  'browse_search'
+  'browse_search',
+  'hot_post_details'
 );
 
 addConstantArrivalScenario(
@@ -115,7 +119,8 @@ addConstantArrivalScenario(
   __ENV.SEARCH_DURATION || '1m',
   Number(__ENV.SEARCH_PRE_ALLOCATED_VUS || 10),
   Number(__ENV.SEARCH_MAX_VUS || 40),
-  'browse_search'
+  'browse_search',
+  'search_catalog'
 );
 
 addRampingArrivalScenario(
@@ -136,7 +141,8 @@ addConstantVusScenario(
   'likeAddRace',
   Number(__ENV.LIKE_ADD_VUS || 30),
   __ENV.LIKE_ADD_DURATION || '45s',
-  'relation_mixed'
+  'relation_mixed',
+  'like_mixed'
 );
 
 addConstantVusScenario(
@@ -144,7 +150,8 @@ addConstantVusScenario(
   'likeRemoveRace',
   Number(__ENV.LIKE_REMOVE_VUS || 30),
   __ENV.LIKE_REMOVE_DURATION || '45s',
-  'relation_mixed'
+  'relation_mixed',
+  'like_mixed'
 );
 
 addConstantVusScenario(
@@ -152,7 +159,8 @@ addConstantVusScenario(
   'bookmarkMixedRace',
   bookmarkMixedVus,
   __ENV.BOOKMARK_MIXED_DURATION || '45s',
-  'relation_mixed'
+  'relation_mixed',
+  'bookmark_mixed'
 );
 
 addConstantVusScenario(
@@ -160,7 +168,8 @@ addConstantVusScenario(
   'followMixedRace',
   followMixedVus,
   __ENV.FOLLOW_MIXED_DURATION || '45s',
-  'relation_mixed'
+  'relation_mixed',
+  'follow_mixed'
 );
 
 addConstantVusScenario(
@@ -168,7 +177,8 @@ addConstantVusScenario(
   'blockMixedRace',
   blockMixedVus,
   __ENV.BLOCK_MIXED_DURATION || '45s',
-  'relation_mixed'
+  'relation_mixed',
+  'block_mixed'
 );
 
 addConstantVusScenario(

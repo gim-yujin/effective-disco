@@ -436,6 +436,32 @@
 - 전 조합에서 `duplicateKeyConflicts=0`, 관계 중복 row `0`, `postLike/comment/unread mismatch=0` 으로 정합성 불변식은 계속 유지됐다.
 - 결론적으로 broad mixed 의 최소 재현 조합 후보는 `browse_search + relation_mixed` 다. 즉 현재 병목은 단순 read 나 단순 relation write 가 아니라, 두 경로가 동시에 DB pool 과 트랜잭션 점유 시간을 밀어 올릴 때 나타난다.
 
+## 16차 결과
+
+상태: 완료
+
+검증 날짜:
+
+- 2026-03-24
+
+검증 범위:
+
+- `browse_search` 와 `relation_mixed` 를 더 작은 component로 분해
+- 새 component: `browse_board_feed`, `hot_post_details`, `search_catalog`, `like_mixed`, `bookmark_mixed`, `follow_mixed`, `block_mixed`
+- clean `loadtest` 인스턴스(`18081`)에서 `0.5 / 0.55 / 0.6`, `RUNS=5`
+- `browse_board_feed+relation_mixed`, `search_catalog+relation_mixed`, `browse_board_feed+search_catalog+relation_mixed` 반복 측정
+
+핵심 결론:
+
+- 이번 결과는 `원인 확정`이 아니라 broad mixed 불안정성의 `최소 재현 조건`을 더 좁힌 것이다.
+- `browse_board_feed+relation_mixed`: [aggregate](/home/admin0/effective-disco/loadtest/results/scenario-browse_board_feed+relation_mixed-20260324-174416/scenario-browse_board_feed+relation_mixed-20260324-174416/sub-stability-20260324-174416-aggregate.tsv) 기준 `0.6` 까지 대체로 안정적이었다. 단, `0.5` 에서 `1 FAIL` 이 있어 완전히 무관하다고 단정할 수는 없다.
+- `search_catalog+relation_mixed`: [aggregate](/home/admin0/effective-disco/loadtest/results/scenario-search_catalog+relation_mixed-20260324-180052/sub-stability-20260324-180052-aggregate.tsv) 기준 `0.5 / 0.55 / 0.6` 모두 `5/5 PASS` 였다.
+- 반면 `browse_board_feed+search_catalog+relation_mixed`: [aggregate](/home/admin0/effective-disco/loadtest/results/scenario-browse_board_feed+search_catalog+relation_mixed-20260324-181449/scenario-browse_board_feed+search_catalog+relation_mixed-20260324-181449/sub-stability-20260324-181449-aggregate.tsv) 기준 `0.5 = 1P/1L/3F`, `0.55 = 0P/0L/1F`, `highest stable factor = n/a` 로 강하게 재현됐다.
+- 같은 tri-profile 상세는 [sub-stability-20260324-181449.md](/home/admin0/effective-disco/loadtest/results/scenario-browse_board_feed+search_catalog+relation_mixed-20260324-181449/scenario-browse_board_feed+search_catalog+relation_mixed-20260324-181449/sub-stability-20260324-181449.md) 에 있다.
+- `browse_board_feed+search_catalog+relation_mixed` 의 max `p99` 는 `741.28ms`, max `dbPoolTimeouts` 는 `30` 이었고, `unexpected-response` 도 재현됐다.
+- 전 조합에서 `duplicateKeyConflicts=0`, 관계 중복 row `0`, `postLike/comment/unread mismatch=0` 으로 정합성 불변식은 계속 유지됐다.
+- 결론적으로 현재까지 가장 강한 최소 재현 조건은 `browse_board_feed + search_catalog + relation_mixed` 이다. 즉 read path 하나가 아니라 `feed + search` 가 함께 DB를 누르는 동안 relation write 가 겹칠 때 불안정성이 나타난다.
+
 ## 1차에서 보장한 불변식
 
 ### 관계형 쓰기 경로

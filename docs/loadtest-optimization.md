@@ -1352,3 +1352,62 @@ profile 별 결과:
 - `browse_board_feed + relation_mixed`, `search_catalog + relation_mixed` 같이 더 작은 조합으로 재분해
 - `relation_mixed` 내부에서도 `like add/remove` 와 `bookmark/follow/block` 을 나눠 최소 충돌 경로 확인
 - broad mixed 재현 없이도 같은 실패를 만드는 최소 시나리오를 확정한 뒤 해당 조합만 집중 최적화
+
+## 2026-03-24 세분화된 read/relation 조합 측정
+
+상태: 완료
+
+### 배경
+
+- `browse_search + relation_mixed` 까지는 broad mixed 불안정성을 재현했지만, 이 수준으로는 여전히 read 경로가 너무 컸다.
+- 그래서 `browse_search` 를 `browse_board_feed`, `hot_post_details`, `search_catalog` 로, `relation_mixed` 를 `like_mixed`, `bookmark_mixed`, `follow_mixed`, `block_mixed` 로 더 잘게 노출했다.
+- 목적은 `원인`을 바로 단정하는 것이 아니라, broad mixed 를 가장 작게 재현하는 `최소 조건`을 찾는 것이었다.
+
+### 구현
+
+- [bbs-load.js](/home/admin0/effective-disco/loadtest/k6/bbs-load.js)
+  - `browse_board_feed`, `hot_post_details`, `search_catalog`
+  - `like_mixed`, `bookmark_mixed`, `follow_mixed`, `block_mixed`
+  - 각 scenario 가 부모 profile(`browse_search`, `relation_mixed`)뿐 아니라 세분화된 component profile 에도 매핑되도록 확장
+- [run-bbs-scenario-sub-stability.sh](/home/admin0/effective-disco/loadtest/run-bbs-scenario-sub-stability.sh)
+  - 세분화된 component별 rate/VU 기본값 추가
+  - `browse_board_feed+search_catalog+relation_mixed` 같은 조합도 그대로 해석
+
+### 실행 결과
+
+단일 read + relation 결과:
+
+- `browse_board_feed+relation_mixed`
+  - [suite](/home/admin0/effective-disco/loadtest/results/scenario-browse_board_feed+relation_mixed-20260324-174416/scenario-browse_board_feed+relation_mixed-20260324-174416/sub-stability-20260324-174416.md)
+  - [aggregate](/home/admin0/effective-disco/loadtest/results/scenario-browse_board_feed+relation_mixed-20260324-174416/scenario-browse_board_feed+relation_mixed-20260324-174416/sub-stability-20260324-174416-aggregate.tsv)
+  - `0.5 = 4P/0L/1F`, `0.55 = 4P/0L/0F`, `0.6 = 4P/0L/0F`
+- `search_catalog+relation_mixed`
+  - [suite](/home/admin0/effective-disco/loadtest/results/scenario-search_catalog+relation_mixed-20260324-180052/sub-stability-20260324-180052.md)
+  - [aggregate](/home/admin0/effective-disco/loadtest/results/scenario-search_catalog+relation_mixed-20260324-180052/sub-stability-20260324-180052-aggregate.tsv)
+  - `0.5 / 0.55 / 0.6` 모두 `5/5 PASS`
+
+두 read + relation 결과:
+
+- `browse_board_feed+search_catalog+relation_mixed`
+  - [suite](/home/admin0/effective-disco/loadtest/results/scenario-browse_board_feed+search_catalog+relation_mixed-20260324-181449/scenario-browse_board_feed+search_catalog+relation_mixed-20260324-181449/sub-stability-20260324-181449.md)
+  - [aggregate](/home/admin0/effective-disco/loadtest/results/scenario-browse_board_feed+search_catalog+relation_mixed-20260324-181449/scenario-browse_board_feed+search_catalog+relation_mixed-20260324-181449/sub-stability-20260324-181449-aggregate.tsv)
+  - `0.5 = 1P/1L/3F`
+  - `0.55 = 0P/0L/1F`
+  - `highest stable factor = n/a`
+  - max `p99 = 741.28ms`
+  - max `dbPoolTimeouts = 30`
+
+### 해석
+
+- `search_catalog + relation_mixed` 만으로는 재현되지 않았고, `browse_board_feed + relation_mixed` 도 단발성 실패 1회를 제외하면 강한 재현 조합은 아니었다.
+- 반면 `browse_board_feed + search_catalog + relation_mixed` 는 `0.5` 부터 broad mixed 와 유사한 실패 양상을 만들었다.
+- 따라서 현재까지의 결론은 "root cause 확정"이 아니라, broad mixed 불안정성의 최소 재현 조건이 `feed + search + relation write` 수준까지 좁혀졌다는 것이다.
+- 즉 relation write 자체보다, `feed` 와 `search` 의 read pressure가 함께 걸린 상태에서 relation write가 겹칠 때 DB pool 과 query latency가 동시에 밀린다.
+
+### 남은 과제
+
+- `browse_board_feed + search_catalog + like_mixed`
+- `browse_board_feed + search_catalog + bookmark_mixed`
+- `browse_board_feed + search_catalog + follow_mixed`
+- `browse_board_feed + search_catalog + block_mixed`
+- 위 4개 중 어느 relation write 가 첫 번째 실제 재현 쌍인지 확정한 뒤 그 경로만 집중 계측
