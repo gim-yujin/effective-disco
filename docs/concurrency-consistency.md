@@ -486,6 +486,45 @@
 - `bookmark/follow/block` 쪽은 이번 단계에서 끝까지 돌리지 않았다. `like_mixed` 에서 이미 충분한 재현성이 확인돼 원인 추적 대상을 먼저 확정하는 쪽이 더 효율적이었기 때문이다.
 - 이번 `like_mixed` 재현에서도 `duplicateKeyConflicts=0`, 관계 중복 row `0`, `postLike/comment/unread mismatch=0` 으로 정합성 불변식은 계속 유지됐다.
 
+## 18차 결과
+
+상태: 완료
+
+검증 날짜:
+
+- 2026-03-24
+
+검증 범위:
+
+- `browse_board_feed + search_catalog + like_mixed` 전용 short soak 정밀 계측
+- fresh `loadtest` 인스턴스(`18082`)에서 `0.5 baseline` 과 `0.6 reproduction` 비교
+- `post.list`, `post.like.add`, `post.like.remove`, PostgreSQL wait snapshot 동시 비교
+
+핵심 결론:
+
+- 이번 결과는 `root cause 확정`이 아니라, `like-focused 최소 재현 조합`에서 무엇이 먼저 커지는지 정밀 계측한 것이다.
+- 유효한 실행 artifact:
+  - [0.5 report](/home/admin0/effective-disco/loadtest/results/soak-20260324-232807.md)
+  - [0.5 server](/home/admin0/effective-disco/loadtest/results/soak-20260324-232807-server.json)
+  - [0.6 report](/home/admin0/effective-disco/loadtest/results/soak-20260324-232919.md)
+  - [0.6 server](/home/admin0/effective-disco/loadtest/results/soak-20260324-232919-server.json)
+- `0.5` 는 `http p95=354.96ms`, `p99=471.57ms`, `dbPoolTimeouts=0`, `maxThreadsAwaitingConnection=91` 이었다.
+- `0.6` 은 `http p95=824.89ms`, `p99=1005.76ms`, `unexpected_response_rate=0.0070`, `dbPoolTimeouts=88`, `maxThreadsAwaitingConnection=152` 였다.
+- 반면 `post.like.add/remove` 평균 SQL 시간은 같이 폭증하지 않았다.
+  - `post.like.add averageSqlExecutionTimeMs = 20.23 -> 12.94`
+  - `post.like.remove averageSqlExecutionTimeMs = 20.84 -> 12.82`
+  - 대신 max transaction/wall time 은 `~100ms` 수준으로 유지돼, tuple/transactionid lock 과 WAL pressure 를 만드는 write 경로라는 점은 그대로 확인됐다.
+- 가장 먼저 크게 늘어난 profile 은 `post.list` 였다.
+  - `post.list averageSqlExecutionTimeMs = 147.95 -> 208.62`
+  - `post.list averageWallTimeMs = 152.46 -> 213.22`
+  - `post.list maxSqlExecutionTimeMs = 511.43 -> 538.58`
+- PostgreSQL peak 도 같은 방향이었다.
+  - `longestQueryMs = 217 -> 273`
+  - `longestTransactionMs = 321 -> 389`
+  - wait 는 두 run 모두 `Lock/tuple`, `Lock/transactionid` 가 보였고, `0.6` 에서 `IO/WALSync` 가 추가됐다.
+- 정합성 불변식은 계속 유지됐다. `duplicateKeyConflicts=0`, 관계 중복 row `0`, `postLike/comment/unread mismatch=0`.
+- 따라서 현재 1순위 추적 대상은 `비싼 like SQL 자체`가 아니라, `feed/search read pressure 로 커진 post.list` 위에 `like add/remove` 가 lock/WAL pressure 를 얹는 조합이다.
+
 ## 1차에서 보장한 불변식
 
 ### 관계형 쓰기 경로

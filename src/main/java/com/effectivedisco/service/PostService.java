@@ -517,20 +517,30 @@ public class PostService {
      */
     @Transactional
     public LikeResponse likePost(Long postId, String username) {
-        Post post = findPost(postId);
-        User user = findUserForUpdate(username);
-
         // 문제 해결:
-        // 토글 방식은 같은 사용자의 중복 요청이 동시에 들어오면
-        // exists() 둘 다 false -> insert 두 번 시도로 이어질 수 있다.
-        // 요청 주체 User 행을 먼저 잠그고 "좋아요 상태 보장" 연산으로 바꾸면
-        // 같은 요청이 여러 번 와도 상태가 뒤집히지 않고 한 번만 반영된다.
-        if (!postLikeRepository.existsByPostAndUser(post, user)) {
-            postLikeRepository.save(new PostLike(post, user));
-            postRepository.incrementLikeCount(postId);
-            notificationService.notifyLike(post, username);
-        }
-        return buildLikeResponse(postId, true);
+        // like-focused 재현 조합에서는 post.list 와 좋아요 등록이 동시에 돌 때 어느 쪽이
+        // pool과 SQL 시간을 먼저 밀어 올리는지 봐야 한다. service 내부에서 직접 profile을 남기면
+        // AOP 누락 없이 좋아요 등록 경로의 wall/sql/statement count를 안정적으로 수집할 수 있다.
+        return loadTestStepProfiler.profile(
+                "post.like.add",
+                true,
+                () -> {
+                    Post post = findPost(postId);
+                    User user = findUserForUpdate(username);
+
+                    // 문제 해결:
+                    // 토글 방식은 같은 사용자의 중복 요청이 동시에 들어오면
+                    // exists() 둘 다 false -> insert 두 번 시도로 이어질 수 있다.
+                    // 요청 주체 User 행을 먼저 잠그고 "좋아요 상태 보장" 연산으로 바꾸면
+                    // 같은 요청이 여러 번 와도 상태가 뒤집히지 않고 한 번만 반영된다.
+                    if (!postLikeRepository.existsByPostAndUser(post, user)) {
+                        postLikeRepository.save(new PostLike(post, user));
+                        postRepository.incrementLikeCount(postId);
+                        notificationService.notifyLike(post, username);
+                    }
+                    return buildLikeResponse(postId, true);
+                }
+        );
     }
 
     /**
@@ -539,17 +549,26 @@ public class PostService {
      */
     @Transactional
     public LikeResponse unlikePost(Long postId, String username) {
-        Post post = findPost(postId);
-        User user = findUserForUpdate(username);
-
         // 문제 해결:
-        // delete 결과 행 수로 실제 상태 변경 여부를 판단하면
-        // 동일한 "좋아요 해제" 요청이 여러 번 와도 likeCount를 한 번만 줄일 수 있다.
-        long deleted = postLikeRepository.deleteByPostAndUser(post, user);
-        if (deleted > 0) {
-            postRepository.decrementLikeCount(postId);
-        }
-        return buildLikeResponse(postId, false);
+        // 좋아요 해제도 등록과 다른 SQL/락 경로를 타므로 별도 profile로 남겨야
+        // add/remove 중 어느 경로가 재현 조합에서 더 비싼지 비교할 수 있다.
+        return loadTestStepProfiler.profile(
+                "post.like.remove",
+                true,
+                () -> {
+                    Post post = findPost(postId);
+                    User user = findUserForUpdate(username);
+
+                    // 문제 해결:
+                    // delete 결과 행 수로 실제 상태 변경 여부를 판단하면
+                    // 동일한 "좋아요 해제" 요청이 여러 번 와도 likeCount를 한 번만 줄일 수 있다.
+                    long deleted = postLikeRepository.deleteByPostAndUser(post, user);
+                    if (deleted > 0) {
+                        postRepository.decrementLikeCount(postId);
+                    }
+                    return buildLikeResponse(postId, false);
+                }
+        );
     }
 
     /** 현재 사용자가 특정 게시물에 좋아요를 눌렀는지 확인 */

@@ -1463,3 +1463,73 @@ run detail 핵심:
 - `browse_board_feed + search_catalog + like_mixed` 전용 short soak
 - 같은 조합에서 `post.list`, search count/query, like add/remove 의 `wall/sql/statement count/wait event` 비교
 - PostgreSQL wait snapshot 과 앱 bottleneck profile 을 같은 시간축으로 비교
+
+## 2026-03-24 like-focused 정밀 계측
+
+상태: 완료
+
+### 배경
+
+- 앞 단계까지의 결론은 `browse_board_feed + search_catalog + like_mixed` 가 현재 가장 강한 최소 재현 조합이라는 것이었다.
+- 하지만 이걸로 바로 `좋아요 write 가 원인`이라고 말할 수는 없었다.
+- 필요한 것은 `feed/search` 와 `like add/remove` 중 어느 쪽이 먼저 커지는지, 그리고 PostgreSQL wait 가 어떤 형태로 동반되는지 같은 시간축에서 보는 것이었다.
+
+### 계측 보강
+
+- [PostService.java](/home/admin0/effective-disco/src/main/java/com/effectivedisco/service/PostService.java) 에 `post.like.add`, `post.like.remove` 직접 profile 을 추가했다.
+- 문제 해결:
+  - 이 조합에서는 `post.list` 와 좋아요 add/remove 가 동시에 움직인다.
+  - service 내부에서 직접 `wall/sql/statement count` 를 남겨야 AOP 누락 없이 좋아요 경로의 비용을 안정적으로 수집할 수 있다.
+
+### 유효한 실행 artifact
+
+- fresh `loadtest` 인스턴스: `18082`
+- `0.5 baseline`
+  - [report](/home/admin0/effective-disco/loadtest/results/soak-20260324-232807.md)
+  - [server](/home/admin0/effective-disco/loadtest/results/soak-20260324-232807-server.json)
+  - [timeline](/home/admin0/effective-disco/loadtest/results/soak-20260324-232807-metrics.jsonl)
+- `0.6 reproduction`
+  - [report](/home/admin0/effective-disco/loadtest/results/soak-20260324-232919.md)
+  - [server](/home/admin0/effective-disco/loadtest/results/soak-20260324-232919-server.json)
+  - [timeline](/home/admin0/effective-disco/loadtest/results/soak-20260324-232919-metrics.jsonl)
+
+### 비교 결과
+
+- broad health
+  - `0.5`: `p95=354.96ms`, `p99=471.57ms`, `dbPoolTimeouts=0`, `maxThreadsAwaitingConnection=91`
+  - `0.6`: `p95=824.89ms`, `p99=1005.76ms`, `unexpected_response_rate=0.0070`, `dbPoolTimeouts=88`, `maxThreadsAwaitingConnection=152`
+- `post.list`
+  - `averageWallTimeMs = 152.46 -> 213.22`
+  - `averageSqlExecutionTimeMs = 147.95 -> 208.62`
+  - `maxSqlExecutionTimeMs = 511.43 -> 538.58`
+  - `averageSqlStatementCount = 4.80 -> 4.81`
+- `post.like.add`
+  - `averageWallTimeMs = 21.17 -> 13.94`
+  - `averageSqlExecutionTimeMs = 20.23 -> 12.94`
+  - `maxTransactionTimeMs = 89.05 -> 97.80`
+  - `averageSqlStatementCount = 4.00 -> 4.00`
+- `post.like.remove`
+  - `averageWallTimeMs = 21.78 -> 13.83`
+  - `averageSqlExecutionTimeMs = 20.84 -> 12.82`
+  - `maxTransactionTimeMs = 74.84 -> 101.78`
+  - `averageSqlStatementCount = 4.00 -> 4.00`
+- PostgreSQL peak
+  - `waitingSessions`: `18 -> 19`
+  - `lockWaitingSessions`: `16 -> 17`
+  - `longestQueryMs = 217 -> 273`
+  - `longestTransactionMs = 321 -> 389`
+  - 두 run 모두 `Lock/tuple`, `Lock/transactionid` 가 보였고, `0.6` 에서 `IO/WALSync` 가 추가로 관측됐다.
+
+### 해석
+
+- 이번 정밀 계측으로 `like add/remove` 자체가 먼저 폭증하는 경로는 아니라는 점이 더 분명해졌다.
+- `0.6` 에서 먼저 크게 커진 것은 `post.list` 의 SQL 시간과 pool 대기열이었다.
+- 반대로 `post.like.add/remove` 의 평균 비용은 오히려 낮아졌고, max transaction time 만 `~100ms` 수준으로 유지됐다.
+- 즉 좋아요 경로는 `tuple/transactionid lock + WAL pressure` 를 더하는 write 경로이지만, 현재 mixed 불안정성의 first-order driver 는 `feed/search read pressure 로 비대해진 post.list` 쪽이다.
+- 따라서 다음 최적화 우선순위는 `like SQL 자체`보다 `post.list under concurrent like churn` 이다.
+
+### 다음 액션
+
+- `browse_board_feed + search_catalog + like_mixed` 조합에서 `post.list` query shape 를 더 줄일 수 있는지 점검
+- 필요하면 search count/query 와 feed list query 를 더 분리 계측
+- 같은 조합 재측정 후 `dbPoolTimeouts`, `post.list averageSqlExecutionTimeMs`, `longestQueryMs` 감소 여부 확인
