@@ -595,6 +595,69 @@
   - `postLike/comment/unread mismatch = 0`
 - 따라서 최신 `slice API + post.list 세분화` 기준으로 like-focused 최소 재현 조합의 현재 기준선은 `0.6 안정 / 0.7 불안정` 이다.
 
+## 21차 결과
+
+상태: 완료
+
+검증 날짜:
+
+- 2026-03-25
+
+검증 범위:
+
+- 최신 코드 기준 broad mixed 반복 안정성 재측정
+- fresh `loadtest` 인스턴스(`18082`)에서 `RUNS=5`, `STAGE_FACTORS=0.6,0.7`
+- 전체 mixed 시나리오가 최신 `slice API + post.list 세분화` 이후에도 실제로 안정화됐는지 재확인
+
+핵심 결론:
+
+- 실행 artifact:
+  - [suite](/home/admin0/effective-disco/loadtest/results/sub-stability-20260325-061955.md)
+  - [tsv](/home/admin0/effective-disco/loadtest/results/sub-stability-20260325-061955.tsv)
+  - [aggregate](/home/admin0/effective-disco/loadtest/results/sub-stability-20260325-061955-aggregate.tsv)
+- broad mixed 는 아직 안정 구간을 확보하지 못했다.
+  - `0.6 = 1 PASS / 1 LIMIT / 3 FAIL`
+  - `0.7 = 0 PASS / 1 LIMIT / 0 FAIL`
+  - `highest stable factor = n/a`
+- `0.6` 최악 run 에서는 `http p99 = 1391.67ms`, `dbPoolTimeouts = 623`, `maxThreadsAwaitingConnection = 192` 가 나왔다.
+- `0.7` 에 도달한 1개 run 도 `db-pool-timeout` 으로 제한됐다.
+  - `http p99 = 777.62ms`
+  - `dbPoolTimeouts = 2`
+  - `maxThreadsAwaitingConnection = 187`
+- broad mixed 실패에서도 정합성 불변식은 계속 유지됐다.
+  - `duplicateKeyConflicts = 0`
+  - 관계 중복 row = `0`
+  - `postLike/comment/unread mismatch = 0`
+- 따라서 like-focused 조합의 개선이 broad mixed 전체 안정화로 곧바로 이어지지는 않았고, 남은 문제는 여전히 `cross-profile interaction` 이다.
+
+## 22차 결과
+
+상태: 완료
+
+검증 날짜:
+
+- 2026-03-25
+
+검증 범위:
+
+- 최신 코드 기준 scenario matrix 재실행
+- fresh `loadtest` 인스턴스(`18081`)에서 `RUNS=5`, `STAGE_FACTORS=0.5,0.55,0.6`
+- 단일 profile 기준으로 어느 경로까지 안정적인지 다시 확정
+
+핵심 결론:
+
+- 실행 artifact:
+  - [summary](/home/admin0/effective-disco/loadtest/results/scenario-matrix-20260325-062843.md)
+  - [summary tsv](/home/admin0/effective-disco/loadtest/results/scenario-matrix-20260325-062843.tsv)
+- 최신 코드 기준 단일 profile 은 모두 `0.6` 까지 `5/5 PASS` 였다.
+  - `browse_search = 0.5/0.55/0.6 모두 5/5 PASS`
+  - `write = 0.5/0.55/0.6 모두 5/5 PASS`
+  - `relation_mixed = 0.5/0.55/0.6 모두 5/5 PASS`
+  - `notification = 0.5/0.55/0.6 모두 5/5 PASS`
+- 각 profile 의 `highest stable factor` 는 모두 `0.6` 이었다.
+- 따라서 최신 broad mixed 불안정성은 `단일 profile` 자체의 한계가 아니라, `복수 profile 이 동시에 걸릴 때의 상호작용` 으로 다시 좁혀졌다.
+- 즉 다음 단계의 관심사는 broad mixed 를 다시 반복하는 것이 아니라, 최신 코드 기준으로 `2-profile / 3-profile` 조합을 다시 좁혀 최소 재현 조건을 갱신하는 것이다.
+
 ## 1차에서 보장한 불변식
 
 ### 관계형 쓰기 경로

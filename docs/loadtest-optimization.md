@@ -1666,3 +1666,86 @@ run detail 핵심:
 - broad mixed 를 다시 측정해 like-focused 개선이 전체 mixed 에도 전파되는지 확인
 - `tag rows` 가 실제로 다음 병목인지 검증
 - 필요하면 tag filter query 를 다음 최적화 대상으로 전환
+
+## 2026-03-25 broad mixed 반복 안정성 재측정
+
+상태: 완료
+
+### 배경
+
+- `like-focused` 최소 재현 조합은 최신 hot path 기준으로 `0.6 안정 / 0.7 불안정` 까지 회복됐다.
+- 하지만 이 개선이 broad mixed 전체로 전파됐는지는 별도 확인이 필요했다.
+
+### 실행 artifact
+
+- [suite](/home/admin0/effective-disco/loadtest/results/sub-stability-20260325-061955.md)
+- [tsv](/home/admin0/effective-disco/loadtest/results/sub-stability-20260325-061955.tsv)
+- [aggregate](/home/admin0/effective-disco/loadtest/results/sub-stability-20260325-061955-aggregate.tsv)
+
+조건:
+
+- fresh `loadtest` 인스턴스 `18082`
+- `RUNS=5`
+- `STAGE_FACTORS=0.6,0.7`
+- 전체 broad mixed 시나리오
+
+### 결과
+
+- `0.6 = 1 PASS / 1 LIMIT / 3 FAIL`
+  - max `http p99 = 1391.67ms`
+  - max `dbPoolTimeouts = 623`
+  - max `waiting = 192`
+- `0.7 = 0 PASS / 1 LIMIT / 0 FAIL`
+  - `http p99 = 777.62ms`
+  - `dbPoolTimeouts = 2`
+  - `waiting = 187`
+- `highest stable factor = n/a`
+- 모든 broad mixed 실패 런에서도
+  - `duplicateKeyConflicts = 0`
+  - 관계 중복 row = `0`
+  - `postLike/comment/unread mismatch = 0`
+
+### 해석
+
+- `like-focused` 조합 개선은 실제였지만, broad mixed 전체 안정화로 바로 이어지지는 않았다.
+- 따라서 남은 병목은 `like` 단일 조합 자체가 아니라, 최신 코드 기준에서도 살아 있는 `cross-profile interaction` 이다.
+- 이 결과는 broad mixed 전체를 계속 반복하기보다, 최신 코드 기준으로 최소 재현 조합을 다시 좁혀야 한다는 근거가 됐다.
+
+## 2026-03-25 최신 코드 기준 scenario matrix 재실행
+
+상태: 완료
+
+### 배경
+
+- broad mixed 가 여전히 불안정했기 때문에, 최신 코드 기준으로도 단일 profile 들이 각각 안정적인지 다시 확인해야 했다.
+- 목적은 `어떤 단일 profile 이 문제인가`를 찾는 것이 아니라, `단일 profile 은 괜찮고 조합에서만 깨지는가`를 최신 코드 기준으로 재검증하는 것이었다.
+
+### 실행 artifact
+
+- [summary](/home/admin0/effective-disco/loadtest/results/scenario-matrix-20260325-062843.md)
+- [summary tsv](/home/admin0/effective-disco/loadtest/results/scenario-matrix-20260325-062843.tsv)
+
+조건:
+
+- fresh `loadtest` 인스턴스 `18081`
+- `RUNS=5`
+- `STAGE_FACTORS=0.5,0.55,0.6`
+- profiles:
+  - `browse_search`
+  - `write`
+  - `relation_mixed`
+  - `notification`
+
+### 결과
+
+- `browse_search`: `0.5/0.55/0.6` 모두 `5/5 PASS`
+- `write`: `0.5/0.55/0.6` 모두 `5/5 PASS`
+- `relation_mixed`: `0.5/0.55/0.6` 모두 `5/5 PASS`
+- `notification`: `0.5/0.55/0.6` 모두 `5/5 PASS`
+- 각 profile 의 `highest stable factor = 0.6`
+
+### 해석
+
+- 최신 코드 기준으로는 단일 profile 이 broad mixed 불안정성의 직접 원인이 아니다.
+- 즉 현재 남은 문제는 `read`, `write`, `relation`, `notification` 중 하나가 혼자 깨지는 구조가 아니라, 여러 profile 이 동시에 DB pool 과 트랜잭션 점유 시간을 밀어 올리는 조합 문제다.
+- 다음 단계는 broad mixed 자체를 계속 보는 것이 아니라, 최신 코드 기준 `2-profile / 3-profile` 조합을 다시 좁혀 최소 재현 조건을 재확정하는 것이다.
