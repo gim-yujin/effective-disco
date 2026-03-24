@@ -177,4 +177,43 @@ class PostListOptimizationIntegrationTest {
                 .as("문제 해결 검증: FTS 도입 후에도 작성자 username 검색 의미는 substring 기반으로 유지되어야 한다")
                 .isEqualTo(1);
     }
+
+    @Test
+    void getPosts_keywordSearchDeduplicatesAcrossFtsAndUsernameBranches() {
+        String tagPrefix = "dedup-search";
+        Board board = boardRepository.save(Board.builder()
+                .name("중복검색게시판")
+                .slug("dedup-" + tagPrefix)
+                .description("검색 dedup 테스트")
+                .build());
+
+        User author = userRepository.save(User.builder()
+                .username("load-author")
+                .email("load-author@example.com")
+                .password("encoded-password")
+                .build());
+
+        Post post = Post.builder()
+                .title("load title")
+                .content("load content")
+                .author(author)
+                .board(board)
+                .build();
+        post.addImage(new PostImage(post, "/dedup-images/1.jpg", 0));
+        postRepository.save(post);
+
+        entityManager.flush();
+        entityManager.clear();
+        statistics.clear();
+
+        Page<PostResponse> result = postService.getPosts(0, 10, "load", null, "dedup-" + tagPrefix, "latest");
+
+        assertThat(result.getContent()).hasSize(1);
+        assertThat(result.getTotalElements())
+                .as("문제 해결 검증: 같은 게시물이 FTS branch 와 username branch 를 동시에 만족해도 UNION dedup 으로 1건만 반환돼야 한다")
+                .isEqualTo(1);
+        assertThat(statistics.getPrepareStatementCount())
+                .as("문제 해결 검증: branch 분리 후에도 board lookup + page query + count query + tag/image batch 범위를 유지해야 한다")
+                .isLessThanOrEqualTo(5L);
+    }
 }

@@ -21,84 +21,27 @@ import java.util.Locale;
 @Transactional(readOnly = true)
 public class PostRepositoryImpl implements PostRepositoryCustom {
 
-    private static final String POSTGRES_GLOBAL_KEYWORD_SQL = """
-            SELECT
-                p.id,
-                p.title,
-                p.content,
-                p.created_at,
-                p.updated_at,
-                p.comment_count,
-                p.like_count,
-                p.view_count,
-                p.pinned,
-                p.draft,
-                p.image_url,
-                a.username,
-                b.name,
-                b.slug
+    private static final String POSTGRES_FTS_POST_ID_BRANCH = """
+            SELECT p.id
             FROM posts p
-            JOIN users a ON a.id = p.user_id
-            LEFT JOIN boards b ON b.id = p.board_id
             WHERE p.draft = false
-              AND (
-                to_tsvector('simple', coalesce(p.title, '') || ' ' || coalesce(p.content, ''))
+              %s
+              AND to_tsvector('simple', coalesce(p.title, '') || ' ' || coalesce(p.content, ''))
                     @@ plainto_tsquery('simple', :keyword)
-                OR lower(a.username) LIKE ('%%' || lower(:keyword) || '%%')
-              )
-            ORDER BY p.created_at DESC
             """;
-    private static final String POSTGRES_GLOBAL_KEYWORD_COUNT_SQL = """
-            SELECT COUNT(*)
-            FROM posts p
-            JOIN users a ON a.id = p.user_id
+    private static final String POSTGRES_USERNAME_POST_ID_BRANCH = """
+            SELECT p.id
+            FROM users a
+            JOIN posts p ON p.user_id = a.id
             WHERE p.draft = false
-              AND (
-                to_tsvector('simple', coalesce(p.title, '') || ' ' || coalesce(p.content, ''))
-                    @@ plainto_tsquery('simple', :keyword)
-                OR lower(a.username) LIKE ('%%' || lower(:keyword) || '%%')
-              )
+              %s
+              AND lower(a.username) LIKE ('%%' || lower(:keyword) || '%%')
             """;
-    private static final String POSTGRES_BOARD_KEYWORD_SQL = """
-            SELECT
-                p.id,
-                p.title,
-                p.content,
-                p.created_at,
-                p.updated_at,
-                p.comment_count,
-                p.like_count,
-                p.view_count,
-                p.pinned,
-                p.draft,
-                p.image_url,
-                a.username,
-                b.name,
-                b.slug
-            FROM posts p
-            JOIN users a ON a.id = p.user_id
-            LEFT JOIN boards b ON b.id = p.board_id
-            WHERE p.board_id = :boardId
-              AND p.draft = false
-              AND (
-                to_tsvector('simple', coalesce(p.title, '') || ' ' || coalesce(p.content, ''))
-                    @@ plainto_tsquery('simple', :keyword)
-                OR lower(a.username) LIKE ('%%' || lower(:keyword) || '%%')
-              )
-            ORDER BY p.created_at DESC
-            """;
-    private static final String POSTGRES_BOARD_KEYWORD_COUNT_SQL = """
-            SELECT COUNT(*)
-            FROM posts p
-            JOIN users a ON a.id = p.user_id
-            WHERE p.board_id = :boardId
-              AND p.draft = false
-              AND (
-                to_tsvector('simple', coalesce(p.title, '') || ' ' || coalesce(p.content, ''))
-                    @@ plainto_tsquery('simple', :keyword)
-                OR lower(a.username) LIKE ('%%' || lower(:keyword) || '%%')
-              )
-            """;
+
+    private static final String POSTGRES_GLOBAL_KEYWORD_SQL = createPostgresKeywordContentSql(false);
+    private static final String POSTGRES_GLOBAL_KEYWORD_COUNT_SQL = createPostgresKeywordCountSql(false);
+    private static final String POSTGRES_BOARD_KEYWORD_SQL = createPostgresKeywordContentSql(true);
+    private static final String POSTGRES_BOARD_KEYWORD_COUNT_SQL = createPostgresKeywordCountSql(true);
     private static final String FALLBACK_GLOBAL_KEYWORD_SQL = """
             SELECT
                 p.id,
@@ -126,6 +69,7 @@ public class PostRepositoryImpl implements PostRepositoryCustom {
               )
             ORDER BY p.created_at DESC
             """;
+
     private static final String FALLBACK_GLOBAL_KEYWORD_COUNT_SQL = """
             SELECT COUNT(*)
             FROM posts p
@@ -187,6 +131,60 @@ public class PostRepositoryImpl implements PostRepositoryCustom {
         this.jdbcTemplate = jdbcTemplate;
     }
 
+    private static String createPostgresKeywordContentSql(boolean boardSearch) {
+        String boardPredicate = boardSearch ? "AND p.board_id = :boardId" : "";
+        String idUnion = """
+                WITH matched_post_ids AS (
+                    %s
+                    UNION
+                    %s
+                )
+                """.formatted(
+                POSTGRES_FTS_POST_ID_BRANCH.formatted(boardPredicate),
+                POSTGRES_USERNAME_POST_ID_BRANCH.formatted(boardPredicate)
+        );
+        return idUnion + """
+                SELECT
+                    p.id,
+                    p.title,
+                    p.content,
+                    p.created_at,
+                    p.updated_at,
+                    p.comment_count,
+                    p.like_count,
+                    p.view_count,
+                    p.pinned,
+                    p.draft,
+                    p.image_url,
+                    a.username,
+                    b.name,
+                    b.slug
+                FROM matched_post_ids m
+                JOIN posts p ON p.id = m.id
+                JOIN users a ON a.id = p.user_id
+                LEFT JOIN boards b ON b.id = p.board_id
+                ORDER BY p.created_at DESC, p.id DESC
+                """;
+    }
+
+    private static String createPostgresKeywordCountSql(boolean boardSearch) {
+        String boardPredicate = boardSearch ? "AND p.board_id = :boardId" : "";
+        String idUnion = """
+                WITH matched_post_ids AS (
+                    %s
+                    UNION
+                    %s
+                )
+                """.formatted(
+                POSTGRES_FTS_POST_ID_BRANCH.formatted(boardPredicate),
+                POSTGRES_USERNAME_POST_ID_BRANCH.formatted(boardPredicate)
+        );
+        return idUnion + """
+                SELECT COUNT(*)
+                FROM matched_post_ids
+                """;
+    }
+
     @Override
     public Page<PostRepository.PostListRow> searchPublicPostListRows(String keyword, Pageable pageable) {
         return executeKeywordSearch(keyword, pageable, null);
@@ -213,8 +211,9 @@ public class PostRepositoryImpl implements PostRepositoryCustom {
 
         // 문제 해결:
         // 검색 hot path 는 PostgreSQL 에서만 FTS/pg_trgm native SQL 을 써야 하지만,
-        // H2 테스트 프로필까지 같은 SQL 로 고정하면 CI 가 깨진다.
-        // DB 종류별 query strategy 를 분기해 PostgreSQL 은 FTS+trgm, H2 는 substring fallback 으로 유지한다.
+        // 핵심은 "FTS 조건 OR username LIKE" 를 한 WHERE 절에 섞지 않는 것이다.
+        // branch 를 UNION 으로 분리해야 PostgreSQL 이 posts FTS index 와 users trigram index 를
+        // 각각 독립적으로 고려할 수 있고, H2 테스트는 기존 substring fallback 으로 유지한다.
         if (pageable.isPaged()) {
             contentQuery.setFirstResult((int) pageable.getOffset());
             contentQuery.setMaxResults(pageable.getPageSize());
