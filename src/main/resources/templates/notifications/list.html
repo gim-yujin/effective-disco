@@ -39,6 +39,15 @@
             </a>
         </th:block>
 
+        <div class="pagination"
+             th:if="${notificationPage != null and (notificationPage.number > 0 or notificationPage.hasNext())}">
+            <a th:if="${notificationPage.number > 0}"
+               th:href="@{/notifications(page=${notificationPage.number - 1}, size=${notificationPage.size})}">&laquo; 이전</a>
+            <span class="current" th:text="${notificationPage.number + 1}">1</span>
+            <a th:if="${notificationPage.hasNext()}"
+               th:href="@{/notifications(page=${notificationPage.number + 1}, size=${notificationPage.size})}">다음 &raquo;</a>
+        </div>
+
     </div>
 </main>
 </body>

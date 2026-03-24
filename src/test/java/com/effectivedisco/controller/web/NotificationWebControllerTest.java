@@ -81,6 +81,7 @@ class NotificationWebControllerTest {
         mockMvc.perform(get("/notifications").with(user(testUser.getUsername())))
                 .andExpect(status().isOk())
                 .andExpect(model().attributeExists("notifications"))
+                .andExpect(model().attributeExists("notificationPage"))
                 .andExpect(view().name("notifications/list"));
     }
 
@@ -126,6 +127,7 @@ class NotificationWebControllerTest {
         mockMvc.perform(get("/notifications").with(user(testUser.getUsername())))
                 .andExpect(status().isOk())
                 .andExpect(model().attributeExists("notifications"))
+                .andExpect(model().attributeExists("notificationPage"))
                 .andExpect(view().name("notifications/list"));
     }
 }

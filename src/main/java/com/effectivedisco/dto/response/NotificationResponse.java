@@ -53,4 +53,16 @@ public class NotificationResponse {
                 n.getCreatedAt()
         );
     }
+
+    /**
+     * 문제 해결:
+     * 알림 페이지는 현재 batch 를 먼저 읽고 나서 read-all 상태 전환을 수행한다.
+     * 이미 읽음 처리된 결과를 즉시 렌더링할 수 있도록 DTO view 만 읽음 상태로 덮어쓴다.
+     */
+    public NotificationResponse asRead() {
+        if (read) {
+            return this;
+        }
+        return new NotificationResponse(id, type, message, link, true, createdAt);
+    }
 }

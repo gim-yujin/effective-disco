@@ -69,7 +69,7 @@ public interface PostRepository extends JpaRepository<Post, Long>, PostRepositor
             SELECT
                 p.id AS id,
                 p.title AS title,
-                p.content AS content,
+                '' AS content,
                 p.createdAt AS createdAt,
                 p.updatedAt AS updatedAt,
                 p.commentCount AS commentCount,
@@ -102,7 +102,7 @@ public interface PostRepository extends JpaRepository<Post, Long>, PostRepositor
             SELECT
                 p.id AS id,
                 p.title AS title,
-                p.content AS content,
+                '' AS content,
                 p.createdAt AS createdAt,
                 p.updatedAt AS updatedAt,
                 p.commentCount AS commentCount,
@@ -141,7 +141,7 @@ public interface PostRepository extends JpaRepository<Post, Long>, PostRepositor
             SELECT
                 p.id AS id,
                 p.title AS title,
-                p.content AS content,
+                '' AS content,
                 p.createdAt AS createdAt,
                 p.updatedAt AS updatedAt,
                 p.commentCount AS commentCount,
@@ -172,7 +172,7 @@ public interface PostRepository extends JpaRepository<Post, Long>, PostRepositor
             SELECT
                 p.id AS id,
                 p.title AS title,
-                p.content AS content,
+                '' AS content,
                 p.createdAt AS createdAt,
                 p.updatedAt AS updatedAt,
                 p.commentCount AS commentCount,
@@ -197,7 +197,7 @@ public interface PostRepository extends JpaRepository<Post, Long>, PostRepositor
             SELECT
                 p.id AS id,
                 p.title AS title,
-                p.content AS content,
+                '' AS content,
                 p.createdAt AS createdAt,
                 p.updatedAt AS updatedAt,
                 p.commentCount AS commentCount,
@@ -226,12 +226,13 @@ public interface PostRepository extends JpaRepository<Post, Long>, PostRepositor
      * 문제 해결:
      * 게시판 최신 목록 무한 스크롤은 offset/page 기반 Page 를 계속 넘기면 count(*)를 매번 치고,
      * 새 글 유입 시 중복/누락도 생긴다. createdAt+id seek cursor 로 다음 batch 만 잘라 읽는다.
+     * 또한 목록에서 본문 전체를 반복 전송할 필요가 없으므로 content select 폭도 비워 row width 를 줄인다.
      */
     @Query("""
             SELECT
                 p.id AS id,
                 p.title AS title,
-                p.content AS content,
+                '' AS content,
                 p.createdAt AS createdAt,
                 p.updatedAt AS updatedAt,
                 p.commentCount AS commentCount,
@@ -263,7 +264,7 @@ public interface PostRepository extends JpaRepository<Post, Long>, PostRepositor
             SELECT
                 p.id AS id,
                 p.title AS title,
-                p.content AS content,
+                '' AS content,
                 p.createdAt AS createdAt,
                 p.updatedAt AS updatedAt,
                 p.commentCount AS commentCount,
@@ -298,7 +299,7 @@ public interface PostRepository extends JpaRepository<Post, Long>, PostRepositor
             SELECT
                 p.id AS id,
                 p.title AS title,
-                p.content AS content,
+                '' AS content,
                 p.createdAt AS createdAt,
                 p.updatedAt AS updatedAt,
                 p.commentCount AS commentCount,
@@ -341,7 +342,7 @@ public interface PostRepository extends JpaRepository<Post, Long>, PostRepositor
             SELECT
                 p.id AS id,
                 p.title AS title,
-                p.content AS content,
+                '' AS content,
                 p.createdAt AS createdAt,
                 p.updatedAt AS updatedAt,
                 p.commentCount AS commentCount,
@@ -370,7 +371,7 @@ public interface PostRepository extends JpaRepository<Post, Long>, PostRepositor
             SELECT
                 p.id AS id,
                 p.title AS title,
-                p.content AS content,
+                '' AS content,
                 p.createdAt AS createdAt,
                 p.updatedAt AS updatedAt,
                 p.commentCount AS commentCount,
@@ -399,7 +400,7 @@ public interface PostRepository extends JpaRepository<Post, Long>, PostRepositor
             SELECT
                 p.id AS id,
                 p.title AS title,
-                p.content AS content,
+                '' AS content,
                 p.createdAt AS createdAt,
                 p.updatedAt AS updatedAt,
                 p.commentCount AS commentCount,
@@ -430,7 +431,7 @@ public interface PostRepository extends JpaRepository<Post, Long>, PostRepositor
             SELECT
                 p.id AS id,
                 p.title AS title,
-                p.content AS content,
+                '' AS content,
                 p.createdAt AS createdAt,
                 p.updatedAt AS updatedAt,
                 p.commentCount AS commentCount,

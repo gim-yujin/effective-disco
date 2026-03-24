@@ -12,6 +12,9 @@ import com.effectivedisco.repository.NotificationRepository;
 import com.effectivedisco.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.context.ApplicationEventPublisher;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Slice;
+import org.springframework.data.domain.SliceImpl;
 import org.springframework.security.core.userdetails.UsernameNotFoundException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
@@ -131,7 +134,7 @@ public class NotificationService {
      */
     @Transactional
     public List<NotificationResponse> getAndMarkAllRead(String username) {
-        User user = findUserForUpdate(username);
+        User user = findUser(username);
         List<NotificationResponse> list = loadTestStepProfiler.profile(
                 "notification.read-all.page.fetch",
                 true,
@@ -140,31 +143,48 @@ public class NotificationService {
         loadTestStepProfiler.profile(
                 "notification.read-all.page.transition",
                 true,
-                () -> markAllUnreadNotificationsRead(user, username)
+                () -> markAllUnreadNotificationsRead(username)
         );
-        return list;
+        return markNotificationsReadView(list);
+    }
+
+    /**
+     * 문제 해결:
+     * 알림 페이지는 전체 목록을 렌더링하면서 사용자 행 잠금을 오래 쥘 필요가 없다.
+     * 현재 page batch 는 잠금 없이 Slice 로 읽고, read-all 상태 전환만 짧게 잠가
+     * notification.read-all 이 full list materialize + lock hold time 으로 pool 을 잡아먹지 않게 만든다.
+     */
+    @Transactional
+    public Slice<NotificationResponse> getAndMarkAllReadPage(String username, int page, int size) {
+        User user = findUser(username);
+        PageRequest pageable = PageRequest.of(Math.max(page, 0), normalizeNotificationPageSize(size));
+        Slice<NotificationResponse> slice = loadTestStepProfiler.profile(
+                "notification.read-all.page.fetch",
+                true,
+                () -> notificationRepository.findResponseSliceByRecipientOrderByCreatedAtDesc(user, pageable)
+        );
+        loadTestStepProfiler.profile(
+                "notification.read-all.page.transition",
+                true,
+                () -> markAllUnreadNotificationsRead(username)
+        );
+        return new SliceImpl<>(markNotificationsReadView(slice.getContent()), slice.getPageable(), slice.hasNext());
     }
 
     /**
      * 문제 해결:
      * loadtest mixed scenario 는 "알림 목록 본문"이 아니라 "read-all 상태 전환" 비용을 보고 싶다.
-     * 내부 전용 경로에는 count + mark-read summary 메서드를 따로 두어
-     * full list materialize 비용이 pool 포화 분석을 흐리지 않게 만든다.
+     * 내부 전용 경로는 full count/full list 를 제거하고 unread 상태 전환량만 요약해
+     * summary path 자체가 read-all 병목을 과장하지 않게 만든다.
      */
     @Transactional
     public NotificationReadSummary markAllAsReadForLoadTest(String username) {
-        User user = findUserForUpdate(username);
-        long listedNotificationCount = loadTestStepProfiler.profile(
-                "notification.read-all.summary.count",
-                true,
-                () -> notificationRepository.countByRecipient(user)
-        );
-        long unreadCount = loadTestStepProfiler.profile(
+        long transitionedCount = loadTestStepProfiler.profile(
                 "notification.read-all.summary.transition",
                 true,
-                () -> markAllUnreadNotificationsRead(user, username)
+                () -> markAllUnreadNotificationsRead(username)
         );
-        return new NotificationReadSummary((int) listedNotificationCount, unreadCount);
+        return new NotificationReadSummary((int) transitionedCount, 0L);
     }
 
     /**
@@ -207,7 +227,23 @@ public class NotificationService {
                 .orElseThrow(() -> new UsernameNotFoundException("사용자를 찾을 수 없습니다: " + username));
     }
 
-    private long markAllUnreadNotificationsRead(User user, String username) {
+    private User findUser(String username) {
+        return userRepository.findByUsername(username)
+                .orElseThrow(() -> new UsernameNotFoundException("사용자를 찾을 수 없습니다: " + username));
+    }
+
+    private List<NotificationResponse> markNotificationsReadView(List<NotificationResponse> notifications) {
+        return notifications.stream()
+                .map(NotificationResponse::asRead)
+                .toList();
+    }
+
+    private int normalizeNotificationPageSize(int size) {
+        return Math.max(1, Math.min(size, 50));
+    }
+
+    private long markAllUnreadNotificationsRead(String username) {
+        User user = findUserForUpdate(username);
         boolean hasUnreadNotifications = user.getUnreadNotificationCount() > 0;
         if (!hasUnreadNotifications) {
             // 문제 해결:
@@ -222,11 +258,13 @@ public class NotificationService {
             // 문제 해결:
             // 평상시에는 비정규화 counter 로 빠르게 판단하고,
             // drift 가 감지된 경우에만 fallback 존재 확인 뒤 bulk UPDATE 를 수행한다.
-            notificationRepository.markAllAsRead(user);
+            int transitionedCount = notificationRepository.markAllAsRead(user);
             user.resetUnreadNotificationCount();
+            scheduleUnreadCountPushAfterCommit(username, user.getUnreadNotificationCount());
+            return transitionedCount;
         }
         scheduleUnreadCountPushAfterCommit(username, user.getUnreadNotificationCount());
-        return user.getUnreadNotificationCount();
+        return 0L;
     }
 
     public record NotificationReadSummary(int listedNotificationCount, long unreadCount) {}

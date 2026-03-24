@@ -46,7 +46,7 @@ public class PostRepositoryImpl implements PostRepositoryCustom {
             SELECT
                 p.id,
                 p.title,
-                p.content,
+                '' AS content,
                 p.created_at,
                 p.updated_at,
                 p.comment_count,
@@ -85,7 +85,7 @@ public class PostRepositoryImpl implements PostRepositoryCustom {
             SELECT
                 p.id,
                 p.title,
-                p.content,
+                '' AS content,
                 p.created_at,
                 p.updated_at,
                 p.comment_count,
@@ -147,7 +147,7 @@ public class PostRepositoryImpl implements PostRepositoryCustom {
                 SELECT
                     p.id,
                     p.title,
-                    p.content,
+                    '' AS content,
                     p.created_at,
                     p.updated_at,
                     p.comment_count,

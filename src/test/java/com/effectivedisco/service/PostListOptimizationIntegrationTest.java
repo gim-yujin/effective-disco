@@ -85,6 +85,9 @@ class PostListOptimizationIntegrationTest {
         assertThat(result.getContent()).allSatisfy(post -> {
             assertThat(post.getAuthor()).startsWith("author");
             assertThat(post.getBoardSlug()).isEqualTo("free-" + tagPrefix);
+            assertThat(post.getContent())
+                    .as("문제 해결 검증: post.list 는 목록에서 쓰지 않는 본문 전체를 다시 읽어 오지 않고 빈 summary content 로 유지해야 한다")
+                    .isEmpty();
             assertThat(post.getTags()).containsExactly("java-" + tagPrefix, "spring-" + tagPrefix);
             assertThat(post.getImageUrls()).hasSize(2);
         });
@@ -135,6 +138,7 @@ class PostListOptimizationIntegrationTest {
         assertThat(result.getContent()).allSatisfy(post -> {
             assertThat(post.getBoardSlug()).isEqualTo("dev-" + tagPrefix);
             assertThat(post.getAuthor()).startsWith("search-author");
+            assertThat(post.getContent()).isEmpty();
             assertThat(post.getTags()).containsExactly("load-" + tagPrefix, "spring-" + tagPrefix);
             assertThat(post.getImageUrls()).hasSize(1);
         });

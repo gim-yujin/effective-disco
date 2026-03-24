@@ -955,3 +955,83 @@ PostgreSQL wait 타임라인:
 - `post.list` 본문 SQL 실행 시간을 더 줄인다. 특히 목록 응답에서 `content` 를 유지할지 재검토가 필요하다.
 - `notification.read-all.summary` 와 `notification.store` 가 장시간 soak 에서 커지는 이유를 별도 분리 계측한다.
 - 가능하면 PostgreSQL `pg_stat_statements` 를 활성화해 장시간 soak 기준 top query 누적 시간을 직접 확인한다.
+
+## 2026-03-24 `post.list` row-width 축소 + 알림 read/write 경로 분리
+
+상태: 완료
+
+### 배경
+
+- `0.8 / 30분` soak 실패 기준으로 여전히 가장 눈에 띄는 읽기 병목은 `post.list` 와 알림 read/write 경로였다.
+- 당시 최종 프로파일은 다음과 같았다.
+  - `post.list averageSqlExecutionTimeMs = 61.76`
+  - `post.list averageSqlStatementCount = 4.81`
+  - `notification.read-all.summary averageWallTimeMs = 58.81`
+  - `notification.read-all.summary.count averageWallTimeMs = 11.80`
+  - `notification.store averageWallTimeMs = 14.68`
+- 코드 경로를 다시 확인해 보니, 이 병목은 "느린 한 쿼리"라기보다 "불필요한 row width / full list materialize / full count / 과도한 lock hold time"이 겹친 구조였다.
+
+### 원인
+
+- `post.list` projection 쿼리는 목록/검색 화면에서 쓰지 않는 `p.content` 전체를 계속 SELECT 했다.
+- 검색 query shape 는 이미 개선됐지만, 결과 row 하나마다 긴 `content` 컬럼을 실어 나르면 row width 와 JDBC/ORM 복사 비용이 그대로 남는다.
+- `/notifications` 웹 경로는 전체 알림 목록을 한 번에 projection 으로 읽고, 같은 트랜잭션 안에서 사용자 row lock 을 잡은 채 `markAllAsRead()` 를 수행했다.
+- 즉 알림 페이지는 "전체 목록 materialize + 전체 DOM 렌더링 + read-all 상태 전환"이 한 번에 묶여 있었다.
+- loadtest 전용 `/internal/load-test/actions/notifications/read-all` 도 `countByRecipient()` 로 전체 개수를 먼저 세고 나서 읽음 처리했다.
+- 그 결과 `notification.read-all.summary` 는 상태 전환 비용만 보려는 의도와 달리, full count query 비용까지 같이 떠안고 있었다.
+
+### 적용한 변경
+
+- `PostRepository`, `PostRepositoryImpl` 의 hot path projection 에서 `content` 를 `'' AS content` 로 바꿨다.
+- 즉 상세 페이지에서만 본문 전체를 읽고, 목록/검색/무한 스크롤에서는 빈 summary content 만 반환하도록 정리했다.
+- `NotificationRepository` 에 `Slice<NotificationResponse>` projection 조회를 추가했다.
+- `NotificationService.getAndMarkAllReadPage()` 를 도입해:
+  - 현재 page batch 는 잠금 없이 `Slice` 로 읽고
+  - 실제 read-all 상태 전환만 짧게 사용자 row lock 아래에서 수행하게 바꿨다.
+- `NotificationResponse.asRead()` 를 추가해, 먼저 읽은 batch 도 read-all 직후 화면에서는 읽음 상태로 즉시 렌더링되게 했다.
+- `NotificationWebController` 와 `notifications/list.html` 은 전체 목록 대신 page 단위 렌더링 + 이전/다음 링크로 변경했다.
+- loadtest summary 경로는 `countByRecipient()` 를 제거하고, bulk update 가 실제로 전환한 unread row 수만 반환하도록 바꿨다.
+- 즉 `notification.read-all.summary` 는 이제 "full count + transition" 이 아니라 "transition only" 에 가까운 계측값을 남긴다.
+
+### 기대 효과
+
+- `post.list`
+  - row width 감소
+  - JDBC result copy / Hibernate projection materialize 비용 감소
+  - 목록/검색/스크롤 batch 당 네트워크 및 메모리 복사량 감소
+- `notifications`
+  - 웹 경로에서 full list materialize 제거
+  - 사용자 row lock hold time 단축
+  - full count query 제거
+  - 알림 페이지 DOM 크기 상한 고정
+
+### 검증
+
+전체 회귀 테스트:
+
+```bash
+GRADLE_USER_HOME=/tmp/gradle-home ./gradlew test --no-daemon
+```
+
+결과:
+
+- 전체 테스트 통과
+- `NotificationServiceTest` 에서:
+  - page batch read 경로
+  - counter drift fallback
+  - loadtest summary 경로의 full count 제거
+  를 검증했다.
+- `NotificationWebControllerTest` 에서 `notificationPage` 모델 속성과 읽음 처리 회귀를 검증했다.
+- `PostListOptimizationIntegrationTest` 에서 목록 응답의 `content` 가 비어 있는지 고정했다.
+
+### 측정 메모
+
+- 이번 턴에서는 새 코드 기준의 신뢰 가능한 short soak 비교값은 남기지 못했다.
+- 이유는 기존 `18080` loadtest 인스턴스가 이미 떠 있는 상태라, 첫 측정이 예전 프로세스를 때렸고 새 코드 전용 비교 런으로 쓰기 부적절했기 때문이다.
+- 따라서 이번 변경의 런타임 효과는 "구조적으로 병목 원인을 제거한 상태"까지 반영했고, 새 부하 수치는 다음 턴에서 깨끗한 loadtest 인스턴스로 재측정해야 한다.
+
+### 남은 과제
+
+- 새 코드 기준으로 `post.list`, `notification.read-all.summary`, `notification.store` short soak 재측정
+- `0.7`, `0.8` 반복 ramp-up 및 soak 재실행
+- 필요하면 `notification.store` 이후 `notification.read-all.page` 경로도 별도 k6 scenario 로 분리 측정

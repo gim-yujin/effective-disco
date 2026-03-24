@@ -33,7 +33,10 @@ public class LoadTestBottleneckProfilingAspect {
         );
     }
 
-    @Around("execution(* com.effectivedisco.service.NotificationService.getAndMarkAllRead(..))")
+    @Around("""
+            execution(* com.effectivedisco.service.NotificationService.getAndMarkAllRead(..)) ||
+            execution(* com.effectivedisco.service.NotificationService.getAndMarkAllReadPage(..))
+            """)
     public Object profileNotificationReadAllPage(ProceedingJoinPoint joinPoint) throws Throwable {
         return loadTestStepProfiler.profileChecked(
                 "notification.read-all.page",

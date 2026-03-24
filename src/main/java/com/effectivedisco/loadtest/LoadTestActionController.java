@@ -74,7 +74,7 @@ public class LoadTestActionController {
      * 문제 해결:
      * 알림 생성과 "전체 읽음"을 같은 런 안에서 섞어야 unread counter drift를 실제 HTTP 경로로 재현할 수 있다.
      * 다만 mixed scenario는 목록 렌더링이 아니라 상태 전환 비용만 보면 되므로,
-     * full list 대신 count + unread summary 경로를 호출해 pool 포화 원인을 더 정확히 분리한다.
+     * full list/full count 대신 상태 전환량만 요약하는 경로를 호출해 pool 포화 원인을 더 정확히 분리한다.
      */
     @PostMapping("/notifications/read-all")
     public NotificationReadResponse markAllNotificationsRead(@RequestBody UsernameActionRequest request) {
