@@ -1285,3 +1285,70 @@ profile 별 결과:
 - 2-profile 조합 matrix 추가
 - `browse_search + relation_mixed` 를 첫 우선순위로 반복 측정
 - broad mixed 와 2-profile 결과를 비교해 최소 재현 조합을 확정
+
+## 2026-03-24 2-profile 조합 측정
+
+상태: 완료
+
+### 배경
+
+- 단일 `scenario profile` 분해 결과로는 broad mixed 불안정성이 "시나리오 간 상호작용"이라는 점까지만 확인됐다.
+- 그래서 이번에는 `SCENARIO_PROFILE=browse_search+relation_mixed` 처럼 `+` 로 묶인 2-profile 조합을 직접 실행해, 최소 재현 조합을 찾도록 `k6` gating 과 반복 측정 스크립트를 확장했다.
+- 목표는 broad mixed 전체를 계속 돌리지 않고도, 어떤 조합에서 `dbPoolTimeouts` 와 `p99 급등`이 다시 나타나는지 좁히는 것이었다.
+
+### 실행 결과
+
+실행 artifact:
+
+- [scenario-matrix-20260324-140610.md](/home/admin0/effective-disco/loadtest/results/scenario-matrix-20260324-140610.md)
+- [scenario-matrix-20260324-140610.tsv](/home/admin0/effective-disco/loadtest/results/scenario-matrix-20260324-140610.tsv)
+
+측정 조건:
+
+- clean `loadtest` instance: `http://localhost:18081`
+- `RUNS=5`
+- `STAGE_FACTORS=0.5,0.55,0.6`
+- `STOP_ON_HTTP_P99_MS=800`
+- `STOP_ON_K6_THRESHOLD=0`
+
+조합별 결과:
+
+- `browse_search+relation_mixed`: `highest stable factor = 0.5`
+- `browse_search+notification`: `highest stable factor = 0.6`
+- `write+relation_mixed`: `highest stable factor = 0.6`
+
+개별 aggregate:
+
+- [browse_search+relation_mixed aggregate](/home/admin0/effective-disco/loadtest/results/scenario-browse_search+relation_mixed-20260324-140610/scenario-browse_search+relation_mixed-20260324-140610/sub-stability-20260324-140610-aggregate.tsv)
+- [browse_search+notification aggregate](/home/admin0/effective-disco/loadtest/results/scenario-browse_search+notification-20260324-140610/scenario-browse_search+notification-20260324-141718/sub-stability-20260324-141718-aggregate.tsv)
+- [write+relation_mixed aggregate](/home/admin0/effective-disco/loadtest/results/scenario-write+relation_mixed-20260324-140610/scenario-write+relation_mixed-20260324-142909/sub-stability-20260324-142909-aggregate.tsv)
+
+핵심 수치:
+
+- `browse_search+relation_mixed`
+  - `0.5 = 5P/0L/0F`
+  - `0.55 = 4P/1L/0F`
+  - `0.6 = 1P/0L/3F`
+  - max `p99 = 1126.48ms`
+  - max `dbPoolTimeouts = 247`
+- `browse_search+notification`
+  - `0.5 / 0.55 / 0.6` 모두 `5/5 PASS`
+  - max `p99 = 154.64ms`
+  - max `dbPoolTimeouts = 0`
+- `write+relation_mixed`
+  - `0.5 / 0.55 / 0.6` 모두 `5/5 PASS`
+  - max `p99 = 165.87ms`
+  - max `dbPoolTimeouts = 0`
+
+### 해석
+
+- broad mixed 불안정성의 최소 재현 조합 후보는 `browse_search + relation_mixed` 로 좁혀졌다.
+- 반대로 `browse_search + notification`, `write + relation_mixed` 는 같은 조건에서 안정적이었으므로, notification 경로나 write 경로 단독이 현재 주범은 아니라는 근거가 생겼다.
+- 즉 현재 병목은 "read-heavy browse/search" 와 "relation mixed write" 가 동시에 DB pool 과 트랜잭션 점유 시간을 밀어 올릴 때 나타나는 상호작용이다.
+- 이 결과로 다음 우선순위는 `browse_search` 를 `browse_board_feed`, `hot_post_details`, `search_catalog` 로 더 쪼개고, `relation_mixed` 도 `like`, `bookmark`, `follow`, `block` 으로 더 쪼개는 것이다.
+
+### 남은 과제
+
+- `browse_board_feed + relation_mixed`, `search_catalog + relation_mixed` 같이 더 작은 조합으로 재분해
+- `relation_mixed` 내부에서도 `like add/remove` 와 `bookmark/follow/block` 을 나눠 최소 충돌 경로 확인
+- broad mixed 재현 없이도 같은 실패를 만드는 최소 시나리오를 확정한 뒤 해당 조합만 집중 최적화

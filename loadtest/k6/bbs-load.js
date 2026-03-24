@@ -27,14 +27,19 @@ const followMixedVus = Number(__ENV.FOLLOW_MIXED_VUS || 0);
 const blockMixedVus = Number(__ENV.BLOCK_MIXED_VUS || 0);
 const notificationMixedVus = Number(__ENV.NOTIFICATION_MIXED_VUS || 0);
 const scenarioProfile = __ENV.SCENARIO_PROFILE || 'full';
+const enabledScenarioProfiles = scenarioProfile === 'full'
+  ? ['full']
+  : scenarioProfile.split('+').map((profile) => profile.trim()).filter(Boolean);
 
 const scenarios = {};
 
 // 문제 해결:
 // broad mixed load만 계속 돌리면 어느 시나리오가 먼저 Hikari timeout을 만들었는지 분리할 수 없다.
 // scenario profile을 두어 read / write / relation mixed / notification 경로를 각각 독립적으로 켜고 끌 수 있게 한다.
+// 또한 2-profile 조합 실험을 위해 `browse_search+relation_mixed` 같은 조합 문자열도 그대로 해석한다.
 function isProfileEnabled(...profiles) {
-  return scenarioProfile === 'full' || profiles.includes(scenarioProfile);
+  return enabledScenarioProfiles.includes('full')
+    || profiles.some((profile) => enabledScenarioProfiles.includes(profile));
 }
 
 function addConstantArrivalScenario(name, execName, rate, duration, preAllocatedVUs, maxVUs, ...profiles) {

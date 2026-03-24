@@ -38,6 +38,12 @@ sub-1.0 안정 구간 반복 탐색:
 SCENARIO_PROFILE=browse_search ./loadtest/run-bbs-scenario-sub-stability.sh
 ```
 
+2-profile 조합 반복 탐색:
+
+```bash
+SCENARIO_PROFILE=browse_search+relation_mixed ./loadtest/run-bbs-scenario-sub-stability.sh
+```
+
 시나리오 matrix 비교:
 
 ```bash
@@ -70,6 +76,17 @@ SCENARIO_PROFILE=browse_search ./loadtest/run-bbs-scenario-sub-stability.sh
 - `write`: 게시물 작성/댓글 작성만 측정
 - `relation_mixed`: like/follow/bookmark/block 혼합 경쟁만 측정
 - `notification`: 알림 생성/읽음 처리만 측정
+- `browse_search+relation_mixed`: `+` 로 이어 붙인 2-profile 조합도 지원
+
+matrix 예시:
+
+```bash
+BASE_URL=http://localhost:18081 \
+RUNS=5 \
+STAGE_FACTORS=0.5,0.55,0.6 \
+SCENARIO_PROFILES=browse_search+relation_mixed,browse_search+notification,write+relation_mixed \
+./loadtest/run-bbs-scenario-matrix.sh
+```
 
 ## 결과물
 

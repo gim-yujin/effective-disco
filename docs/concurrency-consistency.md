@@ -410,6 +410,32 @@
 - 모든 개별 profile 에서 `dbPoolTimeouts=0`, `unexpected_response_rate=0`, 관계 중복 `0`, `postLike/comment/unread mismatch=0` 이었다.
 - 결론적으로 현재 재현되는 불안정성은 단일 시나리오 자체의 한계가 아니라, `read + write + relation/notification` 이 동시에 섞일 때 발생하는 상호작용 문제다.
 
+## 15차 결과
+
+상태: 완료
+
+검증 날짜:
+
+- 2026-03-24
+
+검증 범위:
+
+- 2-profile 조합 지원 추가
+- clean `loadtest` 인스턴스(`18081`)에서 `0.5 / 0.55 / 0.6`, `RUNS=5`
+- `browse_search+relation_mixed`, `browse_search+notification`, `write+relation_mixed` 반복 ramp-up 비교
+
+핵심 결론:
+
+- 3개 조합 중 `browse_search+relation_mixed` 만 broad mixed 와 유사한 불안정성을 재현했다.
+- matrix 요약은 [scenario-matrix-20260324-140610.md](/home/admin0/effective-disco/loadtest/results/scenario-matrix-20260324-140610.md), 원본 집계는 [scenario-matrix-20260324-140610.tsv](/home/admin0/effective-disco/loadtest/results/scenario-matrix-20260324-140610.tsv) 에 있다.
+- `browse_search+relation_mixed`: `highest stable factor = 0.5`
+- 같은 조합의 [aggregate](/home/admin0/effective-disco/loadtest/results/scenario-browse_search+relation_mixed-20260324-140610/scenario-browse_search+relation_mixed-20260324-140610/sub-stability-20260324-140610-aggregate.tsv) 기준 `0.55 = 4P/1L`, `0.6 = 1P/0L/3F`, `max p99 = 1126.48ms`, `max dbPoolTimeouts = 247`
+- `browse_search+notification`: [aggregate](/home/admin0/effective-disco/loadtest/results/scenario-browse_search+notification-20260324-140610/scenario-browse_search+notification-20260324-141718/sub-stability-20260324-141718-aggregate.tsv) 기준 `0.6` 까지 `5/5 PASS`
+- `write+relation_mixed`: [aggregate](/home/admin0/effective-disco/loadtest/results/scenario-write+relation_mixed-20260324-140610/scenario-write+relation_mixed-20260324-142909/sub-stability-20260324-142909-aggregate.tsv) 기준 `0.6` 까지 `5/5 PASS`
+- 실패한 `browse_search+relation_mixed` 상세는 [sub-stability-20260324-140610.md](/home/admin0/effective-disco/loadtest/results/scenario-browse_search+relation_mixed-20260324-140610/scenario-browse_search+relation_mixed-20260324-140610/sub-stability-20260324-140610.md) 와 [sub-stability-20260324-140610.tsv](/home/admin0/effective-disco/loadtest/results/scenario-browse_search+relation_mixed-20260324-140610/scenario-browse_search+relation_mixed-20260324-140610/sub-stability-20260324-140610.tsv) 에 있다.
+- 전 조합에서 `duplicateKeyConflicts=0`, 관계 중복 row `0`, `postLike/comment/unread mismatch=0` 으로 정합성 불변식은 계속 유지됐다.
+- 결론적으로 broad mixed 의 최소 재현 조합 후보는 `browse_search + relation_mixed` 다. 즉 현재 병목은 단순 read 나 단순 relation write 가 아니라, 두 경로가 동시에 DB pool 과 트랜잭션 점유 시간을 밀어 올릴 때 나타난다.
+
 ## 1차에서 보장한 불변식
 
 ### 관계형 쓰기 경로
