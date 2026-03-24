@@ -1035,3 +1035,87 @@ GRADLE_USER_HOME=/tmp/gradle-home ./gradlew test --no-daemon
 - 새 코드 기준으로 `post.list`, `notification.read-all.summary`, `notification.store` short soak 재측정
 - `0.7`, `0.8` 반복 ramp-up 및 soak 재실행
 - 필요하면 `notification.store` 이후 `notification.read-all.page` 경로도 별도 k6 scenario 로 분리 측정
+
+## 2026-03-24 `clean loadtest short soak` 재측정
+
+상태: 완료
+
+### 배경
+
+- 직전 최적화 섹션에서는 `post.list` row-width 축소와 알림 read-all 구조 분리를 적용했지만, 당시에는 `18080` 잔존 프로세스 때문에 새 코드 기준 short soak를 신뢰성 있게 남기지 못했다.
+- 이번에는 새 `loadtest` 인스턴스를 `18081`에 별도로 띄우고 같은 short soak 프로파일로 다시 측정했다.
+
+### 실행 결과
+
+실행 artifact:
+
+- [soak-20260324-115314.md](/home/admin0/effective-disco/loadtest/results/soak-20260324-115314.md)
+- [soak-20260324-115314-server.json](/home/admin0/effective-disco/loadtest/results/soak-20260324-115314-server.json)
+- [soak-20260324-115314-metrics.jsonl](/home/admin0/effective-disco/loadtest/results/soak-20260324-115314-metrics.jsonl)
+- [soak-20260324-115314-sql.tsv](/home/admin0/effective-disco/loadtest/results/soak-20260324-115314-sql.tsv)
+
+측정값:
+
+- `soak_factor = 1`
+- `soak_duration = 10s`
+- `warmup_duration = 5s`
+- `status = FAIL`
+- `http p95 = 809.70ms`
+- `http p99 = 988.87ms`
+- `unexpected_response_rate = 0.0000`
+- `dbPoolTimeouts = 0`
+- `maxActiveConnections = 28`
+- `maxThreadsAwaitingConnection = 192`
+
+정합성:
+
+- `duplicateKeyConflicts = 0`
+- `relationDuplicateRows = 0`
+- `postLikeMismatchPosts = 0`
+- `postCommentMismatchPosts = 0`
+- `unreadNotificationMismatchUsers = 0`
+
+### 병목 프로파일
+
+최종 프로파일:
+
+- `post.list averageWallTimeMs = 62.13`
+- `post.list averageSqlExecutionTimeMs = 58.45`
+- `post.list averageSqlStatementCount = 4.81`
+- `notification.read-all.summary averageWallTimeMs = 2.23`
+- `notification.read-all.summary averageSqlExecutionTimeMs = 1.56`
+- `notification.read-all.summary averageSqlStatementCount = 2.00`
+- `notification.store averageWallTimeMs = 1.78`
+- `notification.store averageSqlExecutionTimeMs = 1.29`
+- `notification.store averageSqlStatementCount = 2.00`
+
+### 직전 short soak 대비 변화
+
+비교 기준:
+
+- 이전 short soak artifact: `loadtest/results/soak-20260324-113324-server.json`
+- 이번 clean short soak artifact: `loadtest/results/soak-20260324-115314-server.json`
+
+변화:
+
+- `post.list averageWallTimeMs`: `114.45 -> 62.13`
+- `post.list averageSqlExecutionTimeMs`: `110.36 -> 58.45`
+- `notification.read-all.summary averageWallTimeMs`: `2.68 -> 2.23`
+- `notification.read-all.summary averageSqlStatementCount`: `3.00 -> 2.00`
+- `notification.store averageWallTimeMs`: `1.86 -> 1.78`
+
+### 해석
+
+- `post.list`는 실제로 내려갔다. row-width 축소가 SQL 실행 시간까지 같이 줄인 것이 확인됐다.
+- 알림 read-all summary는 full count 제거 효과가 명확했다. statement 수가 `3 -> 2`로 줄었고, 이제 `notification.read-all.summary.count` 같은 별도 count 병목이 남지 않는다.
+- `notification.store`는 이미 비교적 가벼운 경로였기 때문에 개선 폭은 작지만, 여전히 `2 statement` 수준으로 유지됐다.
+- 이번 short soak의 `FAIL`은 `unexpected_response_rate`나 `dbPoolTimeouts` 때문이 아니라 `k6 latency threshold` 초과 때문이다.
+- 즉 이번 변경은 "timeout을 없애는 수준"까지는 아니어도, 최소한 `post.list`와 알림 read/write 경로를 실제로 가볍게 만들었다는 증거는 확보됐다.
+
+### 남은 과제
+
+- 이 상태로 `0.7`, `0.8` 반복 ramp-up 재측정
+- 새 병목 순서 재확인
+  - `post.list`가 여전히 1순위인지
+  - 아니면 `createComment`, mixed scenario latency가 앞서는지
+- 필요하면 `browse/search` 계열 threshold 초과 원인을 별도 분리 측정
