@@ -462,6 +462,30 @@
 - 전 조합에서 `duplicateKeyConflicts=0`, 관계 중복 row `0`, `postLike/comment/unread mismatch=0` 으로 정합성 불변식은 계속 유지됐다.
 - 결론적으로 현재까지 가장 강한 최소 재현 조건은 `browse_board_feed + search_catalog + relation_mixed` 이다. 즉 read path 하나가 아니라 `feed + search` 가 함께 DB를 누르는 동안 relation write 가 겹칠 때 불안정성이 나타난다.
 
+## 17차 결과
+
+상태: 완료
+
+검증 날짜:
+
+- 2026-03-24
+
+검증 범위:
+
+- `browse_board_feed + search_catalog + relation_mixed` 를 relation 단위로 재분해
+- 우선순위 조합으로 `browse_board_feed+search_catalog+like_mixed` 반복 측정
+- clean `loadtest` 인스턴스(`18081`)에서 `0.5 / 0.55 / 0.6`, `RUNS=5`
+
+핵심 결론:
+
+- 이번 결과는 `root cause 확정`이 아니라 `원인 추적 1순위 대상 확정`이다.
+- `browse_board_feed+search_catalog+like_mixed`: [suite](/home/admin0/effective-disco/loadtest/results/scenario-browse_board_feed+search_catalog+like_mixed-20260324-211651/scenario-browse_board_feed+search_catalog+like_mixed-20260324-211651/sub-stability-20260324-211651.md), [aggregate](/home/admin0/effective-disco/loadtest/results/scenario-browse_board_feed+search_catalog+like_mixed-20260324-211651/scenario-browse_board_feed+search_catalog+like_mixed-20260324-211651/sub-stability-20260324-211651-aggregate.tsv) 기준 `0.5 = 5P/0L/0F`, `0.55 = 3P/0L/2F`, `0.6 = 1P/0L/2F` 로 불안정성이 재현됐다.
+- 같은 조합의 max `p99` 는 `1056.45ms`, max `dbPoolTimeouts` 는 `48` 이었고, `unexpected-response` 도 함께 발생했다.
+- 반면 앞 단계에서 `search_catalog+relation_mixed` 는 `0.6` 까지 `5/5 PASS`, `browse_board_feed+relation_mixed` 도 강한 재현 조합은 아니었다.
+- 따라서 relation write 전체가 아니라, 현재 가장 먼저 추적해야 할 경로는 `feed + search + like add/remove` 조합이다.
+- `bookmark/follow/block` 쪽은 이번 단계에서 끝까지 돌리지 않았다. `like_mixed` 에서 이미 충분한 재현성이 확인돼 원인 추적 대상을 먼저 확정하는 쪽이 더 효율적이었기 때문이다.
+- 이번 `like_mixed` 재현에서도 `duplicateKeyConflicts=0`, 관계 중복 row `0`, `postLike/comment/unread mismatch=0` 으로 정합성 불변식은 계속 유지됐다.
+
 ## 1차에서 보장한 불변식
 
 ### 관계형 쓰기 경로

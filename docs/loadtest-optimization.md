@@ -1411,3 +1411,55 @@ profile 별 결과:
 - `browse_board_feed + search_catalog + follow_mixed`
 - `browse_board_feed + search_catalog + block_mixed`
 - 위 4개 중 어느 relation write 가 첫 번째 실제 재현 쌍인지 확정한 뒤 그 경로만 집중 계측
+
+## 2026-03-24 like_mixed 원인 추적 대상 확정
+
+상태: 완료
+
+### 배경
+
+- 앞 단계에서 broad mixed 불안정성의 최소 재현 조건은 `browse_board_feed + search_catalog + relation_mixed` 까지 좁혀졌다.
+- 하지만 여기서도 relation write 가 여전히 넓어서, 실제로 어떤 write 경로를 먼저 파야 하는지는 확정되지 않았다.
+- 그래서 이번 단계는 `root cause` 를 바로 단정하는 대신, relation 단위를 더 쪼개 `원인 추적 1순위 대상`을 확정하는 데 집중했다.
+
+### 실행 결과
+
+- 대상 조합: `browse_board_feed+search_catalog+like_mixed`
+- 실행 artifact:
+  - [suite](/home/admin0/effective-disco/loadtest/results/scenario-browse_board_feed+search_catalog+like_mixed-20260324-211651/scenario-browse_board_feed+search_catalog+like_mixed-20260324-211651/sub-stability-20260324-211651.md)
+  - [aggregate](/home/admin0/effective-disco/loadtest/results/scenario-browse_board_feed+search_catalog+like_mixed-20260324-211651/scenario-browse_board_feed+search_catalog+like_mixed-20260324-211651/sub-stability-20260324-211651-aggregate.tsv)
+
+aggregate:
+
+- `0.5 = 5P/0L/0F`
+- `0.55 = 3P/0L/2F`
+- `0.6 = 1P/0L/2F`
+- max `p99 = 1056.45ms`
+- max `dbPoolTimeouts = 48`
+- `unexpected-response` 재현
+
+run detail 핵심:
+
+- run02 `0.6`: `unexpected-response`, `dbPoolTimeouts = 3`
+- run03 `0.6`: `unexpected-response`, `dbPoolTimeouts = 48`
+- run04 `0.55`: `unexpected-response`, `dbPoolTimeouts = 3`
+- run05 `0.55`: `unexpected-response`, `dbPoolTimeouts = 3`
+
+정합성:
+
+- `duplicateKeyConflicts = 0`
+- 관계 중복 row = `0`
+- `postLike/comment/unread mismatch = 0`
+
+### 해석
+
+- `feed + search + like add/remove` 조합은 broad mixed 불안정성과 같은 축의 실패를 충분히 재현한다.
+- 이걸로 "좋아요가 root cause" 라고 단정할 수는 없지만, 최소한 `bookmark/follow/block` 보다 먼저 파야 할 추적 대상은 확정됐다.
+- 즉 다음 계측/최적화 우선순위는 `browse_board_feed`, `search_catalog`, `like add/remove` 세 경로가 동시에 있을 때 어떤 query 와 wait 가 가장 먼저 커지는지 보는 것이다.
+- `bookmark/follow/block` 까지 같은 수준으로 전부 돌려 비교하는 것은 그 다음 단계다. 이번 단계에서는 `like_mixed` 만으로도 이미 충분한 재현성이 확인됐기 때문에, 더 좁은 병목 분석으로 바로 들어가는 편이 효율적이다.
+
+### 다음 액션
+
+- `browse_board_feed + search_catalog + like_mixed` 전용 short soak
+- 같은 조합에서 `post.list`, search count/query, like add/remove 의 `wall/sql/statement count/wait event` 비교
+- PostgreSQL wait snapshot 과 앱 bottleneck profile 을 같은 시간축으로 비교
