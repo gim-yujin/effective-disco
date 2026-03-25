@@ -1077,7 +1077,9 @@ done
 ### 장시간/대규모 스트레스
 
 - clean 전용 DB 기준으로 broad mixed `0.9 / 30분 soak` 는 통과했다.
-- 따라서 현재 남은 장시간 리스크는 `0.9 / 1시간`, `0.9 / 2시간` 같은 더 긴 soak 와 장기 추세 관찰이다.
+- 이후 clean 전용 DB 기준 `0.9 / 1시간 soak` 는 `dbPoolTimeouts=0`, SQL mismatch `0` 상태를 유지했지만,
+  k6 latency threshold 를 넘어서 `FAIL` 이 되었다.
+- 따라서 현재 남은 장시간 리스크는 `정합성/timeout` 보다 `장시간 latency drift` 이다.
 - 특히 장기 profile 에서 `notification.read-all.summary`, `notification.store`, `post.list.browse.rows` 가 상대적으로 커지고 있으므로, 다음 분석 우선순위는 이 경로들이다.
 
 ### 대용량 데이터
@@ -1108,3 +1110,57 @@ done
 - 읽기/쓰기/좋아요 경쟁 혼합 부하에서도 `unexpected_response_rate=0.0000` 확인
 - `duplicateKeyConflicts=0`, `dbPoolTimeouts=0` 확인
 - DB pool 최대 active `20`, 최대 대기 쓰레드 `176` 으로 포화 징후 확인
+
+## 28차 결과 - Clean `0.9 / 1시간` Soak 재검증
+
+상태: 완료
+
+### 실행
+
+```bash
+PGHOST=localhost PGPORT=5432 PGUSER=postgres PGPASSWORD=4321 \
+  psql -d postgres -c 'DROP DATABASE IF EXISTS "effectivedisco_loadtest" WITH (FORCE);'
+PGHOST=localhost PGPORT=5432 PGUSER=postgres PGPASSWORD=4321 \
+  psql -d postgres -c 'CREATE DATABASE "effectivedisco_loadtest";'
+
+APP_LOAD_TEST_DB_POOL_MAX_SIZE=28 \
+SPRING_PROFILES_ACTIVE=loadtest \
+SERVER_PORT=18084 \
+GRADLE_USER_HOME=/tmp/gradle-home \
+./gradlew bootRun --no-daemon
+
+SOAK_FACTOR=0.9 SOAK_DURATION=1h WARMUP_DURATION=2m SAMPLE_INTERVAL_SECONDS=60 \
+  BASE_URL=http://127.0.0.1:18084 \
+  ./loadtest/run-bbs-soak.sh
+```
+
+### 결과
+
+- suite:
+  [soak-20260325-141313.md](/home/admin0/effective-disco/loadtest/results/soak-20260325-141313.md)
+- server metrics:
+  [soak-20260325-141313-server.json](/home/admin0/effective-disco/loadtest/results/soak-20260325-141313-server.json)
+- metrics timeline:
+  [soak-20260325-141313-metrics.jsonl](/home/admin0/effective-disco/loadtest/results/soak-20260325-141313-metrics.jsonl)
+- sql snapshot:
+  [soak-20260325-141313-sql.tsv](/home/admin0/effective-disco/loadtest/results/soak-20260325-141313-sql.tsv)
+- 최종 상태: `FAIL`
+- `http p95 = 441.09ms`
+- `http p99 = 570.73ms`
+- `unexpected_response_rate = 0.0000`
+- `duplicateKeyConflicts = 0`
+- `dbPoolTimeouts = 0`
+- `maxActiveConnections = 28`
+- `maxThreadsAwaitingConnection = 194`
+- SQL mismatch = 전부 `0`
+
+### 해석
+
+- 이번 `FAIL` 은 정합성 깨짐이나 pool timeout 때문이 아니라 `k6 latency threshold` 초과 때문이다.
+- 즉 clean 전용 DB 기준 현재 시스템은 `0.9 / 1시간` 동안에도 정합성과 pool 안정성은 유지했다.
+- 대신 장시간 구간에서 latency drift 가 누적된다.
+- 최종 profile 기준 가장 크게 커진 경로는 아래 세 개다.
+  - `notification.read-all.summary avgWall = 47.41ms`
+  - `notification.store avgWall = 22.17ms`
+  - `post.list.browse.rows avgWall = 15.52ms`
+- 따라서 다음 최적화 우선순위는 `notification read/write` 와 `browse rows` drift 억제다.

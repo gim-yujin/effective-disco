@@ -2200,3 +2200,86 @@ SOAK_FACTOR=0.9 SOAK_DURATION=30m WARMUP_DURATION=2m SAMPLE_INTERVAL_SECONDS=30 
 - `0.9 / 1시간`, `0.9 / 2시간` soak
 - 장기 trend 기준 `notification.read-all.summary`, `notification.store`, `post.list.browse.rows` 추가 분석
 - 필요할 때만 pair matrix / minimal reproduction 재실행
+
+## 2026-03-25 clean `0.9 / 1시간` soak + 장시간 drift 분석
+
+상태: 완료
+
+### 배경
+
+- clean 전용 DB 기준 `0.9 / 30분 soak` 는 이미 통과했다.
+- 따라서 다음 질문은 `1시간`으로 늘렸을 때도 정합성과 pool 안정성이 유지되는지, 그리고 어떤 경로가 가장 먼저 drift 하는지였다.
+
+### 문제 해결
+
+- 측정 목적은 “깨지는가” 하나가 아니라, `1시간` 동안 어떤 hot path 의 wall/sql 시간이 누적되는지 보는 것이었다.
+- 그래서 기존과 같은 clean 전용 DB 재생성 절차를 유지한 채 `0.9 / 1시간 soak` 를 실행하고,
+  최종 server profile 에서 `notification.read-all.summary`, `notification.store`, `post.list.*`, `post.like.*` 를 따로 비교했다.
+
+### 실행
+
+```bash
+PGHOST=localhost PGPORT=5432 PGUSER=postgres PGPASSWORD=4321 \
+  psql -d postgres -c 'DROP DATABASE IF EXISTS "effectivedisco_loadtest" WITH (FORCE);'
+PGHOST=localhost PGPORT=5432 PGUSER=postgres PGPASSWORD=4321 \
+  psql -d postgres -c 'CREATE DATABASE "effectivedisco_loadtest";'
+
+APP_LOAD_TEST_DB_POOL_MAX_SIZE=28 \
+SPRING_PROFILES_ACTIVE=loadtest \
+SERVER_PORT=18084 \
+GRADLE_USER_HOME=/tmp/gradle-home \
+./gradlew bootRun --no-daemon
+
+SOAK_FACTOR=0.9 SOAK_DURATION=1h WARMUP_DURATION=2m SAMPLE_INTERVAL_SECONDS=60 \
+  BASE_URL=http://127.0.0.1:18084 \
+  ./loadtest/run-bbs-soak.sh
+```
+
+### 결과
+
+- suite:
+  [soak-20260325-141313.md](/home/admin0/effective-disco/loadtest/results/soak-20260325-141313.md)
+- server metrics:
+  [soak-20260325-141313-server.json](/home/admin0/effective-disco/loadtest/results/soak-20260325-141313-server.json)
+- metrics timeline:
+  [soak-20260325-141313-metrics.jsonl](/home/admin0/effective-disco/loadtest/results/soak-20260325-141313-metrics.jsonl)
+- sql snapshot:
+  [soak-20260325-141313-sql.tsv](/home/admin0/effective-disco/loadtest/results/soak-20260325-141313-sql.tsv)
+- 최종 상태: `FAIL`
+- `http p95 = 441.09ms`
+- `http p99 = 570.73ms`
+- `unexpected_response_rate = 0.0000`
+- `dbPoolTimeouts = 0`
+- SQL mismatch = 전부 `0`
+
+주요 profile:
+
+- `notification.read-all.summary avgWall = 47.41ms`, `avgSql = 46.99ms`, `avgStmt = 2.0`
+- `notification.store avgWall = 22.17ms`, `avgSql = 21.78ms`, `avgStmt = 2.0`
+- `post.list.browse.rows avgWall = 15.52ms`, `avgSql = 15.12ms`, `avgStmt = 1.0`
+- `post.list.search.rows avgWall = 10.93ms`, `avgSql = 10.42ms`, `avgStmt = 1.0`
+- `post.list.tag.rows avgWall = 1.86ms`, `avgSql = 1.46ms`, `avgStmt = 1.0`
+- `post.like.add avgWall = 5.68ms`, `avgSql = 4.98ms`, `avgStmt = 4.0`
+- `post.like.remove avgWall = 5.57ms`, `avgSql = 4.87ms`, `avgStmt = 4.0`
+
+### 해석
+
+- 이번 `FAIL` 은 `dbPoolTimeouts=0`, `unexpected_response_rate=0`, SQL mismatch `0` 상태에서 발생했다.
+- 즉 clean baseline 기준 현재 시스템은 `1시간` 동안 정합성과 pool 안정성은 유지하지만,
+  일부 hot path latency 가 k6 threshold 를 넘기면서 FAIL 로 분류된다.
+- 드러난 드리프트는 크게 두 축이다.
+  - `notification.read-all.summary`, `notification.store`
+    - 둘 다 평균 wall time 이 거의 SQL 시간과 같아서 애플리케이션 계산보다 DB 비용 문제다.
+    - 현재 구현은 [NotificationService.java](/home/admin0/effective-disco/src/main/java/com/effectivedisco/service/NotificationService.java) 에서
+      `findByUsernameForUpdate()` 기반 사용자 행 잠금과 unread 상태 전환을 같이 수행하므로,
+      장시간 혼합 부하에서 lock/WAL pressure 가 누적되기 쉽다.
+  - `post.list.browse.rows`
+    - 이미 slice/keyset 으로 줄였지만, browse hot path 는 여전히 `Post + author + board projection` 을 반복한다.
+    - 장시간 동안 feed browse 와 지속적인 write churn 이 겹치면서 최신 board tail read 비용이 꾸준히 상승한다.
+
+### 다음 액션
+
+- `GET /notifications` 자동 read-all 제거 또는 read-all 을 명시 액션으로 분리
+- `notification.store/read-all` 의 `User` 전체 행 잠금 경로를 더 좁은 원자 update 로 축소
+- `post.list.browse.rows` 를 `id-first keyset + small projection join` 구조로 더 줄이기
+- 위 세 경로 조정 후 `0.9 / 1시간` soak 재측정
