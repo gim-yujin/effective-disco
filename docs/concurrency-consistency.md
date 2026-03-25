@@ -1654,3 +1654,44 @@ SOAK_FACTOR=0.9 SOAK_DURATION=1h WARMUP_DURATION=2m SAMPLE_INTERVAL_SECONDS=60 \
 - 즉 실패 원인은 정합성이나 중복 키가 아니라 `장시간 pool saturation` 하나로 수렴했다.
 - clean 기준 `0.9`는 `15분`, `1시간`까지는 실질적으로 버티지만,
   `2시간`에서는 안정 구간이 아니다.
+
+## 2026-03-26 clean broad mixed `0.85 / 2시간` soak
+
+상태: 완료
+
+### 실행 목적
+
+- `0.9 / 2시간` 실패 후,
+  실제 2시간 stable factor 를 찾기 위해 부하를 `0.85`로 낮춰 다시 확인한다.
+
+### 결과
+
+- suite:
+  [soak-20260326-042905.md](/home/admin0/effective-disco/loadtest/results/soak-20260326-042905.md)
+- server metrics:
+  [soak-20260326-042905-server.json](/home/admin0/effective-disco/loadtest/results/soak-20260326-042905-server.json)
+- sql snapshot:
+  [soak-20260326-042905-sql.tsv](/home/admin0/effective-disco/loadtest/results/soak-20260326-042905-sql.tsv)
+- 상태: `FAIL`
+- `http p95 = 519.43ms`
+- `http p99 = 1103.31ms`
+- `unexpected_response_rate = 0.0001`
+- `duplicateKeyConflicts = 0`
+- `dbPoolTimeouts = 956`
+- `unreadNotificationMismatchUsers = 0`
+
+### 5분 모니터링 요약
+
+- `35분`: `dbPoolTimeouts = 0`
+- `1시간`: `dbPoolTimeouts = 0`
+- `1시간 30분`: `dbPoolTimeouts = 6`
+- `1시간 45분`: `dbPoolTimeouts = 48`
+- `1시간 55분`: `dbPoolTimeouts = 363`
+- `최종`: `dbPoolTimeouts = 956`
+
+### 해석
+
+- `0.85`는 `0.9`보다 timeout 발생 시점이 뒤로 밀렸지만,
+  `2시간` 기준으로는 여전히 stable factor 가 아니다.
+- duplicate-key 와 unread counter mismatch 는 끝까지 `0` 이었고,
+  실패 원인은 역시 `장시간 pool saturation` 이다.
