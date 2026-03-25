@@ -54,6 +54,15 @@ public class LoadTestBottleneckProfilingAspect {
         );
     }
 
+    @Around("execution(* com.effectivedisco.service.NotificationService.markPageAsReadForLoadTest(..))")
+    public Object profileNotificationReadPageSummary(ProceedingJoinPoint joinPoint) throws Throwable {
+        return loadTestStepProfiler.profileChecked(
+                "notification.read-page.summary",
+                true,
+                (LoadTestStepProfiler.ThrowingSupplier<Object>) joinPoint::proceed
+        );
+    }
+
     @Around("execution(* com.effectivedisco.service.PostService.createPost(..))")
     public Object profilePostCreate(ProceedingJoinPoint joinPoint) throws Throwable {
         return loadTestStepProfiler.profileChecked(

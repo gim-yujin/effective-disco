@@ -170,6 +170,22 @@ public class NotificationService {
 
     /**
      * 문제 해결:
+     * 웹 알림 UI의 명시 액션은 recipient 전체 unread row 를 한 번에 읽음 처리하지 않는다.
+     * 사용자가 실제로 보고 있는 현재 페이지 batch 만 읽음 처리하면
+     * read-all bulk update 로 인한 장시간 drift 를 크게 줄일 수 있다.
+     */
+    @Transactional
+    public int markPageAsRead(String username, int page, int size) {
+        UserRepository.NotificationRecipientSnapshot recipient = findNotificationRecipient(username);
+        return loadTestStepProfiler.profile(
+                "notification.read-page.web.transition",
+                true,
+                () -> markNotificationPageRead(recipient, page, size)
+        );
+    }
+
+    /**
+     * 문제 해결:
      * 알림 페이지는 전체 목록을 렌더링하면서 사용자 행 잠금을 오래 쥘 필요가 없다.
      * 현재 page batch 는 잠금 없이 Slice 로 읽고, read-all 상태 전환만 짧게 잠가
      * notification.read-all 이 full list materialize + lock hold time 으로 pool 을 잡아먹지 않게 만든다.
@@ -225,6 +241,23 @@ public class NotificationService {
     }
 
     /**
+     * 문제 해결:
+     * baseline load test 는 사용자가 현재 보고 있는 알림 batch 만 읽는 현실적인 경로를 따로 측정해야 한다.
+     * stress 용 read-all 과 분리된 read-page 요약 경로를 두어
+     * 정상 baseline 과 worst-case read-all stress 를 같은 메트릭으로 섞지 않게 한다.
+     */
+    @Transactional
+    public NotificationReadSummary markPageAsReadForLoadTest(String username, int page, int size) {
+        UserRepository.NotificationRecipientSnapshot recipient = findNotificationRecipient(username);
+        long transitionedCount = loadTestStepProfiler.profile(
+                "notification.read-page.summary.transition",
+                true,
+                () -> markNotificationPageRead(recipient, page, size)
+        );
+        return new NotificationReadSummary((int) transitionedCount, 0L);
+    }
+
+    /**
      * 헤더 뱃지/SSE 초기값용 미읽음 알림 수.
      * count query 대신 비정규화 카운터를 읽어 hot path를 가볍게 유지한다.
      */
@@ -272,6 +305,34 @@ public class NotificationService {
 
     private int normalizeNotificationPageSize(int size) {
         return Math.max(1, Math.min(size, 50));
+    }
+
+    private int markNotificationPageRead(UserRepository.NotificationRecipientSnapshot recipient, int page, int size) {
+        User user = userRepository.getReferenceById(recipient.getId());
+        PageRequest pageable = PageRequest.of(Math.max(page, 0), normalizeNotificationPageSize(size));
+        Slice<NotificationResponse> slice = notificationRepository.findResponseSliceByRecipientOrderByCreatedAtDesc(user, pageable);
+        List<Long> unreadIds = slice.getContent().stream()
+                .filter(notification -> !notification.isRead())
+                .map(NotificationResponse::getId)
+                .toList();
+
+        if (unreadIds.isEmpty()) {
+            scheduleUnreadCountRefreshAfterCommit(recipient.getUsername());
+            return 0;
+        }
+
+        // 문제 해결:
+        // "현재 페이지 읽음"은 visible batch 의 unread id 만 update 해야 한다.
+        // 이렇게 하면 read-all bulk update 대신 작은 IN 집합만 건드려 lock/WAL pressure 를 낮출 수 있다.
+        int transitionedCount = notificationRepository.markPageAsReadByIds(recipient.getId(), unreadIds);
+        if (transitionedCount > 0) {
+            userRepository.decrementUnreadNotificationCount(recipient.getId(), transitionedCount);
+        } else if (recipient.getUnreadNotificationCount() > 0) {
+            long actualUnreadCount = notificationRepository.countUnreadByRecipientId(recipient.getId());
+            userRepository.setUnreadNotificationCount(recipient.getId(), actualUnreadCount);
+        }
+        scheduleUnreadCountRefreshAfterCommit(recipient.getUsername());
+        return transitionedCount;
     }
 
     private long markAllUnreadNotificationsRead(UserRepository.NotificationRecipientSnapshot recipient) {

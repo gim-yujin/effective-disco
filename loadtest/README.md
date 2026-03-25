@@ -123,7 +123,8 @@ RELATION_PROFILES=like_mixed,bookmark_mixed,follow_mixed,block_mixed \
 - `bookmark_mixed_race`: 같은 사용자의 북마크 등록/해제 혼합 경쟁
 - `follow_mixed_race`: 같은 사용자의 팔로우/언팔로우 혼합 경쟁
 - `block_mixed_race`: 같은 사용자의 차단/해제 혼합 경쟁
-- `notification_read_write_mixed`: 알림 생성과 전체 읽음 처리 혼합 경쟁
+- `notification_read_write_mixed`: 알림 생성과 현재 페이지 읽음 혼합 baseline
+- `notification_read_all_stress`: 알림 생성과 `read-all` worst-case 혼합 stress
 
 ### 시나리오 profile
 
@@ -140,7 +141,8 @@ RELATION_PROFILES=like_mixed,bookmark_mixed,follow_mixed,block_mixed \
 - `bookmark_mixed`: 북마크 add/remove 경쟁만 측정
 - `follow_mixed`: 팔로우/언팔로우 경쟁만 측정
 - `block_mixed`: 차단/해제 경쟁만 측정
-- `notification`: 알림 생성/읽음 처리만 측정
+- `notification`: 알림 생성/현재 페이지 읽음 baseline 측정
+- `notification_stress`: `read-all` worst-case stress 측정
 - `browse_search+relation_mixed`: `+` 로 이어 붙인 2-profile 조합도 지원
 - `browse_board_feed+search_catalog+relation_mixed`: 세분화된 3-profile 조합도 지원
 
@@ -184,6 +186,16 @@ STAGE_FACTORS=0.6 \
 READ_PROFILES=search_catalog,tag_search,sort_catalog \
 RELATION_PROFILES=like_mixed,bookmark_mixed,follow_mixed,block_mixed \
 ./loadtest/run-bbs-read-relation-pair-matrix.sh
+```
+
+notification baseline/stress 관련 env:
+
+```bash
+NOTIFICATION_BASELINE_READ_EVERY=4   # baseline에서 몇 iteration마다 read-page를 수행할지
+NOTIFICATION_PAGE_SIZE=20            # baseline read-page batch 크기
+NOTIFICATION_MIXED_VUS=20            # baseline notification 시나리오 VU
+NOTIFICATION_STRESS_VUS=20           # read-all stress 시나리오 VU
+NOTIFICATION_STRESS_DURATION=45s     # read-all stress duration
 ```
 
 ## 결과물

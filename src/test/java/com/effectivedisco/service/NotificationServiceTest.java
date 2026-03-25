@@ -305,6 +305,72 @@ class NotificationServiceTest {
     }
 
     @Test
+    void markPageAsRead_marksOnlyVisibleUnreadIds() {
+        User user = makeUser("alice");
+        NotificationResponse unread = new NotificationResponse(
+                7L,
+                NotificationType.MESSAGE,
+                "page unread",
+                "/messages/7",
+                false,
+                LocalDateTime.now()
+        );
+        NotificationResponse alreadyRead = new NotificationResponse(
+                8L,
+                NotificationType.MESSAGE,
+                "page read",
+                "/messages/8",
+                true,
+                LocalDateTime.now()
+        );
+
+        given(userRepository.findNotificationRecipientSnapshotByUsername("alice"))
+                .willReturn(Optional.of(notificationRecipient(11L, "alice", 3L)));
+        given(userRepository.getReferenceById(11L)).willReturn(user);
+        given(notificationRepository.findResponseSliceByRecipientOrderByCreatedAtDesc(user, PageRequest.of(0, 20)))
+                .willReturn(new SliceImpl<>(List.of(unread, alreadyRead), PageRequest.of(0, 20), true));
+        given(notificationRepository.markPageAsReadByIds(11L, List.of(7L))).willReturn(1);
+        given(userRepository.findUnreadNotificationCountByUsername("alice")).willReturn(Optional.of(2L));
+
+        int transitioned = notificationService.markPageAsRead("alice", 0, 20);
+
+        assertThat(transitioned).isEqualTo(1);
+        verify(notificationRepository).markPageAsReadByIds(11L, List.of(7L));
+        verify(userRepository).decrementUnreadNotificationCount(11L, 1L);
+        verify(sseEmitterService).sendCount("alice", 2L);
+    }
+
+    @Test
+    void markPageAsReadForLoadTest_usesVisibleBatchTransitionSummary() {
+        User user = makeUser("alice");
+        NotificationResponse unread = new NotificationResponse(
+                9L,
+                NotificationType.LIKE,
+                "baseline page unread",
+                "/posts/9",
+                false,
+                LocalDateTime.now()
+        );
+
+        given(userRepository.findNotificationRecipientSnapshotByUsername("alice"))
+                .willReturn(Optional.of(notificationRecipient(11L, "alice", 2L)));
+        given(userRepository.getReferenceById(11L)).willReturn(user);
+        given(notificationRepository.findResponseSliceByRecipientOrderByCreatedAtDesc(user, PageRequest.of(0, 20)))
+                .willReturn(new SliceImpl<>(List.of(unread), PageRequest.of(0, 20), false));
+        given(notificationRepository.markPageAsReadByIds(11L, List.of(9L))).willReturn(1);
+        given(userRepository.findUnreadNotificationCountByUsername("alice")).willReturn(Optional.of(1L));
+
+        NotificationService.NotificationReadSummary summary =
+                notificationService.markPageAsReadForLoadTest("alice", 0, 20);
+
+        assertThat(summary.listedNotificationCount()).isEqualTo(1);
+        assertThat(summary.unreadCount()).isZero();
+        verify(notificationRepository).markPageAsReadByIds(11L, List.of(9L));
+        verify(userRepository).decrementUnreadNotificationCount(11L, 1L);
+        verify(sseEmitterService).sendCount("alice", 1L);
+    }
+
+    @Test
     void getAndMarkAllReadPage_fetchesCurrentBatchWithoutFullListMaterialize() {
         User user = makeUser("alice");
         NotificationResponse notification = new NotificationResponse(

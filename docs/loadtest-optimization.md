@@ -2438,3 +2438,80 @@ GRADLE_USER_HOME=/tmp/gradle-home ./gradlew test --no-daemon
   현재 `read-all transition` 구현은 clean `0.9 / 1시간 soak` 기준 실패다.
 - 따라서 다음 단계는 browse 추가 최적화가 아니라,
   `notification read-all` 을 제품/UX 수준에서 줄이거나 명시 액션으로 분리하는 것이다.
+
+## 2026-03-25 clean `0.9 / 15분` soak 확인
+
+상태: 완료, `FAIL`
+
+### 결과
+
+- suite:
+  [soak-20260325-171847.md](/home/admin0/effective-disco/loadtest/results/soak-20260325-171847.md)
+- server metrics:
+  [soak-20260325-171847-server.json](/home/admin0/effective-disco/loadtest/results/soak-20260325-171847-server.json)
+- metrics timeline:
+  [soak-20260325-171847-metrics.jsonl](/home/admin0/effective-disco/loadtest/results/soak-20260325-171847-metrics.jsonl)
+- sql snapshot:
+  [soak-20260325-171847-sql.tsv](/home/admin0/effective-disco/loadtest/results/soak-20260325-171847-sql.tsv)
+- 최종 상태: `FAIL`
+- `http p95 = 284.98ms`
+- `http p99 = 513.80ms`
+- `unexpected_response_rate = 0.0025`
+- `dbPoolTimeouts = 4752`
+- SQL mismatch = 전부 `0`
+
+주요 profile:
+
+- `notification.read-all.summary avgWall = 39.80ms`, `avgSql = 38.97ms`
+- `notification.store avgWall = 1.69ms`, `avgSql = 0.94ms`
+- `post.list.browse.rows avgWall = 4.71ms`, `avgSql = 4.19ms`
+- `post.list.search.rows avgWall = 3.94ms`, `avgSql = 3.47ms`
+
+### 해석
+
+- `1시간`을 끝까지 가지 않아도 `15분` 시점부터 실패 방향이 이미 드러난다.
+- 이 시점의 직접 원인은 `post.list`가 아니라 `notification.read-all.summary` 다.
+- 하지만 당시 broad mixed baseline 은 여전히 내부 `read-all` action 을 주기적으로 호출하고 있었기 때문에,
+  현실적인 baseline 과 `read-all` worst-case stress 가 분리되지 않은 상태였다.
+
+## 2026-03-25 notification baseline/stress 분리 구현
+
+상태: 구현 완료, 테스트 통과
+
+### 문제 해결
+
+- 웹 알림 UX
+  - [NotificationWebController.java](/home/admin0/effective-disco/src/main/java/com/effectivedisco/controller/web/NotificationWebController.java)
+  - [NotificationService.java](/home/admin0/effective-disco/src/main/java/com/effectivedisco/service/NotificationService.java)
+  - [NotificationRepository.java](/home/admin0/effective-disco/src/main/java/com/effectivedisco/repository/NotificationRepository.java)
+  - [notifications/list.html](/home/admin0/effective-disco/src/main/resources/templates/notifications/list.html)
+  - `read-all` 명시 액션도 recipient 전체 unread row bulk update 대신
+    현재 페이지 batch 의 unread id 만 읽음 처리하도록 바꿨다.
+  - 즉 웹 기준 의미는 이제 `현재 페이지 읽음`이다.
+
+- loadtest baseline/stress 분리
+  - [bbs-load.js](/home/admin0/effective-disco/loadtest/k6/bbs-load.js)
+  - [LoadTestActionController.java](/home/admin0/effective-disco/src/main/java/com/effectivedisco/loadtest/LoadTestActionController.java)
+  - [LoadTestBottleneckProfilingAspect.java](/home/admin0/effective-disco/src/main/java/com/effectivedisco/loadtest/LoadTestBottleneckProfilingAspect.java)
+  - baseline:
+    - `notification_read_write_mixed`
+    - 현재 페이지 batch 읽음 경로 `/internal/load-test/actions/notifications/read-page`
+    - `NOTIFICATION_BASELINE_READ_EVERY` 주기로만 읽음
+  - stress:
+    - `notification_read_all_stress`
+    - 기존 `/internal/load-test/actions/notifications/read-all` worst-case 유지
+
+### 검증
+
+- 관련 회귀 테스트
+  - [NotificationWebControllerTest.java](/home/admin0/effective-disco/src/test/java/com/effectivedisco/controller/web/NotificationWebControllerTest.java)
+  - [NotificationServiceTest.java](/home/admin0/effective-disco/src/test/java/com/effectivedisco/service/NotificationServiceTest.java)
+  - [NotificationAfterCommitIntegrationTest.java](/home/admin0/effective-disco/src/test/java/com/effectivedisco/service/NotificationAfterCommitIntegrationTest.java)
+  - [LoadTestActionControllerTest.java](/home/admin0/effective-disco/src/test/java/com/effectivedisco/loadtest/LoadTestActionControllerTest.java)
+- `k6 archive loadtest/k6/bbs-load.js -O /tmp/bbs-load.tar`
+- `GRADLE_USER_HOME=/tmp/gradle-home ./gradlew test --no-daemon`
+
+### 다음 액션
+
+- clean `0.9 / 15분` baseline soak 재측정
+- `notification_read_all_stress` 는 별도 stress 런으로만 해석

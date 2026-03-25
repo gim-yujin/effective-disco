@@ -20,17 +20,17 @@
         <div class="toolbar">
             <h2>알림</h2>
             <form th:if="${unreadCount > 0}"
-                  th:action="@{/notifications/read-all}"
+                  th:action="@{/notifications/read-page}"
                   method="post"
                   style="display:inline-flex; gap:8px; align-items:center;">
                 <!-- 문제 해결:
-                     목록 조회와 read-all 을 분리해 단순 페이지 진입이 bulk update 를 발생시키지 않게 한다.
-                     사용자가 명시적으로 눌렀을 때만 read-all transition 이 실행되도록 POST 폼으로 노출한다. -->
+                     목록 조회와 read 상태 전환을 분리해 단순 페이지 진입이 bulk update 를 발생시키지 않게 한다.
+                     또한 "모두 읽음" 대신 현재 페이지 batch 만 읽음 처리해 recipient 전체 unread row bulk update 를 피한다. -->
                 <input type="hidden" th:name="${_csrf.parameterName}" th:value="${_csrf.token}">
                 <input type="hidden" name="page" th:value="${notificationPage != null ? notificationPage.number : 0}">
                 <input type="hidden" name="size" th:value="${notificationPage != null ? notificationPage.size : 30}">
                 <span th:text="|미읽음 ${unreadCount}건|">미읽음 0건</span>
-                <button type="submit">모두 읽음</button>
+                <button type="submit">현재 페이지 읽음</button>
             </form>
         </div>
 

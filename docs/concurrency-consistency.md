@@ -1235,3 +1235,65 @@ SOAK_FACTOR=0.9 SOAK_DURATION=1h WARMUP_DURATION=2m SAMPLE_INTERVAL_SECONDS=60 \
 - 현재 1순위 병목은 `update notifications ... set is_read = true ... id <= cutoff` bulk update 이고,
   browse/search 는 그 다음 순위다.
 - 따라서 다음 최적화 우선순위는 `notification read-all` semantics 자체를 줄이는 방향이다.
+
+## 2026-03-25 clean `0.9 / 15분` soak 재측정
+
+상태: 완료, `FAIL`
+
+### 실행 목적
+
+- `1시간 soak` 가 부담스럽기 때문에, 같은 clean 전용 DB 기준에서 `15분`만으로도
+  regression 방향이 이미 드러나는지 확인한다.
+- 특히 `notification.read-all.summary` 가 초반부터 주요 병목으로 올라오는지 본다.
+
+### 결과
+
+- suite:
+  [soak-20260325-171847.md](/home/admin0/effective-disco/loadtest/results/soak-20260325-171847.md)
+- server metrics:
+  [soak-20260325-171847-server.json](/home/admin0/effective-disco/loadtest/results/soak-20260325-171847-server.json)
+- metrics timeline:
+  [soak-20260325-171847-metrics.jsonl](/home/admin0/effective-disco/loadtest/results/soak-20260325-171847-metrics.jsonl)
+- sql snapshot:
+  [soak-20260325-171847-sql.tsv](/home/admin0/effective-disco/loadtest/results/soak-20260325-171847-sql.tsv)
+- 최종 상태: `FAIL`
+- `http p95 = 284.98ms`
+- `http p99 = 513.80ms`
+- `unexpected_response_rate = 0.0025`
+- `duplicateKeyConflicts = 0`
+- `dbPoolTimeouts = 4752`
+- `maxActiveConnections = 28`
+- `maxThreadsAwaitingConnection = 191`
+- SQL mismatch = 전부 `0`
+
+### 해석
+
+- `15분` 시점만으로도 이미 `notification.read-all` 경로가 실패 방향을 만든다.
+- 최종 profile 기준:
+  - `notification.read-all.summary avgWall = 39.80ms`
+  - `notification.store avgWall = 1.69ms`
+  - `post.list.browse.rows avgWall = 4.71ms`
+- 따라서 이 시점의 직접 원인은 browse/search 가 아니라 `notification read-all` 이다.
+- 다만 이 결과는 당시 k6 notification 시나리오가 여전히 내부 `read-all` 액션을 반복 호출하던 기준이므로,
+  현실 baseline 과 `read-all` worst-case stress 가 한 시나리오에 섞여 있었다.
+
+## 2026-03-25 notification baseline/stress 분리
+
+상태: 구현 완료, 테스트 통과, 재측정 전
+
+### 요지
+
+- 웹 알림 UX
+  - `GET /notifications` 는 조회만 수행
+  - `POST /notifications/read-page` 는 현재 페이지 batch 만 읽음 처리
+- loadtest
+  - baseline: `notification_read_write_mixed`
+    - 현재 페이지 batch 읽음 + 신규 알림 생성 혼합
+  - stress: `notification_read_all_stress`
+    - 기존 `read-all` worst-case 유지
+
+### 해석
+
+- 앞으로 baseline soak 는 `현실적인 현재 페이지 읽음` 기준으로 다시 재야 한다.
+- 반대로 `read-all` 연타 경로는 broad mixed baseline 이 아니라
+  별도 stress 시나리오로만 해석해야 한다.

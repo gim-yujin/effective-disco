@@ -83,11 +83,26 @@ public class LoadTestActionController {
         return new NotificationReadResponse(summary.listedNotificationCount(), summary.unreadCount());
     }
 
+    /**
+     * 문제 해결:
+     * baseline load test 는 현실적인 "현재 페이지 읽음" 경로를 따로 측정해야 한다.
+     * full/baseline 시나리오는 page batch 만 읽음 처리하고,
+     * `/notifications/read-all` 은 worst-case stress 전용 경로로 남긴다.
+     */
+    @PostMapping("/notifications/read-page")
+    public NotificationReadResponse markNotificationPageRead(@RequestBody NotificationPageActionRequest request) {
+        NotificationService.NotificationReadSummary summary =
+                notificationService.markPageAsReadForLoadTest(request.username(), request.page(), request.size());
+        return new NotificationReadResponse(summary.listedNotificationCount(), summary.unreadCount());
+    }
+
     public record UserPairActionRequest(String actorUsername, String targetUsername) {}
 
     public record BookmarkActionRequest(String username, Long postId) {}
 
     public record UsernameActionRequest(String username) {}
+
+    public record NotificationPageActionRequest(String username, int page, int size) {}
 
     public record ToggleStateResponse(boolean active) {}
 

@@ -103,6 +103,22 @@ public interface NotificationRepository extends JpaRepository<Notification, Long
             """)
     int markAllAsReadUpToId(@Param("recipientId") Long recipientId, @Param("cutoffId") Long cutoffId);
 
+    /**
+     * 문제 해결:
+     * 명시적 "현재 페이지 읽음"은 화면에 보인 알림 id 집합만 읽음 처리하면 충분하다.
+     * recipient 전체 unread row 를 한 번에 update 하지 않고 작은 id 집합만 건드려
+     * read-all bulk update 가 장시간 soak 에서 병목이 되는 문제를 줄인다.
+     */
+    @Modifying(flushAutomatically = true, clearAutomatically = true)
+    @Query("""
+            UPDATE Notification n
+            SET n.isRead = true
+            WHERE n.recipient.id = :recipientId
+              AND n.isRead = false
+              AND n.id IN :notificationIds
+            """)
+    int markPageAsReadByIds(@Param("recipientId") Long recipientId, @Param("notificationIds") List<Long> notificationIds);
+
     /** 회원 탈퇴: 수신자의 모든 알림 삭제 */
     void deleteAllByRecipient(User recipient);
 }

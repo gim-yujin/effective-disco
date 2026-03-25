@@ -119,11 +119,11 @@ class NotificationWebControllerTest {
 
     /**
      * 문제 해결:
-     * "모두 읽음" 은 명시적 POST 액션으로만 수행한다.
+     * "현재 페이지 읽음" 은 명시적 POST 액션으로만 수행한다.
      * 사용자가 버튼을 눌렀을 때만 unread row 가 읽음 처리되고, 다시 목록으로 리다이렉트되어야 한다.
      */
     @Test
-    void notifications_markAllReadActionMarksUnreadAndRedirects() throws Exception {
+    void notifications_markCurrentPageReadActionMarksUnreadAndRedirects() throws Exception {
         notificationRepository.save(Notification.builder()
                 .recipient(testUser)
                 .type(NotificationType.COMMENT)
@@ -133,13 +133,13 @@ class NotificationWebControllerTest {
 
         assertEquals(1L, notificationRepository.countByRecipientAndIsReadFalse(testUser));
 
-        mockMvc.perform(post("/notifications/read-all")
-                        .param("page", "1")
+        mockMvc.perform(post("/notifications/read-page")
+                        .param("page", "0")
                         .param("size", "20")
                         .with(user(testUser.getUsername()))
                         .with(csrf()))
                 .andExpect(status().is3xxRedirection())
-                .andExpect(redirectedUrl("/notifications?page=1&size=20"));
+                .andExpect(redirectedUrl("/notifications?page=0&size=20"));
 
         assertEquals(0L, notificationRepository.countByRecipientAndIsReadFalse(testUser));
     }

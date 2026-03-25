@@ -42,7 +42,7 @@ public class Notification {
     @Column(nullable = false)
     private String link;
 
-    /** 읽음 여부. 알림 목록 페이지 방문 시 일괄 true로 변경된다. */
+    /** 읽음 여부. 명시적 읽음 액션이 호출될 때 true로 변경된다. */
     @Column(name = "is_read", nullable = false)
     private boolean isRead = false;
 

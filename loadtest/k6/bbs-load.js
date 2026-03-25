@@ -22,12 +22,16 @@ const bookmarkMixedDuration = new Trend('bookmark_mixed_duration');
 const followMixedDuration = new Trend('follow_mixed_duration');
 const blockMixedDuration = new Trend('block_mixed_duration');
 const notificationReadWriteMixedDuration = new Trend('notification_read_write_mixed_duration');
+const notificationReadAllStressDuration = new Trend('notification_read_all_stress_duration');
 const unexpectedResponseRate = new Rate('unexpected_response_rate');
 
 const bookmarkMixedVus = Number(__ENV.BOOKMARK_MIXED_VUS || 0);
 const followMixedVus = Number(__ENV.FOLLOW_MIXED_VUS || 0);
 const blockMixedVus = Number(__ENV.BLOCK_MIXED_VUS || 0);
 const notificationMixedVus = Number(__ENV.NOTIFICATION_MIXED_VUS || 0);
+const notificationStressVus = Number(__ENV.NOTIFICATION_STRESS_VUS || 0);
+const notificationBaselineReadEvery = Math.max(1, Number(__ENV.NOTIFICATION_BASELINE_READ_EVERY || 4));
+const notificationPageSize = Math.max(1, Math.min(Number(__ENV.NOTIFICATION_PAGE_SIZE || 20), 50));
 const scenarioProfile = __ENV.SCENARIO_PROFILE || 'full';
 const enabledScenarioProfiles = scenarioProfile === 'full'
   ? ['full']
@@ -213,6 +217,14 @@ addConstantVusScenario(
   'notification'
 );
 
+addConstantVusScenario(
+  'notification_read_all_stress',
+  'notificationReadAllStress',
+  notificationStressVus,
+  __ENV.NOTIFICATION_STRESS_DURATION || __ENV.NOTIFICATION_MIXED_DURATION || '45s',
+  'notification_stress'
+);
+
 export const options = {
   scenarios,
   thresholds: {
@@ -230,6 +242,7 @@ export const options = {
     follow_mixed_duration: ['p(95)<400', 'p(99)<700'],
     block_mixed_duration: ['p(95)<400', 'p(99)<700'],
     notification_read_write_mixed_duration: ['p(95)<500', 'p(99)<900'],
+    notification_read_all_stress_duration: ['p(95)<500', 'p(99)<900'],
   },
 };
 
@@ -456,16 +469,18 @@ export function blockMixedRace(data) {
 
 export function notificationReadWriteMixed(data) {
   // 문제 해결:
-  // 알림 정합성은 "읽음 처리만" 혹은 "생성만"으로는 검증되지 않는다.
-  // 같은 수신자에 대해 read-all과 신규 알림 생성을 섞어 unread counter drift를 재현한다.
-  const readTurn = isActivateTurn();
+  // full/baseline 시나리오는 사용자가 알림 페이지를 가끔 열고 현재 페이지 batch만 읽는 현실적인 패턴을 본다.
+  // read-all stress 와 분리해 기본 baseline 이 worst-case bulk update에 오염되지 않게 한다.
+  const readTurn = exec.scenario.iterationInTest % notificationBaselineReadEvery === 0;
   let response;
 
   if (readTurn) {
-    response = loadTestAction('/internal/load-test/actions/notifications/read-all', {
+    response = loadTestAction('/internal/load-test/actions/notifications/read-page', {
       username: data.notificationOwner.username,
+      page: 0,
+      size: notificationPageSize,
     });
-    recordResponse(response, [200], 'notification mixed read-all');
+    recordResponse(response, [200], 'notification mixed read-page');
   } else {
     const writer = pickWriter(data.notificationWriterUsers);
     response = http.post(
@@ -477,6 +492,31 @@ export function notificationReadWriteMixed(data) {
   }
 
   notificationReadWriteMixedDuration.add(response.timings.duration);
+}
+
+export function notificationReadAllStress(data) {
+  // 문제 해결:
+  // read-all 자체의 최악 경합은 baseline 과 분리해 별도 stress 시나리오에서만 측정한다.
+  // 이렇게 해야 broad mixed 기본 기준선과 "사용자가 read-all 을 연타하는" worst-case를 혼동하지 않는다.
+  const readTurn = isActivateTurn();
+  let response;
+
+  if (readTurn) {
+    response = loadTestAction('/internal/load-test/actions/notifications/read-all', {
+      username: data.notificationOwner.username,
+    });
+    recordResponse(response, [200], 'notification stress read-all');
+  } else {
+    const writer = pickWriter(data.notificationWriterUsers);
+    response = http.post(
+      `${BASE_URL}/api/posts/${data.notificationTargetPostId}/comments`,
+      JSON.stringify({ content: `notification stress ${exec.scenario.iterationInTest}-${exec.vu.idInTest}-${Date.now()}` }),
+      authParams(writer.token)
+    );
+    recordResponse(response, [201], 'notification stress comment');
+  }
+
+  notificationReadAllStressDuration.add(response.timings.duration);
 }
 
 export function handleSummary(data) {
@@ -496,6 +536,7 @@ export function handleSummary(data) {
     `follow_mixed_duration p95=${formatMetric(data, 'follow_mixed_duration', 'p(95)')} p99=${formatMetric(data, 'follow_mixed_duration', 'p(99)')}`,
     `block_mixed_duration p95=${formatMetric(data, 'block_mixed_duration', 'p(95)')} p99=${formatMetric(data, 'block_mixed_duration', 'p(99)')}`,
     `notification_read_write_mixed_duration p95=${formatMetric(data, 'notification_read_write_mixed_duration', 'p(95)')} p99=${formatMetric(data, 'notification_read_write_mixed_duration', 'p(99)')}`,
+    `notification_read_all_stress_duration p95=${formatMetric(data, 'notification_read_all_stress_duration', 'p(95)')} p99=${formatMetric(data, 'notification_read_all_stress_duration', 'p(99)')}`,
     `unexpected_response_rate=${formatMetric(data, 'unexpected_response_rate', 'rate')}`,
   ];
 

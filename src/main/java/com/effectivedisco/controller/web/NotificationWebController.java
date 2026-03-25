@@ -40,14 +40,14 @@ public class NotificationWebController {
 
     /**
      * 문제 해결:
-     * read-all 은 목록 조회와 분리된 명시 액션으로만 실행한다.
-     * 이렇게 해야 알림 페이지를 여러 번 새로고침해도 매번 recipient 전체 unread row bulk update 가 발생하지 않는다.
+     * 명시 액션도 recipient 전체 unread row 를 한 번에 읽음 처리하지 않는다.
+     * 현재 페이지 batch 만 읽음 처리해 사용자가 실제로 본 범위와 DB update 범위를 맞춘다.
      */
-    @PostMapping("/read-all")
-    public String markAllRead(@AuthenticationPrincipal UserDetails userDetails,
-                              @RequestParam(defaultValue = "0") int page,
-                              @RequestParam(defaultValue = "30") int size) {
-        notificationService.markAllAsRead(userDetails.getUsername());
+    @PostMapping("/read-page")
+    public String markCurrentPageRead(@AuthenticationPrincipal UserDetails userDetails,
+                                      @RequestParam(defaultValue = "0") int page,
+                                      @RequestParam(defaultValue = "30") int size) {
+        notificationService.markPageAsRead(userDetails.getUsername(), page, size);
         return "redirect:/notifications?page=" + Math.max(page, 0) + "&size=" + normalizePageSize(size);
     }
 

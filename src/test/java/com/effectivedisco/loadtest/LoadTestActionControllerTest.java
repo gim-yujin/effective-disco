@@ -81,4 +81,25 @@ class LoadTestActionControllerTest {
 
         verify(notificationService).markAllAsReadForLoadTest("reader");
     }
+
+    @Test
+    void notificationReadPageEndpoint_withoutAuth_returnsTransitionSummary() throws Exception {
+        given(notificationService.markPageAsReadForLoadTest("reader", 0, 20))
+                .willReturn(new NotificationService.NotificationReadSummary(1, 0L));
+
+        mockMvc.perform(post("/internal/load-test/actions/notifications/read-page")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "username": "reader",
+                                  "page": 0,
+                                  "size": 20
+                                }
+                                """))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.listedNotificationCount").value(1))
+                .andExpect(jsonPath("$.unreadCount").value(0));
+
+        verify(notificationService).markPageAsReadForLoadTest("reader", 0, 20);
+    }
 }
