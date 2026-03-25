@@ -2377,3 +2377,64 @@ GRADLE_USER_HOME=/tmp/gradle-home ./gradlew test --no-daemon
 - clean `0.9 / 1시간 soak` 재측정
 - 결과가 좋아지면 `0.9 / 2시간 soak`
 - 여전히 drift 가 남으면 다음 우선순위는 `notification read-all UX 분리`와 browse latest 2차 축소
+
+## 2026-03-25 notification/browse drift 완화 후 clean `0.9 / 1시간` 재측정
+
+상태: 완료, `FAIL`
+
+### 결과
+
+- suite:
+  [soak-20260325-155817.md](/home/admin0/effective-disco/loadtest/results/soak-20260325-155817.md)
+- server metrics:
+  [soak-20260325-155817-server.json](/home/admin0/effective-disco/loadtest/results/soak-20260325-155817-server.json)
+- metrics timeline:
+  [soak-20260325-155817-metrics.jsonl](/home/admin0/effective-disco/loadtest/results/soak-20260325-155817-metrics.jsonl)
+- sql snapshot:
+  [soak-20260325-155817-sql.tsv](/home/admin0/effective-disco/loadtest/results/soak-20260325-155817-sql.tsv)
+- 최종 상태: `FAIL`
+- `http p95 = 544.10ms`
+- `http p99 = 1221.50ms`
+- `unexpected_response_rate = 0.0026`
+- `dbPoolTimeouts = 14967`
+- SQL mismatch = 전부 `0`
+
+주요 profile:
+
+- `notification.read-all.summary avgWall = 94.13ms`, `avgSql = 93.17ms`
+- `notification.store avgWall = 2.05ms`, `avgSql = 1.23ms`
+- `post.list.browse.rows avgWall = 17.87ms`, `avgSql = 17.28ms`
+- `post.list.search.rows avgWall = 11.83ms`, `avgSql = 11.29ms`
+- `post.list.tag.rows avgWall = 2.09ms`, `avgSql = 1.67ms`
+
+### 비교
+
+- 비교 기준:
+  [soak-20260325-141313.md](/home/admin0/effective-disco/loadtest/results/soak-20260325-141313.md)
+  와
+  [soak-20260325-141313-server.json](/home/admin0/effective-disco/loadtest/results/soak-20260325-141313-server.json)
+- 핵심 변화:
+  - `http p95 = 441.09ms -> 544.10ms`
+  - `http p99 = 570.73ms -> 1221.50ms`
+  - `unexpected_response_rate = 0.0000 -> 0.0026`
+  - `dbPoolTimeouts = 0 -> 14967`
+  - `notification.read-all.summary avgWall = 47.41ms -> 94.13ms`
+  - `notification.store avgWall = 22.17ms -> 2.05ms`
+  - `post.list.browse.rows avgWall = 15.52ms -> 17.87ms`
+
+### 해석
+
+- 이번 변경은 목적한 `notification.store` 개선에는 성공했다.
+- 하지만 `cutoff id 기반 read-all` 전환 후 `notification.read-all.summary` 의 bulk update 가 장시간 soak 에서 더 비싸졌고,
+  최종적으로는 전체 성능을 악화시켰다.
+- 실제 장시간 metrics 와 slow query 상위는 대부분
+  `update notifications ... set is_read=true where recipient_id=? and id<=cutoff`
+  로 채워졌다.
+- 즉 현재 regression 의 핵심은 `browse` 가 아니라 `notification read-all` 이다.
+
+### 결론
+
+- `User FOR UPDATE` 제거 자체는 나쁜 방향이 아니었지만,
+  현재 `read-all transition` 구현은 clean `0.9 / 1시간 soak` 기준 실패다.
+- 따라서 다음 단계는 browse 추가 최적화가 아니라,
+  `notification read-all` 을 제품/UX 수준에서 줄이거나 명시 액션으로 분리하는 것이다.

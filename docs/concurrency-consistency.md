@@ -1164,3 +1164,74 @@ SOAK_FACTOR=0.9 SOAK_DURATION=1h WARMUP_DURATION=2m SAMPLE_INTERVAL_SECONDS=60 \
   - `notification.store avgWall = 22.17ms`
   - `post.list.browse.rows avgWall = 15.52ms`
 - 따라서 다음 최적화 우선순위는 `notification read/write` 와 `browse rows` drift 억제다.
+
+## 2026-03-25 clean `0.9 / 1시간` soak 재측정
+
+상태: 완료, `FAIL`
+
+### 실행 목적
+
+- `notification read/write` 와 `browse rows` drift 완화 변경
+  (`898558f`, `Reduce notification lock contention and browse drift`)
+  후에도 clean 전용 DB 기준 `0.9 / 1시간 soak` 가 유지되는지 다시 검증한다.
+- 특히 이전 baseline
+  [soak-20260325-141313.md](/home/admin0/effective-disco/loadtest/results/soak-20260325-141313.md)
+  대비 `notification.read-all.summary`, `notification.store`, `post.list.browse.rows`
+  가 실제로 내려갔는지 비교한다.
+
+### 실행
+
+```bash
+PGHOST=localhost PGPORT=5432 PGUSER=postgres PGPASSWORD=4321 \
+  psql -d postgres -c 'DROP DATABASE IF EXISTS "effectivedisco_loadtest" WITH (FORCE);'
+PGHOST=localhost PGPORT=5432 PGUSER=postgres PGPASSWORD=4321 \
+  psql -d postgres -c 'CREATE DATABASE "effectivedisco_loadtest";'
+
+APP_LOAD_TEST_DB_POOL_MAX_SIZE=28 \
+SPRING_PROFILES_ACTIVE=loadtest \
+SERVER_PORT=18084 \
+GRADLE_USER_HOME=/tmp/gradle-home \
+./gradlew bootRun --no-daemon
+
+SOAK_FACTOR=0.9 SOAK_DURATION=1h WARMUP_DURATION=2m SAMPLE_INTERVAL_SECONDS=60 \
+  BASE_URL=http://127.0.0.1:18084 \
+  ./loadtest/run-bbs-soak.sh
+```
+
+### 결과
+
+- suite:
+  [soak-20260325-155817.md](/home/admin0/effective-disco/loadtest/results/soak-20260325-155817.md)
+- server metrics:
+  [soak-20260325-155817-server.json](/home/admin0/effective-disco/loadtest/results/soak-20260325-155817-server.json)
+- metrics timeline:
+  [soak-20260325-155817-metrics.jsonl](/home/admin0/effective-disco/loadtest/results/soak-20260325-155817-metrics.jsonl)
+- sql snapshot:
+  [soak-20260325-155817-sql.tsv](/home/admin0/effective-disco/loadtest/results/soak-20260325-155817-sql.tsv)
+- 최종 상태: `FAIL`
+- `http p95 = 544.10ms`
+- `http p99 = 1221.50ms`
+- `unexpected_response_rate = 0.0026`
+- `duplicateKeyConflicts = 0`
+- `dbPoolTimeouts = 14967`
+- `maxActiveConnections = 28`
+- `maxThreadsAwaitingConnection = 197`
+- SQL mismatch = 전부 `0`
+
+### 해석
+
+- 이번 재측정은 이전 clean baseline보다 명확히 나빠졌다.
+- 비교 기준:
+  - 이전:
+    `p95 = 441.09ms`, `p99 = 570.73ms`, `unexpected_response_rate = 0`, `dbPoolTimeouts = 0`
+  - 재측정:
+    `p95 = 544.10ms`, `p99 = 1221.50ms`, `unexpected_response_rate = 0.0026`, `dbPoolTimeouts = 14967`
+- 정합성은 유지됐지만, 성능 기준으로는 이번 변경이 regression 이다.
+- 최종 profile 기준 주요 변화:
+  - `notification.read-all.summary avgWall = 47.41ms -> 94.13ms`
+  - `notification.store avgWall = 22.17ms -> 2.05ms`
+  - `post.list.browse.rows avgWall = 15.52ms -> 17.87ms`
+- 즉 `notification.store` 는 좋아졌지만, `notification.read-all.summary` 가 거의 두 배로 악화되면서 전체 soak 를 망가뜨렸다.
+- 현재 1순위 병목은 `update notifications ... set is_read = true ... id <= cutoff` bulk update 이고,
+  browse/search 는 그 다음 순위다.
+- 따라서 다음 최적화 우선순위는 `notification read-all` semantics 자체를 줄이는 방향이다.
