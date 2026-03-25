@@ -2515,3 +2515,75 @@ GRADLE_USER_HOME=/tmp/gradle-home ./gradlew test --no-daemon
 
 - clean `0.9 / 15분` baseline soak 재측정
 - `notification_read_all_stress` 는 별도 stress 런으로만 해석
+
+## 2026-03-25 notification baseline/stress short remeasure
+
+상태: 완료
+
+### 실행 조건
+
+- clean `effectivedisco_loadtest` DB를 baseline/stress 각각 실행 전 `DROP/CREATE`
+- fresh `loadtest` 앱
+- `0.9 / 5분 soak`, `30초 warmup`
+- baseline:
+  - `SCENARIO_PROFILE=notification`
+  - `NOTIFICATION_MIXED_VUS=40`
+  - `NOTIFICATION_STRESS_VUS=0`
+- stress:
+  - `SCENARIO_PROFILE=notification_stress`
+  - `NOTIFICATION_MIXED_VUS=0`
+  - `NOTIFICATION_STRESS_VUS=40`
+
+### 결과
+
+- baseline:
+  [soak-20260325-180513.md](/home/admin0/effective-disco/loadtest/results/soak-20260325-180513.md)
+- baseline server:
+  [soak-20260325-180513-server.json](/home/admin0/effective-disco/loadtest/results/soak-20260325-180513-server.json)
+- baseline SQL:
+  [soak-20260325-180513-sql.tsv](/home/admin0/effective-disco/loadtest/results/soak-20260325-180513-sql.tsv)
+- stress:
+  [soak-20260325-181105.md](/home/admin0/effective-disco/loadtest/results/soak-20260325-181105.md)
+- stress server:
+  [soak-20260325-181105-server.json](/home/admin0/effective-disco/loadtest/results/soak-20260325-181105-server.json)
+- stress SQL:
+  [soak-20260325-181105-sql.tsv](/home/admin0/effective-disco/loadtest/results/soak-20260325-181105-sql.tsv)
+
+숫자 비교:
+
+- baseline
+  - `status = FAIL`
+  - `p95 = 93.57ms`
+  - `p99 = 141.59ms`
+  - `unexpected_response_rate = 0.0002`
+  - `dbPoolTimeouts = 35`
+  - `unreadNotificationMismatchUsers = 1`
+- stress
+  - `status = PASS`
+  - `p95 = 121.51ms`
+  - `p99 = 170.74ms`
+  - `unexpected_response_rate = 0.0000`
+  - `dbPoolTimeouts = 0`
+  - `unreadNotificationMismatchUsers = 0`
+
+주요 profile:
+
+- baseline
+  - `notification.read-page.summary avgWall = 28.25ms`, `avgSql = 27.25ms`
+  - `notification.read-page.summary.transition avgWall = 26.92ms`, `avgSql = 26.06ms`
+  - `notification.store avgWall = 9.30ms`, `avgSql = 8.76ms`
+- stress
+  - `notification.read-all.summary avgWall = 39.44ms`, `avgSql = 38.77ms`
+  - `notification.read-all.summary.transition avgWall = 38.33ms`, `avgSql = 37.79ms`
+  - `notification.store avgWall = 7.29ms`, `avgSql = 6.76ms`
+
+### 해석
+
+- `read-all` 이 절대 비용은 더 크지만, 이번 short remeasure 에서는
+  새 baseline `read-page` 경로가 먼저 실패했다.
+- 이건 두 가지 신호를 같이 보여준다.
+  - `dbPoolTimeouts = 35`
+  - `unreadNotificationMismatchUsers = 1`
+- 즉 현재 문제는 “stress 만 위험하다”가 아니라,
+  `markPageAsRead()` 경로가 짧은 soak 에서도 unread counter 정합성과 lock 경합을 동시에 흔든다는 점이다.
+- 다음 최적화 우선순위는 `notification.read-page.summary.transition` 이다.

@@ -1297,3 +1297,57 @@ SOAK_FACTOR=0.9 SOAK_DURATION=1h WARMUP_DURATION=2m SAMPLE_INTERVAL_SECONDS=60 \
 - 앞으로 baseline soak 는 `현실적인 현재 페이지 읽음` 기준으로 다시 재야 한다.
 - 반대로 `read-all` 연타 경로는 broad mixed baseline 이 아니라
   별도 stress 시나리오로만 해석해야 한다.
+
+## 2026-03-25 clean notification baseline/stress short remeasure
+
+상태: 완료
+
+### 실행 목적
+
+- 방금 분리한 두 경로를 같은 clean `effectivedisco_loadtest` DB 조건에서 직접 비교한다.
+- baseline 은 `notification` profile(`read-page`)만,
+  stress 는 `notification_stress` profile(`read-all`)만 `0.9 / 5분` 실행한다.
+
+### 결과
+
+- baseline suite:
+  [soak-20260325-180513.md](/home/admin0/effective-disco/loadtest/results/soak-20260325-180513.md)
+- baseline server metrics:
+  [soak-20260325-180513-server.json](/home/admin0/effective-disco/loadtest/results/soak-20260325-180513-server.json)
+- baseline sql snapshot:
+  [soak-20260325-180513-sql.tsv](/home/admin0/effective-disco/loadtest/results/soak-20260325-180513-sql.tsv)
+- baseline 상태: `FAIL`
+- baseline `http p95 = 93.57ms`
+- baseline `http p99 = 141.59ms`
+- baseline `unexpected_response_rate = 0.0002`
+- baseline `dbPoolTimeouts = 35`
+- baseline `unreadNotificationMismatchUsers = 1`
+
+- stress suite:
+  [soak-20260325-181105.md](/home/admin0/effective-disco/loadtest/results/soak-20260325-181105.md)
+- stress server metrics:
+  [soak-20260325-181105-server.json](/home/admin0/effective-disco/loadtest/results/soak-20260325-181105-server.json)
+- stress sql snapshot:
+  [soak-20260325-181105-sql.tsv](/home/admin0/effective-disco/loadtest/results/soak-20260325-181105-sql.tsv)
+- stress 상태: `PASS`
+- stress `http p95 = 121.51ms`
+- stress `http p99 = 170.74ms`
+- stress `unexpected_response_rate = 0.0000`
+- stress `dbPoolTimeouts = 0`
+- stress `unreadNotificationMismatchUsers = 0`
+
+### 해석
+
+- 기대와 반대로 `read-all` worst-case stress 보다 `read-page` baseline 이 먼저 깨졌다.
+- baseline profile 기준:
+  - `notification.read-page.summary avgWall = 28.25ms`
+  - `notification.read-page.summary.transition avgWall = 26.92ms`
+  - `notification.store avgWall = 9.30ms`
+- stress profile 기준:
+  - `notification.read-all.summary avgWall = 39.44ms`
+  - `notification.read-all.summary.transition avgWall = 38.33ms`
+  - `notification.store avgWall = 7.29ms`
+- 즉 `read-all` 경로 자체의 절대 비용은 여전히 더 크지만,
+  현재 구현의 `read-page` baseline 에서는 짧은 soak 만으로도
+  `dbPoolTimeouts` 와 `unread counter drift` 가 재현됐다.
+- 따라서 다음 우선순위는 `notification.read-page` 의 정합성과 lock 경합을 직접 파는 것이다.
