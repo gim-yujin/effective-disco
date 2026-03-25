@@ -98,6 +98,35 @@ public interface PostRepository extends JpaRepository<Post, Long>, PostRepositor
 
     /**
      * 문제 해결:
+     * browse latest hot path 는 "정렬 + join projection" 을 한 번에 처리하면서 장시간 soak 에서 SQL 시간이 누적됐다.
+     * 먼저 posts 인덱스에서 현재 window 의 id 만 keyset 으로 잘라 오고,
+     * author/board join projection 은 그 작은 id 집합에만 적용하면 browse rows drift 를 줄일 수 있다.
+     */
+    @Query("""
+            SELECT
+                p.id AS id,
+                p.title AS title,
+                '' AS content,
+                p.createdAt AS createdAt,
+                p.updatedAt AS updatedAt,
+                p.commentCount AS commentCount,
+                p.likeCount AS likeCount,
+                p.viewCount AS viewCount,
+                p.pinned AS pinned,
+                p.draft AS draft,
+                p.imageUrl AS legacyImageUrl,
+                a.username AS authorUsername,
+                b.name AS boardName,
+                b.slug AS boardSlug
+            FROM Post p
+            JOIN p.author a
+            LEFT JOIN p.board b
+            WHERE p.id IN :postIds
+            """)
+    List<PostListRow> findPostListRowsByIdIn(@Param("postIds") List<Long> postIds);
+
+    /**
+     * 문제 해결:
      * 태그 검색도 Page count 에서 JOIN post_tags fan-out 이 커진다. 본문/카운트 모두 EXISTS 기반으로 태그 존재만 확인한다.
      */
     @Query(value = """
@@ -234,6 +263,31 @@ public interface PostRepository extends JpaRepository<Post, Long>, PostRepositor
               AND p.draft = false
             """)
     Page<PostListRow> findPublicPostListRowsByBoardOrderByCreatedAtDesc(@Param("board") Board board, Pageable pageable);
+
+    @Query("""
+            SELECT p.id
+            FROM Post p
+            WHERE p.board = :board
+              AND p.draft = false
+            ORDER BY p.createdAt DESC, p.id DESC
+            """)
+    List<Long> findScrollPostIdsByBoardOrderByCreatedAtDesc(@Param("board") Board board, Pageable pageable);
+
+    @Query("""
+            SELECT p.id
+            FROM Post p
+            WHERE p.board = :board
+              AND p.draft = false
+              AND (
+                p.createdAt < :cursorCreatedAt
+                OR (p.createdAt = :cursorCreatedAt AND p.id < :cursorId)
+              )
+            ORDER BY p.createdAt DESC, p.id DESC
+            """)
+    List<Long> findScrollPostIdsByBoardAndCreatedAtBefore(@Param("board") Board board,
+                                                          @Param("cursorCreatedAt") LocalDateTime cursorCreatedAt,
+                                                          @Param("cursorId") Long cursorId,
+                                                          Pageable pageable);
 
     @Query("""
             SELECT

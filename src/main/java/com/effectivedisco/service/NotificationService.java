@@ -108,24 +108,25 @@ public class NotificationService {
      */
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public void storeNotificationAfterCommit(NotificationRequestedEvent event) {
-        User recipient = userRepository.findByUsernameForUpdate(event.recipientUsername()).orElse(null);
+        UserRepository.NotificationRecipientSnapshot recipient =
+                userRepository.findNotificationRecipientSnapshotByUsername(event.recipientUsername()).orElse(null);
         if (recipient == null) {
             return;
         }
 
         Notification notification = Notification.builder()
-                .recipient(recipient)
+                .recipient(userRepository.getReferenceById(recipient.getId()))
                 .type(event.type())
                 .message(event.message())
                 .link(event.link())
                 .build();
         notificationRepository.save(notification);
         // 문제 해결:
-        // notification.store 는 알림 row 를 INSERT 한 뒤 unread count 를 다시 SELECT/COUNT 하면서
-        // DB를 한 번 더 돌고 있었다. 잠금으로 직렬화된 수신자 엔티티에서 최종 unread 값을 바로 올리고
-        // 그 값을 after-commit push 에 넘기면 저장 경로를 최소 SQL 로 유지할 수 있다.
-        recipient.incrementUnreadNotificationCount();
-        scheduleUnreadCountPushAfterCommit(recipient.getUsername(), recipient.getUnreadNotificationCount());
+        // notification.store 의 실제 병목은 unread counter 자체보다 "수신자 User 행 전체를 FOR UPDATE 로 잠그는 것"이었다.
+        // 수신자 snapshot + 원자 UPDATE 로 unread 값을 올리면 알림 생성과 read-all 이 같은 사용자에서 부딪혀도
+        // row hydration / lock hold time 을 줄이면서 counter 정합성은 유지할 수 있다.
+        userRepository.incrementUnreadNotificationCount(recipient.getId());
+        scheduleUnreadCountRefreshAfterCommit(recipient.getUsername());
     }
 
     /**
@@ -134,7 +135,8 @@ public class NotificationService {
      */
     @Transactional
     public List<NotificationResponse> getAndMarkAllRead(String username) {
-        User user = findUser(username);
+        UserRepository.NotificationRecipientSnapshot recipient = findNotificationRecipient(username);
+        User user = userRepository.getReferenceById(recipient.getId());
         List<NotificationResponse> list = loadTestStepProfiler.profile(
                 "notification.read-all.page.fetch",
                 true,
@@ -143,7 +145,7 @@ public class NotificationService {
         loadTestStepProfiler.profile(
                 "notification.read-all.page.transition",
                 true,
-                () -> markAllUnreadNotificationsRead(username)
+                () -> markAllUnreadNotificationsRead(recipient)
         );
         return markNotificationsReadView(list);
     }
@@ -156,7 +158,8 @@ public class NotificationService {
      */
     @Transactional
     public Slice<NotificationResponse> getAndMarkAllReadPage(String username, int page, int size) {
-        User user = findUser(username);
+        UserRepository.NotificationRecipientSnapshot recipient = findNotificationRecipient(username);
+        User user = userRepository.getReferenceById(recipient.getId());
         PageRequest pageable = PageRequest.of(Math.max(page, 0), normalizeNotificationPageSize(size));
         Slice<NotificationResponse> slice = loadTestStepProfiler.profile(
                 "notification.read-all.page.fetch",
@@ -166,7 +169,7 @@ public class NotificationService {
         loadTestStepProfiler.profile(
                 "notification.read-all.page.transition",
                 true,
-                () -> markAllUnreadNotificationsRead(username)
+                () -> markAllUnreadNotificationsRead(recipient)
         );
         return new SliceImpl<>(markNotificationsReadView(slice.getContent()), slice.getPageable(), slice.hasNext());
     }
@@ -179,10 +182,11 @@ public class NotificationService {
      */
     @Transactional
     public NotificationReadSummary markAllAsReadForLoadTest(String username) {
+        UserRepository.NotificationRecipientSnapshot recipient = findNotificationRecipient(username);
         long transitionedCount = loadTestStepProfiler.profile(
                 "notification.read-all.summary.transition",
                 true,
-                () -> markAllUnreadNotificationsRead(username)
+                () -> markAllUnreadNotificationsRead(recipient)
         );
         return new NotificationReadSummary((int) transitionedCount, 0L);
     }
@@ -206,8 +210,8 @@ public class NotificationService {
      * 불필요하게 한 번 더 DB를 친다. 트랜잭션 안에서 확정한 unread 값을 그대로 넘겨
      * UI와 DB 시점을 맞추면서 post-commit 재조회도 없앤다.
      */
-    private void scheduleUnreadCountPushAfterCommit(String username, long unreadCount) {
-        Runnable push = () -> sseEmitterService.sendCount(username, unreadCount);
+    private void scheduleUnreadCountRefreshAfterCommit(String username) {
+        Runnable push = () -> sseEmitterService.sendCount(username, getUnreadCount(username));
 
         if (!TransactionSynchronizationManager.isSynchronizationActive()) {
             push.run();
@@ -222,13 +226,8 @@ public class NotificationService {
         });
     }
 
-    private User findUserForUpdate(String username) {
-        return userRepository.findByUsernameForUpdate(username)
-                .orElseThrow(() -> new UsernameNotFoundException("사용자를 찾을 수 없습니다: " + username));
-    }
-
-    private User findUser(String username) {
-        return userRepository.findByUsername(username)
+    private UserRepository.NotificationRecipientSnapshot findNotificationRecipient(String username) {
+        return userRepository.findNotificationRecipientSnapshotByUsername(username)
                 .orElseThrow(() -> new UsernameNotFoundException("사용자를 찾을 수 없습니다: " + username));
     }
 
@@ -242,28 +241,43 @@ public class NotificationService {
         return Math.max(1, Math.min(size, 50));
     }
 
-    private long markAllUnreadNotificationsRead(String username) {
-        User user = findUserForUpdate(username);
-        boolean hasUnreadNotifications = user.getUnreadNotificationCount() > 0;
+    private long markAllUnreadNotificationsRead(UserRepository.NotificationRecipientSnapshot recipient) {
+        Long cutoffId = notificationRepository.findLatestNotificationIdByRecipientId(recipient.getId());
+        if (cutoffId == null) {
+            if (recipient.getUnreadNotificationCount() > 0) {
+                userRepository.setUnreadNotificationCount(recipient.getId(), 0L);
+            }
+            scheduleUnreadCountRefreshAfterCommit(recipient.getUsername());
+            return 0L;
+        }
+
+        boolean hasUnreadNotifications = recipient.getUnreadNotificationCount() > 0;
         if (!hasUnreadNotifications) {
             // 문제 해결:
             // unread counter 는 hot path 최적화를 위한 비정규화 값이라, 테스트 fixture 나 과거 데이터처럼
             // counter=0 이지만 실제 unread row 가 남아 있는 drift 상태를 완전히 배제할 수 없다.
             // counter 가 0 일 때만 실제 unread row 존재 여부를 한 번 확인해
             // 알림 페이지 방문이 "보이는 알림을 읽음 처리하지 못하는" 상태로 끝나지 않게 보정한다.
-            hasUnreadNotifications = notificationRepository.existsByRecipientAndIsReadFalse(user);
+            hasUnreadNotifications = notificationRepository.existsByRecipientIdAndIsReadFalse(recipient.getId());
         }
 
         if (hasUnreadNotifications) {
             // 문제 해결:
-            // 평상시에는 비정규화 counter 로 빠르게 판단하고,
-            // drift 가 감지된 경우에만 fallback 존재 확인 뒤 bulk UPDATE 를 수행한다.
-            int transitionedCount = notificationRepository.markAllAsRead(user);
-            user.resetUnreadNotificationCount();
-            scheduleUnreadCountPushAfterCommit(username, user.getUnreadNotificationCount());
+            // 기존 구현은 recipient User 행을 FOR UPDATE 로 잠그고 전체 unread row 를 bulk update 하면서
+            // store/read-all 이 같은 사용자에 대해 강하게 직렬화됐다.
+            // read-all 시작 시점의 cutoff id 까지만 읽음 처리하고 unread counter 는 delta 만큼만 원자적으로 줄이면
+            // 새 알림과 경합해도 counter 정합성을 유지하면서 lock 범위를 줄일 수 있다.
+            int transitionedCount = notificationRepository.markAllAsReadUpToId(recipient.getId(), cutoffId);
+            if (transitionedCount > 0) {
+                userRepository.decrementUnreadNotificationCount(recipient.getId(), transitionedCount);
+            } else if (recipient.getUnreadNotificationCount() > 0) {
+                long actualUnreadCount = notificationRepository.countUnreadByRecipientId(recipient.getId());
+                userRepository.setUnreadNotificationCount(recipient.getId(), actualUnreadCount);
+            }
+            scheduleUnreadCountRefreshAfterCommit(recipient.getUsername());
             return transitionedCount;
         }
-        scheduleUnreadCountPushAfterCommit(username, user.getUnreadNotificationCount());
+        scheduleUnreadCountRefreshAfterCommit(recipient.getUsername());
         return 0L;
     }
 

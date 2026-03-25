@@ -4,6 +4,7 @@ import com.effectivedisco.domain.User;
 import jakarta.persistence.LockModeType;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Lock;
+import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
@@ -11,6 +12,12 @@ import java.util.List;
 import java.util.Optional;
 
 public interface UserRepository extends JpaRepository<User, Long> {
+
+    interface NotificationRecipientSnapshot {
+        Long getId();
+        String getUsername();
+        long getUnreadNotificationCount();
+    }
 
     interface CommentAuthorSnapshot {
         Long getId();
@@ -93,6 +100,48 @@ public interface UserRepository extends JpaRepository<User, Long> {
 
     @Query("SELECT u.unreadNotificationCount FROM User u WHERE u.username = :username")
     Optional<Long> findUnreadNotificationCountByUsername(@Param("username") String username);
+
+    /**
+     * 문제 해결:
+     * notification.store/read-all hot path 는 사용자 전체 엔티티와 PESSIMISTIC_WRITE 잠금이 과했다.
+     * 수신자 id/username/unread counter 만 projection 으로 읽으면 row hydration 비용을 줄이고
+     * unread counter 갱신은 별도 원자 UPDATE 로 넘겨 lock 직렬화를 완화할 수 있다.
+     */
+    @Query("""
+            SELECT u.id AS id,
+                   u.username AS username,
+                   u.unreadNotificationCount AS unreadNotificationCount
+            FROM User u
+            WHERE u.username = :username
+            """)
+    Optional<NotificationRecipientSnapshot> findNotificationRecipientSnapshotByUsername(@Param("username") String username);
+
+    @Modifying(flushAutomatically = true, clearAutomatically = true)
+    @Query("""
+            UPDATE User u
+            SET u.unreadNotificationCount = u.unreadNotificationCount + 1
+            WHERE u.id = :userId
+            """)
+    int incrementUnreadNotificationCount(@Param("userId") Long userId);
+
+    @Modifying(flushAutomatically = true, clearAutomatically = true)
+    @Query(
+            value = """
+                    UPDATE users
+                    SET unread_notification_count = GREATEST(unread_notification_count - :delta, 0)
+                    WHERE id = :userId
+                    """,
+            nativeQuery = true
+    )
+    int decrementUnreadNotificationCount(@Param("userId") Long userId, @Param("delta") long delta);
+
+    @Modifying(flushAutomatically = true, clearAutomatically = true)
+    @Query("""
+            UPDATE User u
+            SET u.unreadNotificationCount = :count
+            WHERE u.id = :userId
+            """)
+    int setUnreadNotificationCount(@Param("userId") Long userId, @Param("count") long count);
 
     /** 관리자 패널: 가입일 최신순 전체 사용자 목록 */
     List<User> findAllByOrderByCreatedAtDesc();

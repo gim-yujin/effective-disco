@@ -2283,3 +2283,97 @@ SOAK_FACTOR=0.9 SOAK_DURATION=1h WARMUP_DURATION=2m SAMPLE_INTERVAL_SECONDS=60 \
 - `notification.store/read-all` 의 `User` 전체 행 잠금 경로를 더 좁은 원자 update 로 축소
 - `post.list.browse.rows` 를 `id-first keyset + small projection join` 구조로 더 줄이기
 - 위 세 경로 조정 후 `0.9 / 1시간` soak 재측정
+
+## 2026-03-25 notification/browse drift 완화 구현
+
+상태: 구현 완료, 재측정 전
+
+### 배경
+
+- clean `0.9 / 1시간 soak` 에서 정합성과 pool timeout 은 안정적이었지만, latency drift 는 남았다.
+- 최종 profile 기준 가장 많이 커진 경로는 아래 세 개였다.
+  - `notification.read-all.summary`
+  - `notification.store`
+  - `post.list.browse.rows`
+- 따라서 이번 단계의 목적은 `정합성 보장`은 유지한 채, 알림 경로의 사용자 row 직렬화와 browse latest hot read 폭을 먼저 줄이는 것이었다.
+
+### 문제 해결
+
+- 알림 경로
+  - 기존 구현은 [NotificationService.java](/home/admin0/effective-disco/src/main/java/com/effectivedisco/service/NotificationService.java) 에서
+    `findByUsernameForUpdate()` 로 `User` 전체 행을 잠그고, 같은 트랜잭션에서 unread counter 와 read-all 상태 전환을 처리했다.
+  - 이 구조는 `notification.store` 와 `notification.read-all.summary` 가 같은 수신자에 대해 강하게 직렬화되면서
+    장시간 soak 에서 `tuple / transactionid / WAL` pressure 를 키웠다.
+  - 이번 변경은 다음 방식으로 줄였다.
+    - [UserRepository.java](/home/admin0/effective-disco/src/main/java/com/effectivedisco/repository/UserRepository.java)
+      - `NotificationRecipientSnapshot`
+      - `incrementUnreadNotificationCount`
+      - `decrementUnreadNotificationCount`
+      - `setUnreadNotificationCount`
+    - [NotificationRepository.java](/home/admin0/effective-disco/src/main/java/com/effectivedisco/repository/NotificationRepository.java)
+      - `findLatestNotificationIdByRecipientId`
+      - `markAllAsReadUpToId`
+      - `countUnreadByRecipientId`
+    - [NotificationService.java](/home/admin0/effective-disco/src/main/java/com/effectivedisco/service/NotificationService.java)
+      - `recipient snapshot + 원자 unread counter update`
+      - `cutoff id 기반 read-all`
+      - `after-commit unread count refresh`
+  - 핵심은 `User FOR UPDATE` 를 hot path 에서 제거하고, read-all 은 현재 시점 이전 알림까지만 읽음 처리하게 바꾼 것이다.
+
+- browse latest 경로
+  - 기존 `post.list.browse.rows` 는 keyset pagination 을 쓰고 있었지만, 정렬과 `author/board` join projection 을 같은 SQL 에서 처리했다.
+  - 장시간 soak 에서는 이 browse latest SQL 이 계속 최신 tail 을 훑으면서 누적 비용이 커졌다.
+  - 이번 변경은 다음 방식으로 줄였다.
+    - [PostRepository.java](/home/admin0/effective-disco/src/main/java/com/effectivedisco/repository/PostRepository.java)
+      - `findScrollPostIdsByBoardOrderByCreatedAtDesc`
+      - `findScrollPostIdsByBoardAndCreatedAtBefore`
+      - `findPostListRowsByIdIn`
+    - [PostService.java](/home/admin0/effective-disco/src/main/java/com/effectivedisco/service/PostService.java)
+      - `loadLatestBrowseSlice`
+  - 최신순 browse 는 이제
+    - 1단계: `posts` 인덱스에서 `id` window 만 keyset 으로 읽고
+    - 2단계: 작은 `id` 집합에만 `author/board` projection 을 적용한다.
+  - 즉 `id-first keyset + small projection join` 구조로 바뀌었다.
+
+### 검증
+
+- 단위/통합 테스트 갱신
+  - [NotificationServiceTest.java](/home/admin0/effective-disco/src/test/java/com/effectivedisco/service/NotificationServiceTest.java)
+    - snapshot + atomic unread update
+    - cutoff read-all
+    - counter drift fallback 보정
+  - [PostListOptimizationIntegrationTest.java](/home/admin0/effective-disco/src/test/java/com/effectivedisco/service/PostListOptimizationIntegrationTest.java)
+    - latest browse slice 가 `id window + batch projection + tag/image batch` 상한 안에 들어오는지 검증
+
+- targeted 검증:
+
+```bash
+GRADLE_USER_HOME=/tmp/gradle-home ./gradlew test --no-daemon \
+  --tests "com.effectivedisco.service.NotificationServiceTest" \
+  --tests "com.effectivedisco.service.NotificationAfterCommitIntegrationTest" \
+  --tests "com.effectivedisco.service.PostListOptimizationIntegrationTest" \
+  --tests "com.effectivedisco.controller.PostControllerTest"
+```
+
+- 전체 회귀:
+
+```bash
+GRADLE_USER_HOME=/tmp/gradle-home ./gradlew test --no-daemon
+```
+
+둘 다 통과했다.
+
+### 현재 상태
+
+- 이번 단계는 `drift 원인 경로`를 직접 줄이는 코드 변경과 회귀 검증까지 완료한 상태다.
+- 아직 clean `0.9 / 1시간 soak` 재측정은 하지 않았다.
+- 따라서 현재 문서 기준 상태는:
+  - 구현 완료
+  - 테스트 통과
+  - 다음 단계는 같은 clean 전용 DB 기준 soak 재측정
+
+### 다음 액션
+
+- clean `0.9 / 1시간 soak` 재측정
+- 결과가 좋아지면 `0.9 / 2시간 soak`
+- 여전히 drift 가 남으면 다음 우선순위는 `notification read-all UX 분리`와 browse latest 2차 축소

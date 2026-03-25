@@ -65,10 +65,43 @@ public interface NotificationRepository extends JpaRepository<Notification, Long
 
     boolean existsByRecipientAndIsReadFalse(User recipient);
 
+    boolean existsByRecipientIdAndIsReadFalse(Long recipientId);
+
+    @Query("""
+            SELECT COUNT(n)
+            FROM Notification n
+            WHERE n.recipient.id = :recipientId
+              AND n.isRead = false
+            """)
+    long countUnreadByRecipientId(@Param("recipientId") Long recipientId);
+
+    @Query("""
+            SELECT MAX(n.id)
+            FROM Notification n
+            WHERE n.recipient.id = :recipientId
+            """)
+    Long findLatestNotificationIdByRecipientId(@Param("recipientId") Long recipientId);
+
     /** 수신자의 모든 미읽음 알림을 일괄 읽음 처리 */
     @Modifying
     @Query("UPDATE Notification n SET n.isRead = true WHERE n.recipient = :recipient AND n.isRead = false")
     int markAllAsRead(@Param("recipient") User recipient);
+
+    /**
+     * 문제 해결:
+     * read-all 은 현재 시점 이전 알림까지만 읽음 처리하면 된다.
+     * cutoff id 조건을 추가하면 새로 들어오는 알림과 lock 범위를 분리해
+     * notification.read-all.summary 가 장시간 soak 에서 recipient 전체 unread row 를 오래 붙잡지 않게 만든다.
+     */
+    @Modifying(flushAutomatically = true, clearAutomatically = true)
+    @Query("""
+            UPDATE Notification n
+            SET n.isRead = true
+            WHERE n.recipient.id = :recipientId
+              AND n.isRead = false
+              AND n.id <= :cutoffId
+            """)
+    int markAllAsReadUpToId(@Param("recipientId") Long recipientId, @Param("cutoffId") Long cutoffId);
 
     /** 회원 탈퇴: 수신자의 모든 알림 삭제 */
     void deleteAllByRecipient(User recipient);

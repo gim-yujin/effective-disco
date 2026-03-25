@@ -546,9 +546,43 @@ public class PostService {
                 () -> switch (sortKey) {
                     case "likes" -> loadRankedBrowseSlice(board, limit, cursorCreatedAt, cursorSortValue, cursorId, true);
                     case "comments" -> loadRankedBrowseSlice(board, limit, cursorCreatedAt, cursorSortValue, cursorId, false);
-                    default -> loadBoardScrollSlice(board, limit, cursorCreatedAt, cursorId, Set.of());
+                    default -> loadLatestBrowseSlice(board, limit, cursorCreatedAt, cursorId);
                 }
         );
+    }
+
+    private Slice<PostRepository.PostListRow> loadLatestBrowseSlice(Board board,
+                                                                    Pageable limit,
+                                                                    LocalDateTime cursorCreatedAt,
+                                                                    Long cursorId) {
+        int batchSize = limit.isPaged() ? limit.getPageSize() : 20;
+        Pageable idWindow = PageRequest.of(0, batchSize + 1);
+
+        List<Long> postIds = (cursorCreatedAt == null || cursorId == null)
+                ? postRepository.findScrollPostIdsByBoardOrderByCreatedAtDesc(board, idWindow)
+                : postRepository.findScrollPostIdsByBoardAndCreatedAtBefore(board, cursorCreatedAt, cursorId, idWindow);
+
+        boolean hasNext = postIds.size() > batchSize;
+        if (hasNext) {
+            postIds = postIds.subList(0, batchSize);
+        }
+        if (postIds.isEmpty()) {
+            return new org.springframework.data.domain.SliceImpl<>(List.of(), limit, false);
+        }
+
+        // 문제 해결:
+        // browse latest 는 정렬과 join projection 을 같은 SQL 에서 처리할 때 시간이 길어졌다.
+        // 먼저 posts 인덱스에서 현재 window 의 id 만 keyset 으로 자르고,
+        // author/board projection 은 작은 id 집합에만 적용해 최신 board browse 의 hot read 폭을 줄인다.
+        Map<Long, PostRepository.PostListRow> rowsById = postRepository.findPostListRowsByIdIn(postIds).stream()
+                .collect(Collectors.toMap(PostRepository.PostListRow::getId, row -> row));
+
+        List<PostRepository.PostListRow> orderedRows = postIds.stream()
+                .map(rowsById::get)
+                .filter(java.util.Objects::nonNull)
+                .toList();
+
+        return new org.springframework.data.domain.SliceImpl<>(orderedRows, limit, hasNext);
     }
 
     private Slice<PostRepository.PostListRow> loadRankedBrowseSlice(Board board,

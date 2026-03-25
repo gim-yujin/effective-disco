@@ -193,6 +193,54 @@ class PostListOptimizationIntegrationTest {
     }
 
     @Test
+    void getPostSlice_latestBrowseUsesIdWindowBeforeProjectionJoin() {
+        String tagPrefix = "slice-browse";
+        Board board = boardRepository.save(Board.builder()
+                .name("Slice 최신 게시판")
+                .slug("browse-" + tagPrefix)
+                .description("slice browse 최적화 게시판")
+                .build());
+
+        Tag spring = tagRepository.save(new Tag("browse-tag-" + tagPrefix));
+
+        for (int i = 0; i < 8; i++) {
+            User author = userRepository.save(User.builder()
+                    .username("browse-author" + i + "-" + tagPrefix)
+                    .email("browse-author" + i + "-" + tagPrefix + "@example.com")
+                    .password("encoded-password")
+                    .build());
+
+            Post post = Post.builder()
+                    .title("browse-post-" + i)
+                    .content("browse-content-" + i)
+                    .author(author)
+                    .board(board)
+                    .build();
+            post.getTags().add(spring);
+            post.addImage(new PostImage(post, "/browse-images/" + i + ".jpg", 0));
+            postRepository.save(post);
+        }
+
+        entityManager.flush();
+        entityManager.clear();
+        statistics.clear();
+
+        PostScrollResponse result = postService.getPostSlice(5, null, null, "browse-" + tagPrefix, "latest", null, null, null);
+
+        assertThat(result.getContent()).hasSize(5);
+        assertThat(result.isHasNext()).isTrue();
+        assertThat(result.getContent()).allSatisfy(post -> {
+            assertThat(post.getBoardSlug()).isEqualTo("browse-" + tagPrefix);
+            assertThat(post.getContent()).isEmpty();
+            assertThat(post.getTags()).containsExactly("browse-tag-" + tagPrefix);
+            assertThat(post.getImageUrls()).hasSize(1);
+        });
+        assertThat(statistics.getPrepareStatementCount())
+                .as("문제 해결 검증: latest browse slice 는 board lookup + id window + id batch projection + tag/image batch 수준으로 끝나야 한다")
+                .isLessThanOrEqualTo(5L);
+    }
+
+    @Test
     void getPosts_keywordSearchStillMatchesAuthorUsername() {
         String tagPrefix = "author-search";
         Board board = boardRepository.save(Board.builder()
