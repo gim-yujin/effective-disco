@@ -5,6 +5,7 @@ import com.effectivedisco.domain.Notification;
 import com.effectivedisco.domain.NotificationType;
 import com.effectivedisco.domain.Post;
 import com.effectivedisco.domain.User;
+import com.effectivedisco.dto.response.NotificationPageState;
 import com.effectivedisco.dto.response.NotificationResponse;
 import com.effectivedisco.event.NotificationRequestedEvent;
 import com.effectivedisco.loadtest.NoOpLoadTestStepProfiler;
@@ -306,29 +307,14 @@ class NotificationServiceTest {
 
     @Test
     void markPageAsRead_marksOnlyVisibleUnreadIds() {
-        User user = makeUser("alice");
-        NotificationResponse unread = new NotificationResponse(
-                7L,
-                NotificationType.MESSAGE,
-                "page unread",
-                "/messages/7",
-                false,
-                LocalDateTime.now()
-        );
-        NotificationResponse alreadyRead = new NotificationResponse(
-                8L,
-                NotificationType.MESSAGE,
-                "page read",
-                "/messages/8",
-                true,
-                LocalDateTime.now()
-        );
-
         given(userRepository.findNotificationRecipientSnapshotByUsername("alice"))
                 .willReturn(Optional.of(notificationRecipient(11L, "alice", 3L)));
-        given(userRepository.getReferenceById(11L)).willReturn(user);
-        given(notificationRepository.findResponseSliceByRecipientOrderByCreatedAtDesc(user, PageRequest.of(0, 20)))
-                .willReturn(new SliceImpl<>(List.of(unread, alreadyRead), PageRequest.of(0, 20), true));
+        given(notificationRepository.findPageStateSliceByRecipientIdOrderByCreatedAtDesc(11L, PageRequest.of(0, 20)))
+                .willReturn(new SliceImpl<>(
+                        List.of(new NotificationPageState(7L, false), new NotificationPageState(8L, true)),
+                        PageRequest.of(0, 20),
+                        true
+                ));
         given(notificationRepository.markPageAsReadByIds(11L, List.of(7L))).willReturn(1);
         given(userRepository.findUnreadNotificationCountByUsername("alice")).willReturn(Optional.of(2L));
 
@@ -336,27 +322,20 @@ class NotificationServiceTest {
 
         assertThat(transitioned).isEqualTo(1);
         verify(notificationRepository).markPageAsReadByIds(11L, List.of(7L));
-        verify(userRepository).decrementUnreadNotificationCount(11L, 1L);
+        verify(userRepository).refreshUnreadNotificationCount(11L);
         verify(sseEmitterService).sendCount("alice", 2L);
     }
 
     @Test
     void markPageAsReadForLoadTest_usesVisibleBatchTransitionSummary() {
-        User user = makeUser("alice");
-        NotificationResponse unread = new NotificationResponse(
-                9L,
-                NotificationType.LIKE,
-                "baseline page unread",
-                "/posts/9",
-                false,
-                LocalDateTime.now()
-        );
-
         given(userRepository.findNotificationRecipientSnapshotByUsername("alice"))
                 .willReturn(Optional.of(notificationRecipient(11L, "alice", 2L)));
-        given(userRepository.getReferenceById(11L)).willReturn(user);
-        given(notificationRepository.findResponseSliceByRecipientOrderByCreatedAtDesc(user, PageRequest.of(0, 20)))
-                .willReturn(new SliceImpl<>(List.of(unread), PageRequest.of(0, 20), false));
+        given(notificationRepository.findPageStateSliceByRecipientIdOrderByCreatedAtDesc(11L, PageRequest.of(0, 20)))
+                .willReturn(new SliceImpl<>(
+                        List.of(new NotificationPageState(9L, false)),
+                        PageRequest.of(0, 20),
+                        false
+                ));
         given(notificationRepository.markPageAsReadByIds(11L, List.of(9L))).willReturn(1);
         given(userRepository.findUnreadNotificationCountByUsername("alice")).willReturn(Optional.of(1L));
 
@@ -366,7 +345,29 @@ class NotificationServiceTest {
         assertThat(summary.listedNotificationCount()).isEqualTo(1);
         assertThat(summary.unreadCount()).isZero();
         verify(notificationRepository).markPageAsReadByIds(11L, List.of(9L));
-        verify(userRepository).decrementUnreadNotificationCount(11L, 1L);
+        verify(userRepository).refreshUnreadNotificationCount(11L);
+        verify(sseEmitterService).sendCount("alice", 1L);
+    }
+
+    @Test
+    void markPageAsRead_whenConcurrentTransitionWins_refreshesCounterInsteadOfBlindDelta() {
+        given(userRepository.findNotificationRecipientSnapshotByUsername("alice"))
+                .willReturn(Optional.of(notificationRecipient(11L, "alice", 2L)));
+        given(notificationRepository.findPageStateSliceByRecipientIdOrderByCreatedAtDesc(11L, PageRequest.of(0, 20)))
+                .willReturn(new SliceImpl<>(
+                        List.of(new NotificationPageState(10L, false)),
+                        PageRequest.of(0, 20),
+                        false
+                ));
+        given(notificationRepository.markPageAsReadByIds(11L, List.of(10L))).willReturn(0);
+        given(userRepository.findUnreadNotificationCountByUsername("alice")).willReturn(Optional.of(1L));
+
+        int transitioned = notificationService.markPageAsRead("alice", 0, 20);
+
+        assertThat(transitioned).isZero();
+        verify(notificationRepository).markPageAsReadByIds(11L, List.of(10L));
+        verify(userRepository).refreshUnreadNotificationCount(11L);
+        verify(userRepository, never()).decrementUnreadNotificationCount(anyLong(), anyLong());
         verify(sseEmitterService).sendCount("alice", 1L);
     }
 

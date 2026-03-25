@@ -5,6 +5,7 @@ import com.effectivedisco.domain.Notification;
 import com.effectivedisco.domain.NotificationType;
 import com.effectivedisco.domain.Post;
 import com.effectivedisco.domain.User;
+import com.effectivedisco.dto.response.NotificationPageState;
 import com.effectivedisco.dto.response.NotificationResponse;
 import com.effectivedisco.event.NotificationRequestedEvent;
 import com.effectivedisco.loadtest.LoadTestStepProfiler;
@@ -308,12 +309,12 @@ public class NotificationService {
     }
 
     private int markNotificationPageRead(UserRepository.NotificationRecipientSnapshot recipient, int page, int size) {
-        User user = userRepository.getReferenceById(recipient.getId());
         PageRequest pageable = PageRequest.of(Math.max(page, 0), normalizeNotificationPageSize(size));
-        Slice<NotificationResponse> slice = notificationRepository.findResponseSliceByRecipientOrderByCreatedAtDesc(user, pageable);
+        Slice<NotificationPageState> slice =
+                notificationRepository.findPageStateSliceByRecipientIdOrderByCreatedAtDesc(recipient.getId(), pageable);
         List<Long> unreadIds = slice.getContent().stream()
-                .filter(notification -> !notification.isRead())
-                .map(NotificationResponse::getId)
+                .filter(notification -> !notification.read())
+                .map(NotificationPageState::id)
                 .toList();
 
         if (unreadIds.isEmpty()) {
@@ -323,13 +324,12 @@ public class NotificationService {
 
         // 문제 해결:
         // "현재 페이지 읽음"은 visible batch 의 unread id 만 update 해야 한다.
-        // 이렇게 하면 read-all bulk update 대신 작은 IN 집합만 건드려 lock/WAL pressure 를 낮출 수 있다.
+        // 그리고 counter 는 delta decrement 대신 DB의 실제 unread row 수로 다시 맞춘다.
+        // 이렇게 해야 read-page 와 notification.store 가 같은 사용자에서 교차해도
+        // unread counter drift 없이 작은 IN update + 단일 counter refresh 로 수렴할 수 있다.
         int transitionedCount = notificationRepository.markPageAsReadByIds(recipient.getId(), unreadIds);
-        if (transitionedCount > 0) {
-            userRepository.decrementUnreadNotificationCount(recipient.getId(), transitionedCount);
-        } else if (recipient.getUnreadNotificationCount() > 0) {
-            long actualUnreadCount = notificationRepository.countUnreadByRecipientId(recipient.getId());
-            userRepository.setUnreadNotificationCount(recipient.getId(), actualUnreadCount);
+        if (transitionedCount > 0 || recipient.getUnreadNotificationCount() > 0) {
+            userRepository.refreshUnreadNotificationCount(recipient.getId());
         }
         scheduleUnreadCountRefreshAfterCommit(recipient.getUsername());
         return transitionedCount;

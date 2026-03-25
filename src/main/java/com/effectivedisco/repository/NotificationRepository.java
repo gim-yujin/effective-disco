@@ -2,6 +2,7 @@ package com.effectivedisco.repository;
 
 import com.effectivedisco.domain.Notification;
 import com.effectivedisco.domain.User;
+import com.effectivedisco.dto.response.NotificationPageState;
 import com.effectivedisco.dto.response.NotificationResponse;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Slice;
@@ -57,6 +58,24 @@ public interface NotificationRepository extends JpaRepository<Notification, Long
             """)
     Slice<NotificationResponse> findResponseSliceByRecipientOrderByCreatedAtDesc(@Param("recipient") User recipient,
                                                                                  Pageable pageable);
+
+    /**
+     * 문제 해결:
+     * read-page transition 은 현재 페이지의 unread id만 찾으면 된다.
+     * message/link/type 전체 projection 대신 id/isRead만 읽어
+     * baseline notification soak 에서 transition query 자체의 row width 를 줄인다.
+     */
+    @Query("""
+            SELECT new com.effectivedisco.dto.response.NotificationPageState(
+                n.id,
+                n.isRead
+            )
+            FROM Notification n
+            WHERE n.recipient.id = :recipientId
+            ORDER BY n.createdAt DESC
+            """)
+    Slice<NotificationPageState> findPageStateSliceByRecipientIdOrderByCreatedAtDesc(@Param("recipientId") Long recipientId,
+                                                                                      Pageable pageable);
 
     /** 읽지 않은 알림 수 (헤더 뱃지용) */
     long countByRecipientAndIsReadFalse(User recipient);

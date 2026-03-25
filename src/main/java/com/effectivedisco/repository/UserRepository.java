@@ -143,6 +143,28 @@ public interface UserRepository extends JpaRepository<User, Long> {
             """)
     int setUnreadNotificationCount(@Param("userId") Long userId, @Param("count") long count);
 
+    /**
+     * 문제 해결:
+     * read-page 는 visible unread id 일부만 읽음 처리하므로 서비스의 delta 계산으로 counter 를 맞추기보다
+     * DB의 실제 unread row 수를 그대로 다시 써 넣는 편이 경합과 drift 에 더 강하다.
+     * 단일 UPDATE 안에서 subquery count 를 반영해 store/read-page 경쟁 후에도 counter 를 실제값으로 수렴시킨다.
+     */
+    @Modifying(flushAutomatically = true, clearAutomatically = true)
+    @Query(
+            value = """
+                    UPDATE users
+                    SET unread_notification_count = (
+                        SELECT COUNT(*)
+                        FROM notifications
+                        WHERE recipient_id = :userId
+                          AND is_read = false
+                    )
+                    WHERE id = :userId
+                    """,
+            nativeQuery = true
+    )
+    int refreshUnreadNotificationCount(@Param("userId") Long userId);
+
     /** 관리자 패널: 가입일 최신순 전체 사용자 목록 */
     List<User> findAllByOrderByCreatedAtDesc();
 
