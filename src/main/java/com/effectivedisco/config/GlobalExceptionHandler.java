@@ -14,6 +14,7 @@ import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 
+import jakarta.servlet.http.HttpServletRequest;
 import java.util.Map;
 
 @RestControllerAdvice
@@ -47,8 +48,12 @@ public class GlobalExceptionHandler {
     }
 
     @ExceptionHandler(DataIntegrityViolationException.class)
-    public ResponseEntity<Map<String, String>> handleDataIntegrity(DataIntegrityViolationException e) {
-        loadTestMetricsService.recordDuplicateKeyConflictIfDetected(e);
+    public ResponseEntity<Map<String, String>> handleDataIntegrity(DataIntegrityViolationException e,
+                                                                   HttpServletRequest request) {
+        loadTestMetricsService.recordDuplicateKeyConflictIfDetected(
+                e,
+                loadTestMetricsService.normalizeRequestSignature(request.getMethod(), request.getRequestURI())
+        );
         return ResponseEntity.status(HttpStatus.CONFLICT)
                 .body(Map.of("error", "요청이 충돌했습니다. 다시 시도해주세요."));
     }

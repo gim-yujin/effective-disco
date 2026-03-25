@@ -12,6 +12,9 @@ import java.util.Comparator;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Optional;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
@@ -20,6 +23,8 @@ import java.util.concurrent.atomic.AtomicLong;
 public class LoadTestMetricsService {
 
     private static final String DUPLICATE_KEY_SQL_STATE = "23505";
+    private static final Pattern CONSTRAINT_NAME_PATTERN = Pattern.compile("constraint\\s+\"([^\"]+)\"");
+    private static final Pattern NUMERIC_PATH_SEGMENT_PATTERN = Pattern.compile("/\\d+(?=/|$)");
 
     private final DataSource dataSource;
     private final PostgresLoadTestInspector postgresLoadTestInspector;
@@ -31,6 +36,7 @@ public class LoadTestMetricsService {
     private final AtomicInteger maxIdleConnections = new AtomicInteger();
     private final AtomicInteger maxTotalConnections = new AtomicInteger();
     private final AtomicInteger maxThreadsAwaitingConnection = new AtomicInteger();
+    private final Map<String, DuplicateKeyConflictAccumulator> duplicateKeyConflictProfiles = new ConcurrentHashMap<>();
     private final Map<String, BottleneckAccumulator> bottleneckProfiles = new ConcurrentHashMap<>();
 
     public LoadTestMetricsService(DataSource dataSource, PostgresLoadTestInspector postgresLoadTestInspector) {
@@ -44,9 +50,34 @@ public class LoadTestMetricsService {
      * 멱등 write 경로가 고트래픽에서 정말 안전한지 수치로 확인할 수 있다.
      */
     public void recordDuplicateKeyConflictIfDetected(DataIntegrityViolationException exception) {
+        recordDuplicateKeyConflictIfDetected(exception, "unknown unknown");
+    }
+
+    /**
+     * 문제 해결:
+     * broad mixed 실패에서 duplicate-key 총량만 보면 후보가 너무 많다.
+     * request method/path와 constraint 이름까지 같이 누적해야 어떤 write path가 실제 충돌했는지 즉시 좁힐 수 있다.
+     */
+    public void recordDuplicateKeyConflictIfDetected(DataIntegrityViolationException exception, String requestSignature) {
         if (isDuplicateKeyViolation(exception)) {
             duplicateKeyConflicts.incrementAndGet();
+            DuplicateConflictDetail detail = extractDuplicateConflictDetail(exception);
+            duplicateKeyConflictProfiles
+                    .computeIfAbsent(detail.profileKey(requestSignature), ignored -> new DuplicateKeyConflictAccumulator(
+                            requestSignature,
+                            detail.constraintName().orElse("unknown"),
+                            detail.sampleMessage()
+                    ))
+                    .record(detail.sampleMessage());
         }
+    }
+
+    public String normalizeRequestSignature(String method, String requestUri) {
+        String normalizedMethod = method == null || method.isBlank() ? "UNKNOWN" : method.toUpperCase(Locale.ROOT);
+        String normalizedPath = requestUri == null || requestUri.isBlank()
+                ? "unknown"
+                : NUMERIC_PATH_SEGMENT_PATTERN.matcher(requestUri).replaceAll("/{id}");
+        return normalizedMethod + " " + normalizedPath;
     }
 
     /**
@@ -101,6 +132,7 @@ public class LoadTestMetricsService {
         maxIdleConnections.set(0);
         maxTotalConnections.set(0);
         maxThreadsAwaitingConnection.set(0);
+        duplicateKeyConflictProfiles.clear();
         bottleneckProfiles.clear();
         samplePoolState();
         return snapshot();
@@ -115,6 +147,7 @@ public class LoadTestMetricsService {
 
         return new LoadTestMetricsSnapshot(
                 duplicateKeyConflicts.get(),
+                snapshotDuplicateKeyConflictProfiles(),
                 dbPoolTimeouts.get(),
                 jwtAuthCacheHits.get(),
                 jwtAuthCacheMisses.get(),
@@ -146,6 +179,25 @@ public class LoadTestMetricsService {
             current = current.getCause();
         }
         return false;
+    }
+
+    private DuplicateConflictDetail extractDuplicateConflictDetail(Throwable throwable) {
+        Throwable current = throwable;
+        String sampleMessage = throwable.getMessage() != null ? throwable.getMessage() : throwable.toString();
+
+        while (current != null) {
+            String message = current.getMessage();
+            if (message != null) {
+                sampleMessage = message;
+                Matcher matcher = CONSTRAINT_NAME_PATTERN.matcher(message);
+                if (matcher.find()) {
+                    return new DuplicateConflictDetail(Optional.of(matcher.group(1)), sampleMessage);
+                }
+            }
+            current = current.getCause();
+        }
+
+        return new DuplicateConflictDetail(Optional.empty(), sampleMessage);
     }
 
     boolean isDbPoolTimeout(Throwable throwable) {
@@ -209,6 +261,14 @@ public class LoadTestMetricsService {
         return bottleneckProfiles.entrySet().stream()
                 .map(entry -> entry.getValue().snapshot(entry.getKey()))
                 .sorted(Comparator.comparing(LoadTestBottleneckProfileSnapshot::name))
+                .toList();
+    }
+
+    private List<LoadTestDuplicateKeyConflictSnapshot> snapshotDuplicateKeyConflictProfiles() {
+        return duplicateKeyConflictProfiles.values().stream()
+                .map(DuplicateKeyConflictAccumulator::snapshot)
+                .sorted(Comparator.comparing(LoadTestDuplicateKeyConflictSnapshot::count).reversed()
+                        .thenComparing(LoadTestDuplicateKeyConflictSnapshot::requestSignature))
                 .toList();
     }
 
@@ -280,6 +340,42 @@ public class LoadTestMetricsService {
 
         private double nanosToMillis(long nanos) {
             return nanos / 1_000_000.0;
+        }
+    }
+
+    private record DuplicateConflictDetail(Optional<String> constraintName, String sampleMessage) {
+
+        String profileKey(String requestSignature) {
+            return requestSignature + "|" + constraintName.orElse("unknown");
+        }
+    }
+
+    private static final class DuplicateKeyConflictAccumulator {
+        private final String requestSignature;
+        private final String constraintName;
+        private final AtomicLong count = new AtomicLong();
+        private volatile String sampleMessage;
+
+        private DuplicateKeyConflictAccumulator(String requestSignature, String constraintName, String sampleMessage) {
+            this.requestSignature = requestSignature;
+            this.constraintName = constraintName;
+            this.sampleMessage = sampleMessage;
+        }
+
+        private void record(String message) {
+            count.incrementAndGet();
+            if (message != null && !message.isBlank()) {
+                sampleMessage = message;
+            }
+        }
+
+        private LoadTestDuplicateKeyConflictSnapshot snapshot() {
+            return new LoadTestDuplicateKeyConflictSnapshot(
+                    requestSignature,
+                    constraintName,
+                    count.get(),
+                    sampleMessage
+            );
         }
     }
 }

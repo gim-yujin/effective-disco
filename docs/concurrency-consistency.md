@@ -1435,3 +1435,47 @@ SOAK_FACTOR=0.9 SOAK_DURATION=1h WARMUP_DURATION=2m SAMPLE_INTERVAL_SECONDS=60 \
 - SQL snapshot 기준 relation duplicate row, unread mismatch, comment/like mismatch 는 모두 `0` 이었다.
 - 즉 broad mixed 의 남은 실패 원인은 `duplicateKeyConflicts = 1` 로 좁혀졌고,
   다음 추적 대상은 notification 이 아니라 중복 키 예외를 만든 relation write 경로다.
+
+## 2026-03-25 duplicate-key 경로 추적 재측정
+
+상태: 완료
+
+### 실행 목적
+
+- `duplicateKeyConflicts = 1` 이 broad mixed 의 어떤 실제 HTTP 경로에서 나오는지 확인한다.
+- 총량 카운터만으로는 후보가 많았기 때문에 request path + constraint 이름 기준으로 다시 좁힌다.
+
+### 구현 요약
+
+- duplicate-key 메트릭을 request signature / constraint 이름별로 저장하도록 확장했다.
+- 관련 구현:
+  [GlobalExceptionHandler.java](/home/admin0/effective-disco/src/main/java/com/effectivedisco/config/GlobalExceptionHandler.java),
+  [LoadTestMetricsService.java](/home/admin0/effective-disco/src/main/java/com/effectivedisco/loadtest/LoadTestMetricsService.java),
+  [LoadTestMetricsSnapshot.java](/home/admin0/effective-disco/src/main/java/com/effectivedisco/loadtest/LoadTestMetricsSnapshot.java),
+  [LoadTestDuplicateKeyConflictSnapshot.java](/home/admin0/effective-disco/src/main/java/com/effectivedisco/loadtest/LoadTestDuplicateKeyConflictSnapshot.java)
+
+### 결과
+
+- suite:
+  [soak-20260325-194808.md](/home/admin0/effective-disco/loadtest/results/soak-20260325-194808.md)
+- server metrics:
+  [soak-20260325-194808-server.json](/home/admin0/effective-disco/loadtest/results/soak-20260325-194808-server.json)
+- sql snapshot:
+  [soak-20260325-194808-sql.tsv](/home/admin0/effective-disco/loadtest/results/soak-20260325-194808-sql.tsv)
+
+- broad mixed 상태: `FAIL`
+- `duplicateKeyConflicts = 1`
+- `dbPoolTimeouts = 0`
+- `unreadNotificationMismatchUsers = 0`
+
+- duplicate-key profile:
+  - `requestSignature = POST /api/posts`
+  - `constraintName = ukt48xdq560gs3gap9g7jg36kgc`
+  - sample message: `Key (name)=(write) already exists.`
+
+### 해석
+
+- 남은 duplicate-key 는 relation write 경로가 아니라 게시물 생성 경로였다.
+- 충돌 대상은 [Tag.java](/home/admin0/effective-disco/src/main/java/com/effectivedisco/domain/Tag.java#L17) 의 `tags.name` 유니크 제약이다.
+- 실제 race 지점은 [PostService.java](/home/admin0/effective-disco/src/main/java/com/effectivedisco/service/PostService.java#L784) 의 `resolveTagsForWrite()` 로,
+  `findAllByNameIn() -> missing tag saveAll()` 사이에서 동일 태그 `write` 를 동시에 생성하려고 하며 충돌했다.

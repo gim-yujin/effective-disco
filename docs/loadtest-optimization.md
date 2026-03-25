@@ -2688,3 +2688,70 @@ GRADLE_USER_HOME=/tmp/gradle-home ./gradlew test --no-daemon
 - 이번 failure 는 `duplicateKeyConflicts = 1` 하나로 좁혀졌다.
 - 따라서 다음 최적화/조사는 notification 이 아니라
   relation write 중 어떤 경로가 중복 키 예외를 발생시키는지 추적하는 쪽이 맞다.
+
+## 2026-03-25 duplicate-key 경로별 메트릭 추가 + broad mixed 재측정
+
+상태: 구현 완료, 측정 완료
+
+### 문제
+
+- clean broad mixed `0.9 / 15분` 재측정에서
+  - `dbPoolTimeouts = 0`
+  - `unreadNotificationMismatchUsers = 0`
+  - `duplicateKeyConflicts = 1`
+  만 남았다.
+- 총량 카운터만으로는 어떤 write path 가 문제인지 알 수 없었다.
+
+### 변경
+
+- [GlobalExceptionHandler.java](/home/admin0/effective-disco/src/main/java/com/effectivedisco/config/GlobalExceptionHandler.java)
+  - duplicate-key 예외 기록 시 request method/path 를 함께 넘기도록 변경했다.
+- [LoadTestMetricsService.java](/home/admin0/effective-disco/src/main/java/com/effectivedisco/loadtest/LoadTestMetricsService.java)
+  - 숫자 ID path segment 를 일반화한 request signature 생성
+  - constraint 이름 추출
+  - duplicate-key profile 누적
+- [LoadTestMetricsSnapshot.java](/home/admin0/effective-disco/src/main/java/com/effectivedisco/loadtest/LoadTestMetricsSnapshot.java)
+  - `duplicateKeyConflictProfiles` 추가
+- [LoadTestDuplicateKeyConflictSnapshot.java](/home/admin0/effective-disco/src/main/java/com/effectivedisco/loadtest/LoadTestDuplicateKeyConflictSnapshot.java)
+  - 경로/constraint/건수/sample message snapshot 추가
+- 테스트:
+  [LoadTestMetricsServiceTest.java](/home/admin0/effective-disco/src/test/java/com/effectivedisco/loadtest/LoadTestMetricsServiceTest.java),
+  [LoadTestMetricsControllerTest.java](/home/admin0/effective-disco/src/test/java/com/effectivedisco/loadtest/LoadTestMetricsControllerTest.java)
+
+### 검증
+
+- targeted loadtest metrics 테스트 통과
+
+### 재측정 결과
+
+- suite:
+  [soak-20260325-194808.md](/home/admin0/effective-disco/loadtest/results/soak-20260325-194808.md)
+- server:
+  [soak-20260325-194808-server.json](/home/admin0/effective-disco/loadtest/results/soak-20260325-194808-server.json)
+- sql:
+  [soak-20260325-194808-sql.tsv](/home/admin0/effective-disco/loadtest/results/soak-20260325-194808-sql.tsv)
+
+숫자:
+
+- `status = FAIL`
+- `p95 = 243.57ms`
+- `p99 = 310.13ms`
+- `unexpected_response_rate = 0.0000`
+- `dbPoolTimeouts = 0`
+- `duplicateKeyConflicts = 1`
+- `unreadNotificationMismatchUsers = 0`
+
+추적 결과:
+
+- `requestSignature = POST /api/posts`
+- `constraintName = ukt48xdq560gs3gap9g7jg36kgc`
+- sample message:
+  `Key (name)=(write) already exists.`
+
+### 해석
+
+- broad mixed 의 남은 failure 는 relation 토글 경로가 아니라 게시물 생성 시 태그 생성 race 였다.
+- 충돌 대상은 [Tag.java](/home/admin0/effective-disco/src/main/java/com/effectivedisco/domain/Tag.java#L17) 의 `tags.name` 유니크 제약이다.
+- 실제 race 지점은 [PostService.java](/home/admin0/effective-disco/src/main/java/com/effectivedisco/service/PostService.java#L784) 의 `resolveTagsForWrite()` 이다.
+- 현재 구현은 `findAllByNameIn()` 뒤 missing tag 를 `saveAll()` 하므로, broad mixed 의 `writePostsAndComments()` 가 같은 태그 `write` 를 동시에 생성할 때 duplicate-key 가 발생한다.
+- 따라서 다음 최적화 1순위는 relation write 가 아니라 `tag resolve/create` 를 멱등화하는 것이다.

@@ -9,6 +9,7 @@ import java.util.List;
  */
 public record LoadTestMetricsSnapshot(
         long duplicateKeyConflicts,
+        List<LoadTestDuplicateKeyConflictSnapshot> duplicateKeyConflictProfiles,
         long dbPoolTimeouts,
         long jwtAuthCacheHits,
         long jwtAuthCacheMisses,

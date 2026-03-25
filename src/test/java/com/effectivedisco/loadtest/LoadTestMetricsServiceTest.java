@@ -14,6 +14,7 @@ import java.sql.SQLTransientConnectionException;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.BDDMockito.given;
+import static org.mockito.Mockito.lenient;
 
 @org.junit.jupiter.api.extension.ExtendWith(MockitoExtension.class)
 class LoadTestMetricsServiceTest {
@@ -34,8 +35,8 @@ class LoadTestMetricsServiceTest {
         dataSource.setMaximumPoolSize(2);
         dataSource.setMinimumIdle(1);
 
-        given(postgresLoadTestInspector.snapshot())
-                .willReturn(PostgresLoadTestSnapshot.unavailable("not-postgresql", "H2", "effective-disco-loadtest"));
+        lenient().when(postgresLoadTestInspector.snapshot())
+                .thenReturn(PostgresLoadTestSnapshot.unavailable("not-postgresql", "H2", "effective-disco-loadtest"));
 
         loadTestMetricsService = new LoadTestMetricsService(dataSource, postgresLoadTestInspector);
     }
@@ -48,12 +49,25 @@ class LoadTestMetricsServiceTest {
     @Test
     void duplicateKeyViolation_incrementsConflictCounter() {
         loadTestMetricsService.recordDuplicateKeyConflictIfDetected(
-                new DataIntegrityViolationException("duplicate", new SQLException("duplicate key", "23505"))
+                new DataIntegrityViolationException(
+                        "duplicate",
+                        new SQLException("duplicate key value violates unique constraint \"uk_post_like\"", "23505")
+                ),
+                "POST /api/posts/{id}/like"
         );
 
-        assertThat(loadTestMetricsService.snapshot().duplicateKeyConflicts())
+        LoadTestMetricsSnapshot snapshot = loadTestMetricsService.snapshot();
+
+        assertThat(snapshot.duplicateKeyConflicts())
                 .as("문제 해결 검증: duplicate-key 예외는 별도 카운터로 누적돼야 한다")
                 .isEqualTo(1);
+        assertThat(snapshot.duplicateKeyConflictProfiles())
+                .singleElement()
+                .satisfies(profile -> {
+                    assertThat(profile.requestSignature()).isEqualTo("POST /api/posts/{id}/like");
+                    assertThat(profile.constraintName()).isEqualTo("uk_post_like");
+                    assertThat(profile.count()).isEqualTo(1);
+                });
     }
 
     @Test
@@ -92,6 +106,7 @@ class LoadTestMetricsServiceTest {
         LoadTestMetricsSnapshot snapshot = loadTestMetricsService.reset();
 
         assertThat(snapshot.duplicateKeyConflicts()).isZero();
+        assertThat(snapshot.duplicateKeyConflictProfiles()).isEmpty();
         assertThat(snapshot.dbPoolTimeouts()).isZero();
         assertThat(snapshot.jwtAuthCacheHits()).isZero();
         assertThat(snapshot.jwtAuthCacheMisses()).isZero();
@@ -109,6 +124,15 @@ class LoadTestMetricsServiceTest {
                 .as("문제 해결 검증: JWT 인증 캐시 hit/miss 는 인증 조회 병목을 분리해 볼 수 있게 누적돼야 한다")
                 .isEqualTo(2);
         assertThat(snapshot.jwtAuthCacheMisses()).isEqualTo(1);
+    }
+
+    @Test
+    void normalizeRequestSignature_replacesNumericPathSegments() {
+        String signature = loadTestMetricsService.normalizeRequestSignature("post", "/api/posts/123/comments/456");
+
+        assertThat(signature)
+                .as("문제 해결 검증: duplicate-key 경로는 숫자 id를 일반화해 같은 write path를 한 그룹으로 봐야 한다")
+                .isEqualTo("POST /api/posts/{id}/comments/{id}");
     }
 
     @Test
