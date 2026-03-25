@@ -1351,3 +1351,87 @@ SOAK_FACTOR=0.9 SOAK_DURATION=1h WARMUP_DURATION=2m SAMPLE_INTERVAL_SECONDS=60 \
   현재 구현의 `read-page` baseline 에서는 짧은 soak 만으로도
   `dbPoolTimeouts` 와 `unread counter drift` 가 재현됐다.
 - 따라서 다음 우선순위는 `notification.read-page` 의 정합성과 lock 경합을 직접 파는 것이다.
+
+## 2026-03-25 notification `read-page` 정합성 보강 후 재측정
+
+상태: 완료
+
+### 실행 목적
+
+- `markPageAsRead()` 경로의 unread counter drift 를 먼저 없앤다.
+- 같은 clean `effectivedisco_loadtest` DB 조건에서
+  baseline(read-page) 과 stress(read-all) 를 다시 짧게 재서
+  알림 경로 단독 기준선이 회복됐는지 확인한다.
+
+### 구현 요약
+
+- `notification` mutation 세 경로(`store/read-page/read-all`)를
+  같은 recipient 직렬화 규칙 아래로 맞췄다.
+- mutation 뒤 unread counter 는 delta 혼합 대신
+  실제 unread row 수 refresh 로 통일했다.
+- 관련 구현:
+  [NotificationService.java](/home/admin0/effective-disco/src/main/java/com/effectivedisco/service/NotificationService.java),
+  [UserRepository.java](/home/admin0/effective-disco/src/main/java/com/effectivedisco/repository/UserRepository.java),
+  [NotificationAfterCommitIntegrationTest.java](/home/admin0/effective-disco/src/test/java/com/effectivedisco/service/NotificationAfterCommitIntegrationTest.java),
+  [NotificationServiceTest.java](/home/admin0/effective-disco/src/test/java/com/effectivedisco/service/NotificationServiceTest.java)
+
+### 결과
+
+- baseline 재측정:
+  [soak-20260325-185832.md](/home/admin0/effective-disco/loadtest/results/soak-20260325-185832.md)
+- baseline server metrics:
+  [soak-20260325-185832-server.json](/home/admin0/effective-disco/loadtest/results/soak-20260325-185832-server.json)
+- baseline 상태: `PASS`
+- baseline `dbPoolTimeouts = 0`
+- baseline `unreadNotificationMismatchUsers = 0`
+
+- stress 재측정:
+  [soak-20260325-190524.md](/home/admin0/effective-disco/loadtest/results/soak-20260325-190524.md)
+- stress server metrics:
+  [soak-20260325-190524-server.json](/home/admin0/effective-disco/loadtest/results/soak-20260325-190524-server.json)
+- stress sql snapshot:
+  [soak-20260325-190524-sql.tsv](/home/admin0/effective-disco/loadtest/results/soak-20260325-190524-sql.tsv)
+- stress 상태: `PASS`
+- stress `http p95 = 106.12ms`
+- stress `http p99 = 144.66ms`
+- stress `unexpected_response_rate = 0.0000`
+- stress `dbPoolTimeouts = 0`
+- stress `unreadNotificationMismatchUsers = 0`
+
+### 해석
+
+- notification 경로 단독 기준으로는 baseline(read-page) 과 stress(read-all) 모두 다시 안정 상태로 돌아왔다.
+- 이 시점부터 broad mixed 재측정은 “알림 경로 자체가 아직 깨진다”가 아니라
+  “전체 혼합 경로에 남은 다른 실패 요인이 있는가”를 보는 단계로 바뀌었다.
+
+## 2026-03-25 clean broad mixed `0.9 / 15분` 재측정
+
+상태: 완료
+
+### 실행 목적
+
+- notification 경로 단독 기준선이 회복된 뒤,
+  clean broad mixed 에서도 같은 효과가 전파됐는지 다시 확인한다.
+
+### 결과
+
+- suite:
+  [soak-20260325-192358.md](/home/admin0/effective-disco/loadtest/results/soak-20260325-192358.md)
+- server metrics:
+  [soak-20260325-192358-server.json](/home/admin0/effective-disco/loadtest/results/soak-20260325-192358-server.json)
+- sql snapshot:
+  [soak-20260325-192358-sql.tsv](/home/admin0/effective-disco/loadtest/results/soak-20260325-192358-sql.tsv)
+- 상태: `FAIL`
+- `http p95 = 244.17ms`
+- `http p99 = 311.62ms`
+- `unexpected_response_rate = 0.0000`
+- `dbPoolTimeouts = 0`
+- `duplicateKeyConflicts = 1`
+- `unreadNotificationMismatchUsers = 0`
+
+### 해석
+
+- 이번 failure 는 더 이상 `notification` drift, `dbPoolTimeouts`, `unread counter mismatch` 때문이 아니다.
+- SQL snapshot 기준 relation duplicate row, unread mismatch, comment/like mismatch 는 모두 `0` 이었다.
+- 즉 broad mixed 의 남은 실패 원인은 `duplicateKeyConflicts = 1` 로 좁혀졌고,
+  다음 추적 대상은 notification 이 아니라 중복 키 예외를 만든 relation write 경로다.

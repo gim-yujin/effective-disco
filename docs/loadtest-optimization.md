@@ -2587,3 +2587,104 @@ GRADLE_USER_HOME=/tmp/gradle-home ./gradlew test --no-daemon
 - 즉 현재 문제는 “stress 만 위험하다”가 아니라,
   `markPageAsRead()` 경로가 짧은 soak 에서도 unread counter 정합성과 lock 경합을 동시에 흔든다는 점이다.
 - 다음 최적화 우선순위는 `notification.read-page.summary.transition` 이다.
+
+## 2026-03-25 notification `read-page` transition 최적화 + unread counter 정합성 통일
+
+상태: 구현 완료, 검증 완료
+
+### 문제
+
+- `read-page` baseline 이 `read-all` stress 보다 먼저 깨졌다.
+- 짧은 soak 에서도
+  - `dbPoolTimeouts = 35`
+  - `unreadNotificationMismatchUsers = 1`
+  가 함께 발생했다.
+- 즉 병목과 정합성 문제가 같은 경로에 동시에 있었다.
+
+### 변경
+
+- [NotificationRepository.java](/home/admin0/effective-disco/src/main/java/com/effectivedisco/repository/NotificationRepository.java)
+  - `id/isRead` 만 읽는 얇은 read-page slice query 를 추가했다.
+- [NotificationPageState.java](/home/admin0/effective-disco/src/main/java/com/effectivedisco/dto/response/NotificationPageState.java)
+  - transition 전용 projection DTO 를 추가했다.
+- [NotificationService.java](/home/admin0/effective-disco/src/main/java/com/effectivedisco/service/NotificationService.java)
+  - `NotificationResponse` 전체 대신 `NotificationPageState` slice 로 현재 페이지 상태를 읽도록 바꿨다.
+  - `store/read-page/read-all` 세 mutation 경로를 recipient 직렬화 규칙 아래로 맞췄다.
+  - unread counter 는 혼합 delta 대신 실제 unread row 수 refresh 로 통일했다.
+- [UserRepository.java](/home/admin0/effective-disco/src/main/java/com/effectivedisco/repository/UserRepository.java)
+  - unread counter refresh update 를 hot path 에서 직접 사용할 수 있게 했다.
+- 관련 테스트:
+  [NotificationServiceTest.java](/home/admin0/effective-disco/src/test/java/com/effectivedisco/service/NotificationServiceTest.java),
+  [NotificationAfterCommitIntegrationTest.java](/home/admin0/effective-disco/src/test/java/com/effectivedisco/service/NotificationAfterCommitIntegrationTest.java)
+
+### 검증
+
+- targeted notification 회귀/동시성 테스트 통과
+- 전체 `GRADLE_USER_HOME=/tmp/gradle-home ./gradlew test --no-daemon` 통과
+
+### 재측정 결과
+
+- clean baseline 재측정:
+  [soak-20260325-185832.md](/home/admin0/effective-disco/loadtest/results/soak-20260325-185832.md)
+  - `PASS`
+  - `dbPoolTimeouts = 0`
+  - `unreadNotificationMismatchUsers = 0`
+- clean stress 재측정:
+  [soak-20260325-190524.md](/home/admin0/effective-disco/loadtest/results/soak-20260325-190524.md)
+  - `PASS`
+  - `p95 = 106.12ms`
+  - `p99 = 144.66ms`
+  - `dbPoolTimeouts = 0`
+  - `unreadNotificationMismatchUsers = 0`
+
+### 해석
+
+- notification 경로 단독 기준으로는 baseline/stress 모두 다시 안정 상태가 됐다.
+- 즉 unread counter drift 와 `read-page` lock 경합은 이번 변경으로 사실상 해결된 것으로 본다.
+
+## 2026-03-25 clean broad mixed `0.9 / 15분` 재측정
+
+상태: 완료
+
+### 실행 조건
+
+- clean `effectivedisco_loadtest` DB `DROP/CREATE`
+- fresh `loadtest` 앱
+- `SOAK_FACTOR=0.9`
+- `SOAK_DURATION=15m`
+- `WARMUP_DURATION=30s`
+
+### 결과
+
+- suite:
+  [soak-20260325-192358.md](/home/admin0/effective-disco/loadtest/results/soak-20260325-192358.md)
+- server:
+  [soak-20260325-192358-server.json](/home/admin0/effective-disco/loadtest/results/soak-20260325-192358-server.json)
+- sql:
+  [soak-20260325-192358-sql.tsv](/home/admin0/effective-disco/loadtest/results/soak-20260325-192358-sql.tsv)
+
+숫자:
+
+- `status = FAIL`
+- `p95 = 244.17ms`
+- `p99 = 311.62ms`
+- `unexpected_response_rate = 0.0000`
+- `dbPoolTimeouts = 0`
+- `duplicateKeyConflicts = 1`
+- `unreadNotificationMismatchUsers = 0`
+
+주요 profile:
+
+- `notification.read-page.summary avgWall = 3.22ms`, `avgSql = 2.08ms`
+- `notification.read-page.summary.transition avgWall = 2.83ms`, `avgSql = 1.88ms`
+- `notification.store avgWall = 2.42ms`, `avgSql = 1.85ms`
+- `post.list.browse.rows avgWall = 4.51ms`, `avgSql = 4.00ms`
+- `post.list.search.rows avgWall = 3.75ms`, `avgSql = 3.30ms`
+
+### 해석
+
+- broad mixed 의 남은 실패 원인은 더 이상 notification 경로가 아니다.
+- notification profile 은 상당히 내려왔고, `dbPoolTimeouts` 와 `unread counter mismatch` 도 `0` 이다.
+- 이번 failure 는 `duplicateKeyConflicts = 1` 하나로 좁혀졌다.
+- 따라서 다음 최적화/조사는 notification 이 아니라
+  relation write 중 어떤 경로가 중복 키 예외를 발생시키는지 추적하는 쪽이 맞다.
