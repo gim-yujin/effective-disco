@@ -1549,3 +1549,35 @@ SOAK_FACTOR=0.9 SOAK_DURATION=1h WARMUP_DURATION=2m SAMPLE_INTERVAL_SECONDS=60 \
   `notification drift`, `duplicate key`, `dbPoolTimeouts` 어느 쪽도 보이지 않았다.
 - 즉 clean 전용 DB 기준 broad mixed 의 최신 기준선은
   다시 `0.9 / 15분 = PASS` 이다.
+
+## 2026-03-25 clean broad mixed `0.9 / 1시간` 재측정
+
+상태: 완료
+
+### 실행 목적
+
+- clean broad mixed 최신 기준선을 `15분`에서 `1시간`으로 늘려도
+  같은 안정성이 유지되는지 확인한다.
+
+### 결과
+
+- suite:
+  [soak-20260325-234707.md](/home/admin0/effective-disco/loadtest/results/soak-20260325-234707.md)
+- server metrics:
+  [soak-20260325-234707-server.json](/home/admin0/effective-disco/loadtest/results/soak-20260325-234707-server.json)
+- sql snapshot:
+  [soak-20260325-234707-sql.tsv](/home/admin0/effective-disco/loadtest/results/soak-20260325-234707-sql.tsv)
+- 상태: `FAIL`
+- `http p95 = 321.60ms`
+- `http p99 = 422.03ms`
+- `unexpected_response_rate = 0.0000`
+- `duplicateKeyConflicts = 0`
+- `dbPoolTimeouts = 1`
+- `unreadNotificationMismatchUsers = 0`
+
+### 해석
+
+- clean broad mixed `0.9 / 1시간`의 직접 실패 원인은 `dbPoolTimeouts = 1` 한 건이다.
+- duplicate-key 와 unread counter mismatch 는 모두 사라진 상태를 유지했다.
+- 즉 현재 clean 기준 broad mixed 는 거의 안정 상태까지 올라왔지만,
+  `1시간` 구간에서는 아직 `pool timeout` 한계가 완전히 없어졌다고 말할 단계는 아니다.
