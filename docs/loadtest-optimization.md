@@ -1809,3 +1809,74 @@ run detail 핵심:
 
 - `browse_search + relation_mixed` 를 다시 세분화해 `browse_board_feed / search_catalog / tag path` 와 `like/follow/bookmark/block` 중 어떤 하위 조합이 현재 최소 재현 조합인지 최신 기준으로 좁히기
 - 그 조합 하나에만 PostgreSQL wait / slow query 계측을 집중하기
+
+## 2026-03-25 search split + read × relation pair matrix
+
+상태: 완료
+
+### 배경
+
+- `browse_search + relation_mixed` 는 최신 코드에서도 여전히 실패했지만, 이 수준으로는 read pressure 가 너무 크다.
+- 최근 계측에서는 `post.list.tag.rows` 가 상대적으로 비쌌기 때문에, `search_catalog` 안의 tag query 를 따로 떼지 않으면 최소 재현 pair 를 다시 놓칠 수 있었다.
+
+### 구현
+
+- [bbs-load.js](/home/admin0/effective-disco/loadtest/k6/bbs-load.js)
+  - `search_catalog` 를 keyword search 전용으로 축소했다.
+  - `tag_search` 와 `sort_catalog` scenario/profile 을 새로 추가했다.
+  - `tag_search_duration`, `sort_catalog_duration` metric 도 같이 추가했다.
+- [run-bbs-scenario-sub-stability.sh](/home/admin0/effective-disco/loadtest/run-bbs-scenario-sub-stability.sh)
+  - `tag_search`, `sort_catalog` profile 을 지원하도록 확장했다.
+- [run-bbs-read-relation-pair-matrix.sh](/home/admin0/effective-disco/loadtest/run-bbs-read-relation-pair-matrix.sh)
+  - `read_profile × relation_profile` 카테시안 곱을 자동으로 반복 측정하는 전용 러너를 추가했다.
+
+### 문제 해결
+
+- `search_catalog` 하나에 keyword/tag/sort 가 섞여 있던 상태를 atomic read path 로 다시 분리했다.
+- broad mixed 실패를 곧바로 큰 조합으로 보지 않고, `search/tag/sort` 와 `like/bookmark/follow/block` 의 atomic pair 가 실제로 깨지는지 먼저 확인할 수 있게 했다.
+- 이 결과가 안정적이면, 다음 단계가 `pair 최적화`가 아니라 `3-way read pressure 조합` 추적으로 바로 좁혀진다.
+
+### 실행 artifact
+
+- [pair summary](/home/admin0/effective-disco/loadtest/results/read-relation-pair-matrix-20260325-083639.md)
+
+조건:
+
+- fresh `loadtest` 인스턴스 `18081`
+- `RUNS=3`
+- `STAGE_FACTORS=0.6`
+- `READ_PROFILES=search_catalog,tag_search,sort_catalog`
+- `RELATION_PROFILES=like_mixed,bookmark_mixed,follow_mixed,block_mixed`
+
+### 결과
+
+- `search_catalog` 의 atomic pair 는 전부 `0.6 = 3/3 PASS`
+  - `search_catalog+like_mixed`
+  - `search_catalog+bookmark_mixed`
+  - `search_catalog+follow_mixed`
+  - `search_catalog+block_mixed`
+- `tag_search` 의 atomic pair 도 전부 `0.6 = 3/3 PASS`
+  - `tag_search+like_mixed`
+  - `tag_search+bookmark_mixed`
+  - `tag_search+follow_mixed`
+  - `tag_search+block_mixed`
+- 대표 artifact:
+  - [search_catalog+like_mixed](/home/admin0/effective-disco/loadtest/results/read-relation-search_catalog+like_mixed-20260325-083639/scenario-search_catalog+like_mixed-20260325-083639/sub-stability-20260325-083639.md)
+  - [tag_search+like_mixed](/home/admin0/effective-disco/loadtest/results/read-relation-tag_search+like_mixed-20260325-083639/scenario-tag_search+like_mixed-20260325-084608/sub-stability-20260325-084608.md)
+  - [tag_search+block_mixed](/home/admin0/effective-disco/loadtest/results/read-relation-tag_search+block_mixed-20260325-083639/scenario-tag_search+block_mixed-20260325-085314/sub-stability-20260325-085314.md)
+
+### 해석
+
+- 최신 코드 기준으로 `atomic search/tag read + atomic relation write` pair 만으로는 `0.6` broad mixed 실패를 재현하지 못했다.
+- 즉 `tag_search` 가 비싸다는 사실과 `tag_search` 가 단독으로 최소 재현 pair 라는 결론은 다르다. 이번 측정으로 후자는 부정됐다.
+- 따라서 남은 최소 재현 후보는 `browse_board_feed + (search_catalog or tag_search or sort_catalog) + relation_write` 수준의 `3-way read pressure` 조합이다.
+- 다음 단계는 atomic pair 최적화가 아니라, `browse` 를 다시 얹은 3-way 조합으로 넘어가야 한다.
+- 같은 맥락에서 `sort_catalog` 의 pair 전체는 이번 턴에서 끝까지 돌리지 않았다. `search_catalog` 와 `tag_search` 가 모두 안정적이라는 사실만으로도
+  "atomic pair 가 아니라 browse 를 포함한 3-way 조합으로 넘어가야 한다"는 결론이 충분했기 때문이다.
+
+### 다음 액션
+
+- `browse_board_feed + search_catalog + like_mixed`
+- `browse_board_feed + tag_search + like_mixed`
+- `browse_board_feed + sort_catalog + like_mixed`
+- 그리고 같은 패턴으로 `bookmark/follow/block` 까지 비교해, 현재 코드 기준 최소 3-way 재현 조합을 확정

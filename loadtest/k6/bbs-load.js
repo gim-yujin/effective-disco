@@ -12,6 +12,8 @@ const RESULT_FILE = __ENV.K6_SUMMARY_FILE || 'loadtest/results/k6-summary.json';
 const browseListDuration = new Trend('browse_list_duration');
 const hotPostDetailDuration = new Trend('hot_post_detail_duration');
 const searchDuration = new Trend('search_duration');
+const tagSearchDuration = new Trend('tag_search_duration');
+const sortCatalogDuration = new Trend('sort_catalog_duration');
 const createPostDuration = new Trend('create_post_duration');
 const createCommentDuration = new Trend('create_comment_duration');
 const likeAddRaceDuration = new Trend('like_add_race_duration');
@@ -123,6 +125,28 @@ addConstantArrivalScenario(
   'search_catalog'
 );
 
+addConstantArrivalScenario(
+  'tag_search_catalog',
+  'tagSearchCatalog',
+  Number(__ENV.TAG_SEARCH_RATE || __ENV.SEARCH_RATE || 15),
+  __ENV.TAG_SEARCH_DURATION || __ENV.SEARCH_DURATION || '1m',
+  Number(__ENV.TAG_SEARCH_PRE_ALLOCATED_VUS || __ENV.SEARCH_PRE_ALLOCATED_VUS || 10),
+  Number(__ENV.TAG_SEARCH_MAX_VUS || __ENV.SEARCH_MAX_VUS || 40),
+  'browse_search',
+  'tag_search'
+);
+
+addConstantArrivalScenario(
+  'sort_catalog',
+  'sortCatalog',
+  Number(__ENV.SORT_SEARCH_RATE || __ENV.SEARCH_RATE || 15),
+  __ENV.SORT_SEARCH_DURATION || __ENV.SEARCH_DURATION || '1m',
+  Number(__ENV.SORT_SEARCH_PRE_ALLOCATED_VUS || __ENV.SEARCH_PRE_ALLOCATED_VUS || 10),
+  Number(__ENV.SORT_SEARCH_MAX_VUS || __ENV.SEARCH_MAX_VUS || 40),
+  'browse_search',
+  'sort_catalog'
+);
+
 addRampingArrivalScenario(
   'write_posts_and_comments',
   'writePostsAndComments',
@@ -196,6 +220,8 @@ export const options = {
     browse_list_duration: ['p(95)<400', 'p(99)<800'],
     hot_post_detail_duration: ['p(95)<450', 'p(99)<900'],
     search_duration: ['p(95)<500', 'p(99)<1000'],
+    tag_search_duration: ['p(95)<500', 'p(99)<1000'],
+    sort_catalog_duration: ['p(95)<500', 'p(99)<1000'],
     create_post_duration: ['p(95)<800', 'p(99)<1500'],
     create_comment_duration: ['p(95)<700', 'p(99)<1300'],
     like_add_race_duration: ['p(95)<400', 'p(99)<700'],
@@ -313,17 +339,29 @@ export function hotPostDetails(data) {
 
 export function searchCatalog(data) {
   const boardSlug = data.boards[exec.scenario.iterationInTest % data.boards.length];
-  const queries = [
-    `${BASE_URL}/api/posts/slice?boardSlug=${boardSlug}&keyword=load&size=20`,
-    `${BASE_URL}/api/posts/slice?tag=spring&size=20`,
-    `${BASE_URL}/api/posts/slice?boardSlug=${boardSlug}&sort=likes&size=20`,
-  ];
+  const response = http.get(`${BASE_URL}/api/posts/slice?boardSlug=${boardSlug}&keyword=load&size=20`);
 
-  for (const url of queries) {
-    const response = http.get(url);
-    searchDuration.add(response.timings.duration);
-    recordResponse(response, [200], 'search catalog');
-  }
+  searchDuration.add(response.timings.duration);
+  recordResponse(response, [200], 'keyword search catalog');
+}
+
+export function tagSearchCatalog() {
+  // 문제 해결:
+  // 기존 search_catalog 안에 tag query가 섞여 있으면 `post.list.tag.rows`가 비싼지,
+  // keyword search가 비싼지 profile로 분리되지 않는다. tag path를 단독 scenario로 떼어
+  // read path × relation write pair matrix에서 정확히 어떤 조합이 깨지는지 볼 수 있게 한다.
+  const response = http.get(`${BASE_URL}/api/posts/slice?tag=spring&size=20`);
+
+  tagSearchDuration.add(response.timings.duration);
+  recordResponse(response, [200], 'tag search catalog');
+}
+
+export function sortCatalog(data) {
+  const boardSlug = data.boards[exec.scenario.iterationInTest % data.boards.length];
+  const response = http.get(`${BASE_URL}/api/posts/slice?boardSlug=${boardSlug}&sort=likes&size=20`);
+
+  sortCatalogDuration.add(response.timings.duration);
+  recordResponse(response, [200], 'sort catalog');
 }
 
 export function writePostsAndComments(data) {
@@ -448,6 +486,8 @@ export function handleSummary(data) {
     `browse_list_duration p95=${formatMetric(data, 'browse_list_duration', 'p(95)')} p99=${formatMetric(data, 'browse_list_duration', 'p(99)')}`,
     `hot_post_detail_duration p95=${formatMetric(data, 'hot_post_detail_duration', 'p(95)')} p99=${formatMetric(data, 'hot_post_detail_duration', 'p(99)')}`,
     `search_duration p95=${formatMetric(data, 'search_duration', 'p(95)')} p99=${formatMetric(data, 'search_duration', 'p(99)')}`,
+    `tag_search_duration p95=${formatMetric(data, 'tag_search_duration', 'p(95)')} p99=${formatMetric(data, 'tag_search_duration', 'p(99)')}`,
+    `sort_catalog_duration p95=${formatMetric(data, 'sort_catalog_duration', 'p(95)')} p99=${formatMetric(data, 'sort_catalog_duration', 'p(99)')}`,
     `create_post_duration p95=${formatMetric(data, 'create_post_duration', 'p(95)')} p99=${formatMetric(data, 'create_post_duration', 'p(99)')}`,
     `create_comment_duration p95=${formatMetric(data, 'create_comment_duration', 'p(95)')} p99=${formatMetric(data, 'create_comment_duration', 'p(99)')}`,
     `like_add_race_duration p95=${formatMetric(data, 'like_add_race_duration', 'p(95)')} p99=${formatMetric(data, 'like_add_race_duration', 'p(99)')}`,

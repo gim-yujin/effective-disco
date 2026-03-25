@@ -66,6 +66,17 @@ COMBINATION_SIZES=2,3 \
 ./loadtest/run-bbs-scenario-combination-matrix.sh
 ```
 
+read path × relation write pair matrix:
+
+```bash
+BASE_URL=http://localhost:18081 \
+RUNS=3 \
+STAGE_FACTORS=0.6 \
+READ_PROFILES=search_catalog,tag_search,sort_catalog \
+RELATION_PROFILES=like_mixed,bookmark_mixed,follow_mixed,block_mixed \
+./loadtest/run-bbs-read-relation-pair-matrix.sh
+```
+
 장시간 soak + SQL 정합성 검증:
 
 ```bash
@@ -76,7 +87,9 @@ COMBINATION_SIZES=2,3 \
 
 - `browse_board_feed`: 게시판별 목록 조회와 정렬 부하
 - `hot_post_details`: 동일한 인기 게시물 상세 조회와 view count 증가 부하
-- `search_catalog`: 키워드/태그/정렬 검색 부하
+- `search_catalog`: 키워드 검색 부하
+- `tag_search_catalog`: 태그 검색 부하
+- `sort_catalog`: 정렬 검색 부하
 - `write_posts_and_comments`: 게시물 작성 + 핫 게시물 댓글 작성 부하
 - `like_idempotent_add_race`: 같은 사용자의 반복 좋아요 요청 경쟁
 - `like_idempotent_remove_race`: 같은 사용자의 반복 좋아요 해제 요청 경쟁
@@ -92,6 +105,8 @@ COMBINATION_SIZES=2,3 \
 - `browse_board_feed`: 게시판 목록 조회만 측정
 - `hot_post_details`: 인기 게시물 상세 조회만 측정
 - `search_catalog`: 검색 경로만 측정
+- `tag_search`: 태그 검색 경로만 측정
+- `sort_catalog`: 정렬 검색 경로만 측정
 - `write`: 게시물 작성/댓글 작성만 측정
 - `relation_mixed`: like/follow/bookmark/block 혼합 경쟁만 측정
 - `like_mixed`: 좋아요 add/remove 경쟁만 측정
@@ -133,6 +148,17 @@ STOP_AFTER_FIRST_UNSTABLE_SIZE=1 \
 ./loadtest/run-bbs-scenario-combination-matrix.sh
 ```
 
+atomic read path 와 relation write 의 pair 만 빠르게 확인하려면:
+
+```bash
+BASE_URL=http://localhost:18081 \
+RUNS=3 \
+STAGE_FACTORS=0.6 \
+READ_PROFILES=search_catalog,tag_search,sort_catalog \
+RELATION_PROFILES=like_mixed,bookmark_mixed,follow_mixed,block_mixed \
+./loadtest/run-bbs-read-relation-pair-matrix.sh
+```
+
 ## 결과물
 
 - `loadtest/results/k6-summary-*.json`: 클라이언트 관점 p95/p99, 실패율
@@ -148,6 +174,8 @@ STOP_AFTER_FIRST_UNSTABLE_SIZE=1 \
 - `loadtest/results/scenario-matrix-*.tsv`: profile 별 aggregate 경로와 PASS/LIMIT/FAIL 요약
 - `loadtest/results/scenario-combination-matrix-*.md`: pair/triple 조합별 stable factor 와 최소 불안정 크기 요약
 - `loadtest/results/scenario-combination-matrix-*.tsv`: 조합별 aggregate 경로와 unstable 여부 원본
+- `loadtest/results/read-relation-pair-matrix-*.md`: atomic read path × relation write pair 비교 리포트
+- `loadtest/results/read-relation-pair-matrix-*.tsv`: read/relation pair 별 aggregate 경로와 unstable 여부 원본
 - `loadtest/results/soak-*.md`: 장시간 soak 최종 요약
 - `loadtest/results/soak-*-metrics.jsonl`: soak 중 주기적 서버 메트릭 타임라인
 
@@ -162,9 +190,11 @@ STOP_AFTER_FIRST_UNSTABLE_SIZE=1 \
 - SQL 정합성: `Post.likeCount`, `Post.commentCount`, `User.unreadNotificationCount` 와 실제 row 수 일치 여부
 - 관계 중복: `post_likes`, `bookmarks`, `follows`, `blocks` 의 동일 키 중복 row 여부
 - 병목 프로파일: `comment.create`, `notification.store`, `post.list`, `post.list.browse.rows`, `post.list.search.rows`, `post.list.tag.rows` 의 벽시계 시간, SQL 실행 시간, SQL 문 수, 트랜잭션 길이
+- 분리 검색 메트릭: `tag_search_duration`, `sort_catalog_duration`
 
 ## 현재 API hot path
 
 - browse/search load 는 `/api/posts` page endpoint 가 아니라 `/api/posts/slice` cursor endpoint 를 사용한다.
 - board browse 는 `latest/likes/comments` 정렬을 지원한다.
+- `search_catalog` 는 keyword search 전용이고, `tag_search` 와 `sort_catalog` 는 분리된 scenario 로 측정한다.
 - keyword/tag search 는 `latest` 정렬만 지원하며, hot path 에서는 `count(*)` 를 제거한다.

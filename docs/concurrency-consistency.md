@@ -694,6 +694,42 @@
 - 이번 러너는 `최소 불안정 크기` 를 찾는 용도이므로, pair 에서 이미 unstable 이 확인되면 triple 로 더 올라가지 않도록 중단했다.
 - 즉 현재 1순위 추적 조합은 다시 `browse_search + relation_mixed` 이다.
 
+## 24차 결과
+
+상태: 완료
+
+검증 날짜:
+
+- 2026-03-25
+
+검증 범위:
+
+- `search_catalog` 를 `keyword search` 전용으로 축소
+- `tag_search`, `sort_catalog` read profile 추가
+- `read path × relation write` 전용 pair matrix 러너 추가
+- fresh `loadtest` 인스턴스(`18081`)에서 `RUNS=3`, `STAGE_FACTORS=0.6`
+
+핵심 결론:
+
+- 실행 artifact:
+  - [pair summary](/home/admin0/effective-disco/loadtest/results/read-relation-pair-matrix-20260325-083639.md)
+- `search_catalog` 의 atomic pair는 전부 안정적이었다.
+  - `search_catalog+like_mixed = 0.6 3/3 PASS`
+  - `search_catalog+bookmark_mixed = 0.6 3/3 PASS`
+  - `search_catalog+follow_mixed = 0.6 3/3 PASS`
+  - `search_catalog+block_mixed = 0.6 3/3 PASS`
+- `tag_search` 의 atomic pair도 전부 안정적이었다.
+  - `tag_search+like_mixed = 0.6 3/3 PASS`
+  - `tag_search+bookmark_mixed = 0.6 3/3 PASS`
+  - `tag_search+follow_mixed = 0.6 3/3 PASS`
+  - `tag_search+block_mixed = 0.6 3/3 PASS`
+- 예시 artifact:
+  - [search_catalog+like_mixed](/home/admin0/effective-disco/loadtest/results/read-relation-search_catalog+like_mixed-20260325-083639/scenario-search_catalog+like_mixed-20260325-083639/sub-stability-20260325-083639.md)
+  - [tag_search+like_mixed](/home/admin0/effective-disco/loadtest/results/read-relation-tag_search+like_mixed-20260325-083639/scenario-tag_search+like_mixed-20260325-084608/sub-stability-20260325-084608.md)
+- 따라서 최신 코드 기준으로는 `atomic search/tag read + atomic relation write` pair만으로는 `0.6` broad mixed 실패를 재현하지 못했다.
+- 이 결과는 최소 재현 조건이 다시 `browse_board_feed + (search/tag/sort) + relation_write` 수준의 더 큰 read pressure 조합으로 남아 있음을 뜻한다.
+- 정합성 불변식은 이 pair screen에서도 유지됐다. `duplicateKeyConflicts=0`, 관계 중복 row `0`, `postLike/comment/unread mismatch=0`.
+
 ## 1차에서 보장한 불변식
 
 ### 관계형 쓰기 경로
