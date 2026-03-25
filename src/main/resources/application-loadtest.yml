@@ -1,5 +1,13 @@
 spring:
   datasource:
+    # 문제 해결:
+    # loadtest 프로필이 기본 개발 DB(`effectivedisco`)를 그대로 쓰면
+    # k6가 만든 게시물/댓글이 개발 환경 데이터에 누적돼 측정 기준선이 계속 변한다.
+    # loadtest는 별도 DB를 기본값으로 사용해 실험 데이터를 애초에 분리한다.
+    url: jdbc:postgresql://localhost:5432/${APP_LOAD_TEST_DB_NAME:effectivedisco_loadtest}
+    username: ${APP_LOAD_TEST_DB_USERNAME:postgres}
+    password: ${APP_LOAD_TEST_DB_PASSWORD:4321}
+    driver-class-name: ${APP_LOAD_TEST_DB_DRIVER_CLASS_NAME:org.postgresql.Driver}
     hikari:
       data-source-properties:
         # 문제 해결:
@@ -33,6 +41,13 @@ app:
     # loadtest 프로필에서만 켜서 k6 계측에 필요한 최소 관측면만 노출한다.
     enabled: true
     sampling-interval-ms: ${APP_LOAD_TEST_SAMPLING_INTERVAL_MS:250}
+    datasource:
+      # 문제 해결:
+      # loadtest가 전용 DB가 아닌 다른 PostgreSQL DB를 가리키면
+      # cleanup이 있어도 개발 데이터와 측정 데이터가 섞여 결과 해석이 흔들린다.
+      # 지정한 DB 이름이 아니면 loadtest 프로필 기동 자체를 막아 실수를 조기에 차단한다.
+      enforce-isolation: ${APP_LOAD_TEST_ENFORCE_ISOLATION:true}
+      required-db-name: ${APP_LOAD_TEST_DB_NAME:effectivedisco_loadtest}
     postgres:
       application-name: ${APP_LOAD_TEST_PG_APPLICATION_NAME:effective-disco-loadtest}
       long-running-transaction-threshold-ms: ${APP_LOAD_TEST_PG_LONG_TRANSACTION_THRESHOLD_MS:500}

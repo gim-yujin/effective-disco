@@ -945,6 +945,13 @@ done
 
 ## 아직 남은 리스크
 
+### 측정 기준선 신뢰도
+
+- 2026-03-25 까지 `loadtest` 프로필은 개발 기본 DB와 같은 PostgreSQL 인스턴스를 공유했고, k6 `setup()` / write 시나리오는 실제 row 를 생성했다.
+- 이후 [cleanup-loadtest-data.sh](/home/admin0/effective-disco/loadtest/cleanup-loadtest-data.sh) 와 loadtest 전용 DB 분리를 도입해 이 문제를 막았다.
+- 따라서 cleanup/DB 분리 이전의 `p95/p99`, `stable factor`, soak 결과는 방향성 참고용으로는 의미가 있지만, "현재 기준선" 으로는 다시 측정하는 것이 맞다.
+- 반면 prefix 기반 SQL 정합성 검증과 테스트 기반 동시성 불변식은 데이터 누적의 영향을 상대적으로 덜 받으므로 여전히 참고 가치가 높다.
+
 ### 분산 환경
 
 - 현재 검증은 단일 DB + 단일 애플리케이션 프로세스 기준

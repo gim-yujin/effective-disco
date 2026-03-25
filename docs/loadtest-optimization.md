@@ -1959,3 +1959,64 @@ GRADLE_USER_HOME=/tmp/gradle-home ./gradlew test --no-daemon \
 
 - 기존에 남아 있는 과거 loadtest prefix 가 있다면 [cleanup-loadtest-data.sh](/home/admin0/effective-disco/loadtest/cleanup-loadtest-data.sh) 로 수동 정리
 - 가능하면 장기적으로는 개발 앱과 분리된 loadtest 전용 DB 또는 schema 로 실행 환경을 완전히 분리
+
+## 2026-03-25 loadtest 전용 DB 분리
+
+상태: 완료
+
+### 배경
+
+- prefix cleanup 을 넣어도, loadtest 프로필이 기본 개발 DB `effectivedisco` 를 바라보는 구조 자체는 여전히 위험했다.
+- cleanup 이전에 이미 누적된 row 가 남아 있을 수 있고, 직접 `k6 run` 또는 cleanup 실패 시 다시 같은 문제가 반복될 수 있다.
+- 따라서 "끝나고 지운다"보다 "처음부터 다른 DB를 쓴다"가 더 강한 해법이다.
+
+### 문제 해결
+
+- loadtest 프로필의 기본 datasource 를 개발 DB와 물리적으로 분리된 전용 DB로 바꾼다.
+- 동시에, 실수로 loadtest 프로필이 다시 개발 DB를 가리키면 기동 단계에서 즉시 실패하게 막는다.
+- 이렇게 해야 향후 baseline 재측정은 "공유 DB 오염"이 아닌 "현재 코드와 현재 시나리오"만 반영한 결과로 해석할 수 있다.
+
+### 구현
+
+- [application-loadtest.yml](/home/admin0/effective-disco/src/main/resources/application-loadtest.yml)
+  - `spring.datasource.url` 기본값을 `jdbc:postgresql://localhost:5432/effectivedisco_loadtest` 로 변경
+  - `APP_LOAD_TEST_DB_NAME`, `APP_LOAD_TEST_DB_USERNAME`, `APP_LOAD_TEST_DB_PASSWORD`, `APP_LOAD_TEST_DB_DRIVER_CLASS_NAME` 환경 변수 지원 추가
+  - `app.load-test.datasource.enforce-isolation=true`
+  - `app.load-test.datasource.required-db-name=effectivedisco_loadtest`
+- [LoadTestDatasourceIsolationGuard.java](/home/admin0/effective-disco/src/main/java/com/effectivedisco/loadtest/LoadTestDatasourceIsolationGuard.java)
+  - `loadtest` 프로필에서 실제 JDBC URL 의 DB 이름을 파싱
+  - 지정된 전용 DB 이름이 아니면 `IllegalStateException` 으로 기동 차단
+- [create-loadtest-db.sh](/home/admin0/effective-disco/loadtest/create-loadtest-db.sh)
+  - `effectivedisco_loadtest` DB 가 없으면 생성하는 보조 스크립트 추가
+- [loadtest/README.md](/home/admin0/effective-disco/loadtest/README.md)
+  - 전용 DB 생성, 환경 변수 override, 격리 가드 동작 방식 문서화
+
+### 검증
+
+테스트:
+
+```bash
+GRADLE_USER_HOME=/tmp/gradle-home ./gradlew test --no-daemon \
+  --tests "com.effectivedisco.loadtest.LoadTestDatasourceIsolationGuardTest"
+```
+
+결과:
+
+- [LoadTestDatasourceIsolationGuardTest.java](/home/admin0/effective-disco/src/test/java/com/effectivedisco/loadtest/LoadTestDatasourceIsolationGuardTest.java)
+  - JDBC URL 에서 DB 이름 파싱 확인
+  - `effectivedisco_loadtest` 는 허용
+  - `effectivedisco` 는 거부
+- shell 문법 검증:
+  - `bash -n loadtest/create-loadtest-db.sh`
+
+### 해석
+
+- 이번 변경은 성능 최적화가 아니라 측정 기준선을 보호하는 환경 격리 조치다.
+- cleanup 도입 이전의 성능 수치와 안정 factor 는 방향성 참고용으로만 보는 것이 맞다.
+- 앞으로 새 baseline 은 "전용 loadtest DB + 공식 runner + 자동 cleanup" 조합에서 다시 만들어야 한다.
+
+### 다음 액션
+
+- `./loadtest/create-loadtest-db.sh`
+- `SPRING_PROFILES_ACTIVE=loadtest ./gradlew bootRun`
+- 깨끗한 전용 DB 에서 single-profile matrix, pair matrix, broad mixed, soak baseline 을 순서대로 재측정
