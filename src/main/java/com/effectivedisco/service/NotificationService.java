@@ -152,6 +152,24 @@ public class NotificationService {
 
     /**
      * 문제 해결:
+     * 웹 알림 페이지의 hot path 는 상태 전환이 아니라 조회여야 한다.
+     * GET /notifications 에서는 현재 batch 만 읽고, read-all 은 별도 POST 액션에서만 실행해
+     * 페이지 진입 자체가 bulk update 병목을 만들지 않게 한다.
+     */
+    @Transactional(readOnly = true)
+    public Slice<NotificationResponse> getPage(String username, int page, int size) {
+        UserRepository.NotificationRecipientSnapshot recipient = findNotificationRecipient(username);
+        User user = userRepository.getReferenceById(recipient.getId());
+        PageRequest pageable = PageRequest.of(Math.max(page, 0), normalizeNotificationPageSize(size));
+        return loadTestStepProfiler.profile(
+                "notification.page.fetch",
+                true,
+                () -> notificationRepository.findResponseSliceByRecipientOrderByCreatedAtDesc(user, pageable)
+        );
+    }
+
+    /**
+     * 문제 해결:
      * 알림 페이지는 전체 목록을 렌더링하면서 사용자 행 잠금을 오래 쥘 필요가 없다.
      * 현재 page batch 는 잠금 없이 Slice 로 읽고, read-all 상태 전환만 짧게 잠가
      * notification.read-all 이 full list materialize + lock hold time 으로 pool 을 잡아먹지 않게 만든다.
@@ -172,6 +190,21 @@ public class NotificationService {
                 () -> markAllUnreadNotificationsRead(recipient)
         );
         return new SliceImpl<>(markNotificationsReadView(slice.getContent()), slice.getPageable(), slice.hasNext());
+    }
+
+    /**
+     * 문제 해결:
+     * 자동 read-all 대신 사용자가 명시적으로 요청했을 때만 상태 전환을 수행한다.
+     * 이렇게 해야 단순 조회 반복이 recipient 전체 unread row bulk update 로 증폭되지 않는다.
+     */
+    @Transactional
+    public long markAllAsRead(String username) {
+        UserRepository.NotificationRecipientSnapshot recipient = findNotificationRecipient(username);
+        return loadTestStepProfiler.profile(
+                "notification.read-all.web.transition",
+                true,
+                () -> markAllUnreadNotificationsRead(recipient)
+        );
     }
 
     /**

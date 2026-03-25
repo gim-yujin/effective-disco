@@ -255,6 +255,56 @@ class NotificationServiceTest {
     }
 
     @Test
+    void getPage_fetchesCurrentBatchWithoutReadTransition() {
+        User user = makeUser("alice");
+        NotificationResponse notification = new NotificationResponse(
+                4L,
+                NotificationType.MESSAGE,
+                "페이지 알림",
+                "/messages/1",
+                false,
+                LocalDateTime.now()
+        );
+
+        Slice<NotificationResponse> slice = new SliceImpl<>(
+                List.of(notification),
+                PageRequest.of(1, 20),
+                true
+        );
+
+        given(userRepository.findNotificationRecipientSnapshotByUsername("alice"))
+                .willReturn(Optional.of(notificationRecipient(11L, "alice", 1L)));
+        given(userRepository.getReferenceById(11L)).willReturn(user);
+        given(notificationRepository.findResponseSliceByRecipientOrderByCreatedAtDesc(user, PageRequest.of(1, 20)))
+                .willReturn(slice);
+
+        Slice<NotificationResponse> result = notificationService.getPage("alice", 1, 20);
+
+        assertThat(result.getContent()).hasSize(1);
+        assertThat(result.getContent()).anyMatch(n -> !n.isRead());
+        verify(notificationRepository).findResponseSliceByRecipientOrderByCreatedAtDesc(user, PageRequest.of(1, 20));
+        verify(notificationRepository, never()).markAllAsReadUpToId(anyLong(), anyLong());
+    }
+
+    @Test
+    void markAllAsRead_executesTransitionWithoutFetchingList() {
+        given(userRepository.findNotificationRecipientSnapshotByUsername("alice"))
+                .willReturn(Optional.of(notificationRecipient(11L, "alice", 2L)));
+        given(notificationRepository.findLatestNotificationIdByRecipientId(11L)).willReturn(5L);
+        given(notificationRepository.markAllAsReadUpToId(11L, 5L)).willReturn(2);
+        given(userRepository.findUnreadNotificationCountByUsername("alice")).willReturn(Optional.of(0L));
+
+        long transitioned = notificationService.markAllAsRead("alice");
+
+        assertThat(transitioned).isEqualTo(2);
+        verify(notificationRepository, never()).findResponseByRecipientOrderByCreatedAtDesc(any());
+        verify(notificationRepository, never()).findResponseSliceByRecipientOrderByCreatedAtDesc(any(), any());
+        verify(notificationRepository).markAllAsReadUpToId(11L, 5L);
+        verify(userRepository).decrementUnreadNotificationCount(11L, 2L);
+        verify(sseEmitterService).sendCount("alice", 0L);
+    }
+
+    @Test
     void getAndMarkAllReadPage_fetchesCurrentBatchWithoutFullListMaterialize() {
         User user = makeUser("alice");
         NotificationResponse notification = new NotificationResponse(

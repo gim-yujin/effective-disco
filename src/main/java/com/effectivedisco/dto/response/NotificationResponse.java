@@ -23,7 +23,7 @@ public class NotificationResponse {
     @Schema(description = "클릭 시 이동할 URL", example = "/posts/42#comments")
     private final String link;
 
-    @Schema(description = "읽음 여부 (알림 목록 페이지 방문 시 true 로 일괄 변경됨)", example = "false")
+    @Schema(description = "읽음 여부", example = "false")
     private final boolean read;
 
     @Schema(description = "알림 생성 시각")
@@ -56,8 +56,8 @@ public class NotificationResponse {
 
     /**
      * 문제 해결:
-     * 알림 페이지는 현재 batch 를 먼저 읽고 나서 read-all 상태 전환을 수행한다.
-     * 이미 읽음 처리된 결과를 즉시 렌더링할 수 있도록 DTO view 만 읽음 상태로 덮어쓴다.
+     * 명시적 read-all 이후 현재 view 에 읽음 상태를 즉시 반영해야 할 때
+     * 엔티티를 다시 materialize 하지 않고 DTO view 만 읽음 상태로 덮어쓴다.
      */
     public NotificationResponse asRead() {
         if (read) {

@@ -18,8 +18,10 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.context.WebApplicationContext;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.csrf;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.user;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
 /**
@@ -33,7 +35,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  *   미인증 접근은 /login 으로 리다이렉트되어야 한다.
  *
  * 읽음 처리:
- *   목록 페이지 방문 시 미읽음 알림이 모두 읽음으로 표시된다.
+ *   목록 페이지 조회와 "모두 읽음" 액션은 분리된다.
  */
 @SpringBootTest
 @ActiveProfiles("test")
@@ -82,23 +84,20 @@ class NotificationWebControllerTest {
                 .andExpect(status().isOk())
                 .andExpect(model().attributeExists("notifications"))
                 .andExpect(model().attributeExists("notificationPage"))
+                .andExpect(model().attributeExists("unreadCount"))
                 .andExpect(view().name("notifications/list"));
     }
 
     // ── 읽음 처리 ────────────────────────────────────────────
 
     /**
-     * 알림 목록 페이지를 방문하면 미읽음 알림이 모두 읽음으로 표시된다.
-     *
-     * NotificationService.getAndMarkAllRead():
-     *   1. 전체 알림 목록 조회
-     *   2. notificationRepository.markAllAsRead(user) — @Modifying JPQL 일괄 업데이트
-     *   3. SSE로 unreadCount=0 push
-     *
-     * 방문 후 countByRecipientAndIsReadFalse 가 0 이어야 한다.
+     * 문제 해결:
+     * GET /notifications 는 목록 조회만 해야 한다.
+     * 단순 페이지 방문이 bulk update 를 발생시키면 장시간 soak 에서 read-all 이 병목이 되므로,
+     * 조회 후에도 unread row 는 그대로 남아 있어야 한다.
      */
     @Test
-    void notifications_marksUnreadAsRead() throws Exception {
+    void notifications_getDoesNotMarkUnreadAsRead() throws Exception {
         // 미읽음 알림 1건 생성 (isRead = false 기본값)
         notificationRepository.save(Notification.builder()
                 .recipient(testUser)
@@ -114,7 +113,34 @@ class NotificationWebControllerTest {
         mockMvc.perform(get("/notifications").with(user(testUser.getUsername())))
                 .andExpect(status().isOk());
 
-        // 방문 후: 미읽음 알림 0건 (모두 읽음 처리됨)
+        // 방문 후에도 unread 는 그대로 유지된다.
+        assertEquals(1L, notificationRepository.countByRecipientAndIsReadFalse(testUser));
+    }
+
+    /**
+     * 문제 해결:
+     * "모두 읽음" 은 명시적 POST 액션으로만 수행한다.
+     * 사용자가 버튼을 눌렀을 때만 unread row 가 읽음 처리되고, 다시 목록으로 리다이렉트되어야 한다.
+     */
+    @Test
+    void notifications_markAllReadActionMarksUnreadAndRedirects() throws Exception {
+        notificationRepository.save(Notification.builder()
+                .recipient(testUser)
+                .type(NotificationType.COMMENT)
+                .message("테스트 댓글 알림 메시지입니다.")
+                .link("/posts/1#comments")
+                .build());
+
+        assertEquals(1L, notificationRepository.countByRecipientAndIsReadFalse(testUser));
+
+        mockMvc.perform(post("/notifications/read-all")
+                        .param("page", "1")
+                        .param("size", "20")
+                        .with(user(testUser.getUsername()))
+                        .with(csrf()))
+                .andExpect(status().is3xxRedirection())
+                .andExpect(redirectedUrl("/notifications?page=1&size=20"));
+
         assertEquals(0L, notificationRepository.countByRecipientAndIsReadFalse(testUser));
     }
 
