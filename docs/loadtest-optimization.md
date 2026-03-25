@@ -2755,3 +2755,90 @@ GRADLE_USER_HOME=/tmp/gradle-home ./gradlew test --no-daemon
 - 실제 race 지점은 [PostService.java](/home/admin0/effective-disco/src/main/java/com/effectivedisco/service/PostService.java#L784) 의 `resolveTagsForWrite()` 이다.
 - 현재 구현은 `findAllByNameIn()` 뒤 missing tag 를 `saveAll()` 하므로, broad mixed 의 `writePostsAndComments()` 가 같은 태그 `write` 를 동시에 생성할 때 duplicate-key 가 발생한다.
 - 따라서 다음 최적화 1순위는 relation write 가 아니라 `tag resolve/create` 를 멱등화하는 것이다.
+
+## 2026-03-25 태그 해석 멱등화
+
+상태: 구현 완료
+
+### 문제
+
+- clean broad mixed `0.9 / 15분` 재측정에서
+  - `duplicateKeyConflicts = 1`
+  - `requestSignature = POST /api/posts`
+  - `constraint = tags.name unique`
+  로 좁혀졌다.
+- [PostService.java](/home/admin0/effective-disco/src/main/java/com/effectivedisco/service/PostService.java#L784) 의
+  `resolveTagsForWrite()` 는
+  `findAllByNameIn() -> missing tag saveAll()` 구조라서
+  같은 새 태그를 동시에 만들 때 duplicate-key race 가 났다.
+
+### 변경
+
+- [PostService.java](/home/admin0/effective-disco/src/main/java/com/effectivedisco/service/PostService.java)
+  - missing tag 를 직접 저장하지 않고,
+    태그 생성 전용 서비스 호출 뒤 최종 태그 집합을 다시 조회하도록 변경했다.
+- [TagWriteService.java](/home/admin0/effective-disco/src/main/java/com/effectivedisco/service/TagWriteService.java)
+  - missing tag 생성만 짧은 새 트랜잭션으로 분리했다.
+  - duplicate-key 는 흡수하고, 최종 재조회에서 이미 생성된 태그를 합치게 했다.
+- 테스트:
+  - [WritePathConcurrencyTest.java](/home/admin0/effective-disco/src/test/java/com/effectivedisco/service/WritePathConcurrencyTest.java)
+  - [PostServiceTest.java](/home/admin0/effective-disco/src/test/java/com/effectivedisco/service/PostServiceTest.java)
+  - [PostCreateOptimizationIntegrationTest.java](/home/admin0/effective-disco/src/test/java/com/effectivedisco/service/PostCreateOptimizationIntegrationTest.java)
+
+### 검증
+
+- 같은 새 태그로 게시물 작성 `2건`을 동시에 실행해도
+  태그 row 는 `1개`, 게시물은 `2개` 모두 생성되는 회귀 테스트를 추가했다.
+- 전체 `GRADLE_USER_HOME=/tmp/gradle-home ./gradlew test --no-daemon` 통과
+
+### 해석
+
+- broad mixed 에 남아 있던 마지막 duplicate-key failure 는
+  relation write 가 아니라 태그 생성 race 였다.
+- 이번 변경은 게시물 작성 경로를 실패시키던 unique 충돌을
+  게시물 생성 성공 + 최종 태그 재조회 모델로 바꿨다.
+
+## 2026-03-25 clean broad mixed `0.9 / 15분` 재재측정
+
+상태: 완료
+
+### 실행 조건
+
+- clean `effectivedisco_loadtest` DB `DROP/CREATE`
+- fresh `loadtest` 앱
+- `SOAK_FACTOR=0.9`
+- `SOAK_DURATION=15m`
+- `WARMUP_DURATION=2m`
+
+### 결과
+
+- suite:
+  [soak-20260325-203507.md](/home/admin0/effective-disco/loadtest/results/soak-20260325-203507.md)
+- server:
+  [soak-20260325-203507-server.json](/home/admin0/effective-disco/loadtest/results/soak-20260325-203507-server.json)
+- sql:
+  [soak-20260325-203507-sql.tsv](/home/admin0/effective-disco/loadtest/results/soak-20260325-203507-sql.tsv)
+
+숫자:
+
+- `status = PASS`
+- `p95 = 246.53ms`
+- `p99 = 314.19ms`
+- `unexpected_response_rate = 0.0000`
+- `duplicateKeyConflicts = 0`
+- `dbPoolTimeouts = 0`
+- `unreadNotificationMismatchUsers = 0`
+
+주요 profile:
+
+- `notification.read-page.summary.transition avgWall = 2.93ms`, `avgSql = 1.98ms`
+- `notification.store avgWall = 2.53ms`, `avgSql = 1.95ms`
+- `post.list.browse.rows avgWall = 4.53ms`, `avgSql = 4.02ms`
+- `post.list.search.rows avgWall = 3.76ms`, `avgSql = 3.31ms`
+
+### 해석
+
+- 태그 생성 race 수정 후, broad mixed `0.9 / 15분` 은 clean baseline 기준 다시 `PASS` 가 됐다.
+- `duplicateKeyConflicts`, `dbPoolTimeouts`, `unread counter mismatch` 가 모두 `0` 으로 정리됐다.
+- 즉 현재 broad mixed 의 최신 clean 기준선은
+  “notification recovery + tag idempotency” 이후 정상 상태로 회복된 것으로 본다.
