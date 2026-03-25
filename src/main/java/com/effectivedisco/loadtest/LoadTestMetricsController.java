@@ -19,6 +19,7 @@ import org.springframework.web.bind.annotation.RestController;
 public class LoadTestMetricsController {
 
     private final LoadTestMetricsService loadTestMetricsService;
+    private final LoadTestDataCleanupService loadTestDataCleanupService;
 
     @GetMapping("/metrics")
     public LoadTestMetricsSnapshot metrics() {
@@ -29,4 +30,31 @@ public class LoadTestMetricsController {
     public LoadTestMetricsSnapshot reset() {
         return loadTestMetricsService.reset();
     }
+
+    @PostMapping("/cleanup")
+    public LoadTestCleanupResponse cleanup(@org.springframework.web.bind.annotation.RequestBody LoadTestCleanupRequest request) {
+        LoadTestDataCleanupService.CleanupSummary summary =
+                loadTestDataCleanupService.cleanupByPrefix(request.prefix());
+        return new LoadTestCleanupResponse(
+                summary.prefix(),
+                summary.matchedUsers(),
+                summary.matchedPosts(),
+                summary.matchedComments(),
+                summary.matchedNotifications(),
+                summary.matchedMessages(),
+                summary.matchedPasswordResetTokens()
+        );
+    }
+
+    public record LoadTestCleanupRequest(String prefix) {}
+
+    public record LoadTestCleanupResponse(
+            String prefix,
+            long matchedUsers,
+            long matchedPosts,
+            long matchedComments,
+            long matchedNotifications,
+            long matchedMessages,
+            long matchedPasswordResetTokens
+    ) {}
 }

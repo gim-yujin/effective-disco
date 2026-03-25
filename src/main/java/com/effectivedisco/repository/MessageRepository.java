@@ -30,4 +30,6 @@ public interface MessageRepository extends JpaRepository<Message, Long> {
     @Modifying
     @Query("DELETE FROM Message m WHERE m.sender = :user OR m.recipient = :user")
     void deleteAllByUser(@Param("user") User user);
+
+    long countBySenderUsernameStartingWithOrRecipientUsernameStartingWith(String senderPrefix, String recipientPrefix);
 }

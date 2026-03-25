@@ -117,5 +117,7 @@ public interface CommentRepository extends JpaRepository<Comment, Long> {
     /** 특정 사용자의 총 댓글·대댓글 수 (프로필 통계 표시용) */
     long countByAuthor(User author);
 
+    long countByAuthorUsernameStartingWith(String prefix);
+
     long countByPostIdAndParentIsNull(Long postId);
 }

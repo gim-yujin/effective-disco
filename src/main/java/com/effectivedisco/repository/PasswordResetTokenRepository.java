@@ -16,4 +16,6 @@ public interface PasswordResetTokenRepository extends JpaRepository<PasswordRese
      * 재발급 요청 시 이전 토큰을 먼저 정리해 혼선을 방지한다.
      */
     void deleteByUser(User user);
+
+    long countByUserUsernameStartingWith(String prefix);
 }

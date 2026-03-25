@@ -116,6 +116,13 @@ for run in $(seq 1 "$RUNS"); do
   curl -fsS "$BASE_URL/internal/load-test/metrics" >"$server_metrics_file"
   psql -v ON_ERROR_STOP=1 -v loadtest_prefix="$prefix" -F $'\t' -At -f "$SQL_CHECK_FILE" >"$sql_snapshot_file"
 
+  # 문제 해결:
+  # consistency stress는 run별 prefix row를 검증한 뒤 정리하지 않으면
+  # 다음 run의 기준선과 로컬 브라우징 데이터가 계속 오염된다.
+  curl -fsS -X POST "$BASE_URL/internal/load-test/cleanup" \
+    -H 'Content-Type: application/json' \
+    -d "{\"prefix\":\"$prefix\"}" >/dev/null
+
   IFS=$'\t' read -r scope_user_count scope_post_count scope_notification_count duplicate_post_likes duplicate_bookmarks duplicate_follows duplicate_blocks post_like_mismatch_posts negative_like_count_posts post_comment_mismatch_posts negative_comment_count_posts unread_notification_mismatch_users negative_unread_notification_users <"$sql_snapshot_file"
 
   http_p95="$(extract_summary_value "$log_file" "http_req_duration" "p95")"

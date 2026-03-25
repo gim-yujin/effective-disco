@@ -1880,3 +1880,82 @@ run detail 핵심:
 - `browse_board_feed + tag_search + like_mixed`
 - `browse_board_feed + sort_catalog + like_mixed`
 - 그리고 같은 패턴으로 `bookmark/follow/block` 까지 비교해, 현재 코드 기준 최소 3-way 재현 조합을 확정
+
+## 2026-03-25 loadtest 데이터 cleanup 자동화
+
+상태: 완료
+
+### 배경
+
+- local PostgreSQL `effectivedisco` 데이터베이스를 개발 앱과 `loadtest` 프로필이 함께 사용하고 있었다.
+- k6 `setup()` 과 `write_posts_and_comments` 는 실제 회원/게시물/댓글을 생성한다.
+- 그런데 기존 runner 들은 `/internal/load-test/reset` 으로 metrics 만 초기화하고, 실행이 만든 row 는 정리하지 않았다.
+- 그래서 k6 실행 후 `./gradlew bootRun` 으로 기본 앱을 띄워 게시물 개수를 보면, 부하 테스트를 돌릴수록 게시물 수가 계속 증가하는 현상이 생겼다.
+
+### 문제 해결
+
+- 부하 테스트 결과 파일은 남기되, 같은 `LOADTEST_PREFIX` 범위의 실제 row 는 측정 직후 회수해야 한다.
+- 그렇지 않으면:
+  - 다음 부하 테스트의 데이터 분포와 기준선이 이전 실행 row 에 오염되고
+  - 브라우저로 수동 확인할 때도 게시물 수가 계속 증가해 원인 분석이 흐려진다.
+- 특히 이 프로젝트는 loadtest 전용 DB 를 아직 분리하지 않았기 때문에, prefix cleanup 은 최소한의 위생 장치다.
+
+### 구현
+
+- [LoadTestDataCleanupService.java](/home/admin0/effective-disco/src/main/java/com/effectivedisco/loadtest/LoadTestDataCleanupService.java)
+  - `username startsWith(prefix)` 사용자 집합을 기준으로 loadtest 데이터 범위를 찾는다.
+  - password reset token, notification, message, post_like, report, block 을 먼저 지우고, 마지막에 `User` 를 삭제해 cascade 로 post/comment 를 회수한다.
+- [LoadTestMetricsController.java](/home/admin0/effective-disco/src/main/java/com/effectivedisco/loadtest/LoadTestMetricsController.java)
+  - `/internal/load-test/cleanup` endpoint 를 추가했다.
+  - 응답에는 `matchedUsers`, `matchedPosts`, `matchedComments`, `matchedNotifications`, `matchedMessages`, `matchedPasswordResetTokens` 를 포함해 실제 cleanup 범위를 확인할 수 있게 했다.
+- 저장소 count/query 보강:
+  - [UserRepository.java](/home/admin0/effective-disco/src/main/java/com/effectivedisco/repository/UserRepository.java)
+  - [PostRepository.java](/home/admin0/effective-disco/src/main/java/com/effectivedisco/repository/PostRepository.java)
+  - [CommentRepository.java](/home/admin0/effective-disco/src/main/java/com/effectivedisco/repository/CommentRepository.java)
+  - [NotificationRepository.java](/home/admin0/effective-disco/src/main/java/com/effectivedisco/repository/NotificationRepository.java)
+  - [MessageRepository.java](/home/admin0/effective-disco/src/main/java/com/effectivedisco/repository/MessageRepository.java)
+  - [PasswordResetTokenRepository.java](/home/admin0/effective-disco/src/main/java/com/effectivedisco/repository/PasswordResetTokenRepository.java)
+- 공식 runner 자동 cleanup:
+  - [run-bbs-load.sh](/home/admin0/effective-disco/loadtest/run-bbs-load.sh)
+  - [run-bbs-soak.sh](/home/admin0/effective-disco/loadtest/run-bbs-soak.sh)
+  - [run-bbs-ramp-up.sh](/home/admin0/effective-disco/loadtest/run-bbs-ramp-up.sh)
+  - [run-bbs-consistency-stress.sh](/home/admin0/effective-disco/loadtest/run-bbs-consistency-stress.sh)
+  - metrics / SQL snapshot 저장 뒤 같은 prefix 를 `/internal/load-test/cleanup` 으로 자동 회수한다.
+- 수동 cleanup 도구:
+  - [cleanup-loadtest-data.sh](/home/admin0/effective-disco/loadtest/cleanup-loadtest-data.sh)
+  - 과거에 남아 있던 prefix 들도 안전하게 일괄 정리할 수 있다.
+
+### 검증
+
+테스트:
+
+```bash
+GRADLE_USER_HOME=/tmp/gradle-home ./gradlew test --no-daemon \
+  --tests "com.effectivedisco.loadtest.LoadTestDataCleanupServiceTest" \
+  --tests "com.effectivedisco.loadtest.LoadTestMetricsControllerTest"
+```
+
+결과:
+
+- [LoadTestDataCleanupServiceTest.java](/home/admin0/effective-disco/src/test/java/com/effectivedisco/loadtest/LoadTestDataCleanupServiceTest.java)
+  - prefix 사용자 2명, 게시물/댓글/좋아요/알림/메시지/token 을 만든 뒤 cleanup 시 실제 row 가 함께 제거되는지 검증
+- [LoadTestMetricsControllerTest.java](/home/admin0/effective-disco/src/test/java/com/effectivedisco/loadtest/LoadTestMetricsControllerTest.java)
+  - `/internal/load-test/cleanup` endpoint 응답 스키마 검증
+- shell 문법 검증:
+  - `bash -n loadtest/run-bbs-load.sh`
+  - `bash -n loadtest/run-bbs-soak.sh`
+  - `bash -n loadtest/run-bbs-ramp-up.sh`
+  - `bash -n loadtest/run-bbs-consistency-stress.sh`
+  - `bash -n loadtest/cleanup-loadtest-data.sh`
+
+### 해석
+
+- 이번 변경은 p95/p99 를 직접 낮춘 최적화는 아니다.
+- 대신 "측정이 끝난 뒤 DB 가 원래 상태로 돌아오지 않는다"는 실험 위생 문제를 해결했다.
+- 앞으로 공식 runner 결과는 `LOADTEST_PREFIX` 기준 cleanup 이 자동 수행된 상태를 전제로 해석하는 것이 맞다.
+- 반대로 이 변경 전의 직접 `k6 run` 실행이나 cleanup 이전 잔존 데이터는, 게시물 수 증가와 데이터 분포 변형을 유발할 수 있으므로 해석 시 주의가 필요하다.
+
+### 다음 액션
+
+- 기존에 남아 있는 과거 loadtest prefix 가 있다면 [cleanup-loadtest-data.sh](/home/admin0/effective-disco/loadtest/cleanup-loadtest-data.sh) 로 수동 정리
+- 가능하면 장기적으로는 개발 앱과 분리된 loadtest 전용 DB 또는 schema 로 실행 환경을 완전히 분리

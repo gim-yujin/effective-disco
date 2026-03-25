@@ -14,6 +14,14 @@ SPRING_PROFILES_ACTIVE=loadtest ./gradlew bootRun
 ./loadtest/run-bbs-load.sh
 ```
 
+공식 runner들은 결과 스냅샷을 저장한 뒤 같은 `LOADTEST_PREFIX` 데이터를 자동으로 정리한다.
+이미 남아 있는 과거 loadtest 데이터는 다음처럼 prefix 기준으로 수동 정리할 수 있다.
+
+```bash
+./loadtest/cleanup-loadtest-data.sh ltb03250910
+./loadtest/cleanup-loadtest-data.sh ltr03250910s01,ltr03250910s02
+```
+
 반복 스트레스 + SQL 정합성 검증:
 
 ```bash
@@ -198,3 +206,9 @@ RELATION_PROFILES=like_mixed,bookmark_mixed,follow_mixed,block_mixed \
 - board browse 는 `latest/likes/comments` 정렬을 지원한다.
 - `search_catalog` 는 keyword search 전용이고, `tag_search` 와 `sort_catalog` 는 분리된 scenario 로 측정한다.
 - keyword/tag search 는 `latest` 정렬만 지원하며, hot path 에서는 `count(*)` 를 제거한다.
+
+## 데이터 정리 주의사항
+
+- `setup()` 과 `write_posts_and_comments` 는 실제 회원/게시물/댓글을 생성한다.
+- 공식 runner는 metrics / SQL snapshot 저장 후 `/internal/load-test/cleanup` 으로 같은 prefix 데이터를 자동 회수한다.
+- `k6 run loadtest/k6/bbs-load.js` 를 직접 실행하면 자동 cleanup이 없으므로 `LOADTEST_PREFIX` 를 고정한 뒤 [cleanup-loadtest-data.sh](/home/admin0/effective-disco/loadtest/cleanup-loadtest-data.sh) 로 수동 정리하는 편이 안전하다.

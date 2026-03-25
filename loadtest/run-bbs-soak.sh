@@ -167,6 +167,13 @@ curl -fsS "$BASE_URL/internal/load-test/metrics" >"$SERVER_METRICS_FILE"
 printf '{"timestamp":"%s","metrics":%s}\n' "$(date -Iseconds)" "$(cat "$SERVER_METRICS_FILE")" >>"$TIMELINE_FILE"
 psql -v ON_ERROR_STOP=1 -v loadtest_prefix="$LOADTEST_PREFIX" -F $'\t' -At -f "$SQL_CHECK_FILE" >"$SQL_SNAPSHOT_FILE"
 
+# 문제 해결:
+# soak는 실행 prefix 범위 데이터를 SQL 스냅샷으로 검증한 직후 정리해야
+# 장시간 테스트를 여러 번 반복해도 개발 DB의 게시물 수가 계속 누적되지 않는다.
+curl -fsS -X POST "$BASE_URL/internal/load-test/cleanup" \
+  -H 'Content-Type: application/json' \
+  -d "{\"prefix\":\"$LOADTEST_PREFIX\"}" >/dev/null
+
 IFS=$'\t' read -r scope_user_count scope_post_count scope_notification_count duplicate_post_likes duplicate_bookmarks duplicate_follows duplicate_blocks post_like_mismatch_posts negative_like_count_posts post_comment_mismatch_posts negative_comment_count_posts unread_notification_mismatch_users negative_unread_notification_users <"$SQL_SNAPSHOT_FILE"
 
 http_p95="$(extract_summary_value "$LOG_FILE" "http_req_duration" "p95")"

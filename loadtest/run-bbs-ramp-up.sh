@@ -198,6 +198,13 @@ for index in "${!stage_factor_list[@]}"; do
   curl -fsS "$BASE_URL/internal/load-test/metrics" >"$server_metrics_file"
   psql -v ON_ERROR_STOP=1 -v loadtest_prefix="$prefix" -F $'\t' -At -f "$SQL_CHECK_FILE" >"$sql_snapshot_file"
 
+  # 문제 해결:
+  # ramp-up은 stage별 prefix 데이터를 SQL로 검증한 뒤 곧바로 치워야
+  # 다음 stage와 다음 suite가 이전 stage가 만든 게시물/댓글을 끌고 가지 않는다.
+  curl -fsS -X POST "$BASE_URL/internal/load-test/cleanup" \
+    -H 'Content-Type: application/json' \
+    -d "{\"prefix\":\"$prefix\"}" >/dev/null
+
   IFS=$'\t' read -r scope_user_count scope_post_count scope_notification_count duplicate_post_likes duplicate_bookmarks duplicate_follows duplicate_blocks post_like_mismatch_posts negative_like_count_posts post_comment_mismatch_posts negative_comment_count_posts unread_notification_mismatch_users negative_unread_notification_users <"$sql_snapshot_file"
 
   http_p95="$(extract_summary_value "$log_file" "http_req_duration" "p95")"

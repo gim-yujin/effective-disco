@@ -97,6 +97,13 @@ public interface UserRepository extends JpaRepository<User, Long> {
     /** 관리자 패널: 가입일 최신순 전체 사용자 목록 */
     List<User> findAllByOrderByCreatedAtDesc();
 
+    /**
+     * 문제 해결:
+     * load test가 만든 데이터는 실행 prefix를 username 앞에 붙여 구분한다.
+     * cleanup 단계에서 같은 prefix 범위 사용자만 다시 찾아 안전하게 회수한다.
+     */
+    List<User> findByUsernameStartingWithOrderByIdAsc(String prefix);
+
     /** 비밀번호 재설정: 이메일로 사용자 조회 */
     Optional<User> findByEmail(String email);
 

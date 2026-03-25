@@ -61,6 +61,8 @@ public interface NotificationRepository extends JpaRepository<Notification, Long
     /** 읽지 않은 알림 수 (헤더 뱃지용) */
     long countByRecipientAndIsReadFalse(User recipient);
 
+    long countByRecipientUsernameStartingWith(String prefix);
+
     boolean existsByRecipientAndIsReadFalse(User recipient);
 
     /** 수신자의 모든 미읽음 알림을 일괄 읽음 처리 */

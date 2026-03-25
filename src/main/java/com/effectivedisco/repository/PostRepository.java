@@ -56,6 +56,8 @@ public interface PostRepository extends JpaRepository<Post, Long>, PostRepositor
         String getImageUrl();
     }
 
+    long countByAuthorUsernameStartingWith(String prefix);
+
     // ══════════════════════════════════════════════════════
     // 목록/검색 projection 쿼리
     // ══════════════════════════════════════════════════════
