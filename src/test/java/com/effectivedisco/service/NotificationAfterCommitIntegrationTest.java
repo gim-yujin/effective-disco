@@ -162,6 +162,53 @@ class NotificationAfterCommitIntegrationTest {
                 .isEqualTo(unreadRows);
     }
 
+    @Test
+    void notificationCreateAndMarkPageRead_concurrentRequests_keepUnreadCounterAlignedWithUnreadRows() throws Exception {
+        User recipient = saveUser("recipient");
+        for (int i = 0; i < 12; i++) {
+            notificationService.storeNotificationAfterCommit(new NotificationRequestedEvent(
+                    recipient.getUsername(),
+                    NotificationType.MESSAGE,
+                    "seed-" + i,
+                    "/messages/seed-" + i
+            ));
+        }
+
+        List<ThrowingRunnable> actions = new ArrayList<>();
+        for (int writer = 0; writer < 4; writer++) {
+            int writerIndex = writer;
+            actions.add(() -> {
+                for (int i = 0; i < 10; i++) {
+                    notificationService.storeNotificationAfterCommit(new NotificationRequestedEvent(
+                            recipient.getUsername(),
+                            NotificationType.MESSAGE,
+                            "page-writer-" + writerIndex + "-" + i,
+                            "/messages/page-writer-" + writerIndex + "-" + i
+                    ));
+                    Thread.yield();
+                }
+            });
+        }
+        for (int reader = 0; reader < 3; reader++) {
+            actions.add(() -> {
+                for (int i = 0; i < 8; i++) {
+                    notificationService.markPageAsReadForLoadTest(recipient.getUsername(), 0, 20);
+                    Thread.yield();
+                }
+            });
+        }
+
+        runConcurrently(actions);
+
+        User persistedRecipient = userRepository.findByUsername(recipient.getUsername()).orElseThrow();
+        long unreadRows = notificationRepository.countByRecipientAndIsReadFalse(persistedRecipient);
+        long unreadCounter = userRepository.findUnreadNotificationCountByUsername(recipient.getUsername()).orElse(0L);
+
+        assertThat(unreadCounter)
+                .as("문제 해결 검증: read-page 와 새 알림 생성이 동시에 일어나도 unread counter는 실제 unread row 수와 일치해야 한다")
+                .isEqualTo(unreadRows);
+    }
+
     private User saveUser(String username) {
         return userRepository.save(User.builder()
                 .username(username)

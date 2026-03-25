@@ -109,24 +109,24 @@ public class NotificationService {
      */
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public void storeNotificationAfterCommit(NotificationRequestedEvent event) {
-        UserRepository.NotificationRecipientSnapshot recipient =
-                userRepository.findNotificationRecipientSnapshotByUsername(event.recipientUsername()).orElse(null);
+        User recipient = userRepository.findByUsernameForUpdate(event.recipientUsername()).orElse(null);
         if (recipient == null) {
             return;
         }
 
         Notification notification = Notification.builder()
-                .recipient(userRepository.getReferenceById(recipient.getId()))
+                .recipient(recipient)
                 .type(event.type())
                 .message(event.message())
                 .link(event.link())
                 .build();
         notificationRepository.save(notification);
         // 문제 해결:
-        // notification.store 의 실제 병목은 unread counter 자체보다 "수신자 User 행 전체를 FOR UPDATE 로 잠그는 것"이었다.
-        // 수신자 snapshot + 원자 UPDATE 로 unread 값을 올리면 알림 생성과 read-all 이 같은 사용자에서 부딪혀도
-        // row hydration / lock hold time 을 줄이면서 counter 정합성은 유지할 수 있다.
-        userRepository.incrementUnreadNotificationCount(recipient.getId());
+        // notification unread counter 의 핵심 요구사항은 속도보다 정합성이다.
+        // store/read-page/read-all 이 같은 recipient 에서 서로 엇갈릴 때 stale snapshot 으로 +1/-N 을 적용하면
+        // counter drift 가 남는다. 수신자 행을 직렬화한 상태에서 실제 unread row 수로 refresh 하면
+        // mutation 경합 후에도 counter 가 항상 DB 실값으로 수렴한다.
+        userRepository.refreshUnreadNotificationCount(recipient.getId());
         scheduleUnreadCountRefreshAfterCommit(recipient.getUsername());
     }
 
@@ -309,70 +309,47 @@ public class NotificationService {
     }
 
     private int markNotificationPageRead(UserRepository.NotificationRecipientSnapshot recipient, int page, int size) {
+        User lockedRecipient = userRepository.findByIdForUpdate(recipient.getId())
+                .orElseThrow(() -> new UsernameNotFoundException("사용자를 찾을 수 없습니다: " + recipient.getUsername()));
         PageRequest pageable = PageRequest.of(Math.max(page, 0), normalizeNotificationPageSize(size));
         Slice<NotificationPageState> slice =
-                notificationRepository.findPageStateSliceByRecipientIdOrderByCreatedAtDesc(recipient.getId(), pageable);
+                notificationRepository.findPageStateSliceByRecipientIdOrderByCreatedAtDesc(lockedRecipient.getId(), pageable);
         List<Long> unreadIds = slice.getContent().stream()
                 .filter(notification -> !notification.read())
                 .map(NotificationPageState::id)
                 .toList();
 
         if (unreadIds.isEmpty()) {
-            scheduleUnreadCountRefreshAfterCommit(recipient.getUsername());
+            userRepository.refreshUnreadNotificationCount(lockedRecipient.getId());
+            scheduleUnreadCountRefreshAfterCommit(lockedRecipient.getUsername());
             return 0;
         }
 
         // 문제 해결:
-        // "현재 페이지 읽음"은 visible batch 의 unread id 만 update 해야 한다.
-        // 그리고 counter 는 delta decrement 대신 DB의 실제 unread row 수로 다시 맞춘다.
-        // 이렇게 해야 read-page 와 notification.store 가 같은 사용자에서 교차해도
-        // unread counter drift 없이 작은 IN update + 단일 counter refresh 로 수렴할 수 있다.
-        int transitionedCount = notificationRepository.markPageAsReadByIds(recipient.getId(), unreadIds);
-        if (transitionedCount > 0 || recipient.getUnreadNotificationCount() > 0) {
-            userRepository.refreshUnreadNotificationCount(recipient.getId());
-        }
-        scheduleUnreadCountRefreshAfterCommit(recipient.getUsername());
+        // "현재 페이지 읽음"도 notification.store/read-all 과 같은 recipient 잠금 아래에서 끝내야
+        // 페이지 unread id 계산, row update, counter refresh 가 하나의 일관된 순서로 보장된다.
+        int transitionedCount = notificationRepository.markPageAsReadByIds(lockedRecipient.getId(), unreadIds);
+        userRepository.refreshUnreadNotificationCount(lockedRecipient.getId());
+        scheduleUnreadCountRefreshAfterCommit(lockedRecipient.getUsername());
         return transitionedCount;
     }
 
     private long markAllUnreadNotificationsRead(UserRepository.NotificationRecipientSnapshot recipient) {
-        Long cutoffId = notificationRepository.findLatestNotificationIdByRecipientId(recipient.getId());
+        User lockedRecipient = userRepository.findByIdForUpdate(recipient.getId())
+                .orElseThrow(() -> new UsernameNotFoundException("사용자를 찾을 수 없습니다: " + recipient.getUsername()));
+        Long cutoffId = notificationRepository.findLatestNotificationIdByRecipientId(lockedRecipient.getId());
         if (cutoffId == null) {
-            if (recipient.getUnreadNotificationCount() > 0) {
-                userRepository.setUnreadNotificationCount(recipient.getId(), 0L);
-            }
-            scheduleUnreadCountRefreshAfterCommit(recipient.getUsername());
+            userRepository.refreshUnreadNotificationCount(lockedRecipient.getId());
+            scheduleUnreadCountRefreshAfterCommit(lockedRecipient.getUsername());
             return 0L;
         }
-
-        boolean hasUnreadNotifications = recipient.getUnreadNotificationCount() > 0;
-        if (!hasUnreadNotifications) {
-            // 문제 해결:
-            // unread counter 는 hot path 최적화를 위한 비정규화 값이라, 테스트 fixture 나 과거 데이터처럼
-            // counter=0 이지만 실제 unread row 가 남아 있는 drift 상태를 완전히 배제할 수 없다.
-            // counter 가 0 일 때만 실제 unread row 존재 여부를 한 번 확인해
-            // 알림 페이지 방문이 "보이는 알림을 읽음 처리하지 못하는" 상태로 끝나지 않게 보정한다.
-            hasUnreadNotifications = notificationRepository.existsByRecipientIdAndIsReadFalse(recipient.getId());
-        }
-
-        if (hasUnreadNotifications) {
-            // 문제 해결:
-            // 기존 구현은 recipient User 행을 FOR UPDATE 로 잠그고 전체 unread row 를 bulk update 하면서
-            // store/read-all 이 같은 사용자에 대해 강하게 직렬화됐다.
-            // read-all 시작 시점의 cutoff id 까지만 읽음 처리하고 unread counter 는 delta 만큼만 원자적으로 줄이면
-            // 새 알림과 경합해도 counter 정합성을 유지하면서 lock 범위를 줄일 수 있다.
-            int transitionedCount = notificationRepository.markAllAsReadUpToId(recipient.getId(), cutoffId);
-            if (transitionedCount > 0) {
-                userRepository.decrementUnreadNotificationCount(recipient.getId(), transitionedCount);
-            } else if (recipient.getUnreadNotificationCount() > 0) {
-                long actualUnreadCount = notificationRepository.countUnreadByRecipientId(recipient.getId());
-                userRepository.setUnreadNotificationCount(recipient.getId(), actualUnreadCount);
-            }
-            scheduleUnreadCountRefreshAfterCommit(recipient.getUsername());
-            return transitionedCount;
-        }
-        scheduleUnreadCountRefreshAfterCommit(recipient.getUsername());
-        return 0L;
+        // 문제 해결:
+        // read-all 도 같은 recipient 잠금 아래에서 notification row transition 과 counter refresh 를 묶어야
+        // store/read-page 와 경쟁해도 unread counter drift 가 남지 않는다.
+        int transitionedCount = notificationRepository.markAllAsReadUpToId(lockedRecipient.getId(), cutoffId);
+        userRepository.refreshUnreadNotificationCount(lockedRecipient.getId());
+        scheduleUnreadCountRefreshAfterCommit(lockedRecipient.getUsername());
+        return transitionedCount;
     }
 
     public record NotificationReadSummary(int listedNotificationCount, long unreadCount) {}

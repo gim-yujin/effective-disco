@@ -51,6 +51,16 @@ public interface UserRepository extends JpaRepository<User, Long> {
     @Query("SELECT u FROM User u WHERE u.username = :username")
     Optional<User> findByUsernameForUpdate(@Param("username") String username);
 
+    /**
+     * 문제 해결:
+     * notification store/read-page/read-all 은 같은 수신자 기준으로 직렬화돼야
+     * unread counter refresh 와 notification row mutation 이 서로 엇갈려 drift 를 만들지 않는다.
+     * 수신자 id 기준 잠금 경로를 두어 알림 mutation 들이 같은 사용자 행에서 순서대로 끝나게 한다.
+     */
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("SELECT u FROM User u WHERE u.id = :userId")
+    Optional<User> findByIdForUpdate(@Param("userId") Long userId);
+
     boolean existsByUsername(String username);
     boolean existsByEmail(String email);
 
