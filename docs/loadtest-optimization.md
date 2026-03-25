@@ -2020,3 +2020,90 @@ GRADLE_USER_HOME=/tmp/gradle-home ./gradlew test --no-daemon \
 - `./loadtest/create-loadtest-db.sh`
 - `SPRING_PROFILES_ACTIVE=loadtest ./gradlew bootRun`
 - 깨끗한 전용 DB 에서 single-profile matrix, pair matrix, broad mixed, soak baseline 을 순서대로 재측정
+
+## 2026-03-25 clean 전용 DB baseline 재측정
+
+상태: 완료
+
+### 배경
+
+- loadtest 전용 DB 를 분리한 뒤에도, 과거 shared DB 기준선과 얼마나 달라지는지 실제로 다시 재지 않으면 문서의 `stable factor` 와 `p95/p99` 를 현재 값으로 간주할 수 없었다.
+- 특히 과거에는 `browse_search + relation_mixed`, broad mixed 모두 불안정 신호가 반복적으로 관측됐기 때문에, 전용 DB 에서 그 현상이 다시 재현되는지가 핵심이었다.
+
+### 문제 해결
+
+- `effectivedisco_loadtest` DB 를 `DROP/CREATE` 로 매번 비운다.
+- 그 위에 `loadtest` 앱 하나만 띄워 단일 인스턴스 / 단일 DB / 자동 cleanup 조건으로 clean baseline 을 다시 만든다.
+- 이전 기준선과 직접 비교하기 위해, 과거에 자주 쓰던 시나리오를 우선 재실행한다.
+  - `browse_search`
+  - broad mixed `0.6 / 0.65 / 0.7`
+  - `browse_search+write`
+  - `browse_search+relation_mixed`
+
+### 실행
+
+대표 실행 순서:
+
+```bash
+PGHOST=localhost PGPORT=5432 PGUSER=postgres PGPASSWORD=4321 \
+  psql -d postgres -c 'DROP DATABASE IF EXISTS "effectivedisco_loadtest" WITH (FORCE);'
+PGHOST=localhost PGPORT=5432 PGUSER=postgres PGPASSWORD=4321 \
+  psql -d postgres -c 'CREATE DATABASE "effectivedisco_loadtest";'
+
+APP_LOAD_TEST_DB_POOL_MAX_SIZE=28 \
+SPRING_PROFILES_ACTIVE=loadtest \
+SERVER_PORT=18084 \
+GRADLE_USER_HOME=/tmp/gradle-home \
+./gradlew bootRun --no-daemon
+```
+
+그 위에서 순차 실행:
+
+```bash
+BASE_URL=http://127.0.0.1:18084 RUNS=5 STAGE_FACTORS=0.5,0.55,0.6 \
+  ./loadtest/run-bbs-scenario-matrix.sh
+
+RUNS=5 STAGE_FACTORS=0.6,0.65,0.7 BASE_URL=http://127.0.0.1:18084 \
+  STOP_ON_HTTP_P99_MS=800 STOP_ON_K6_THRESHOLD=0 \
+  ./loadtest/run-bbs-sub-stability.sh
+
+BASE_URL=http://127.0.0.1:18084 RUNS=5 STAGE_FACTORS=0.6 COMBINATION_SIZES=2 \
+  ./loadtest/run-bbs-scenario-combination-matrix.sh
+```
+
+### 결과
+
+- clean `browse_search`
+  - [aggregate](/home/admin0/effective-disco/loadtest/results/scenario-browse_search-20260325-095737/scenario-browse_search-20260325-095737/sub-stability-20260325-095737-aggregate.tsv)
+  - `0.5 / 0.55 / 0.6 = 5/5 PASS`
+  - max `p99 = 9.77ms / 7.04ms / 7.31ms`
+- clean broad mixed
+  - [suite](/home/admin0/effective-disco/loadtest/results/sub-stability-20260325-110827.md)
+  - [aggregate](/home/admin0/effective-disco/loadtest/results/sub-stability-20260325-110827-aggregate.tsv)
+  - `0.6 / 0.65 / 0.7 = 5/5 PASS`
+  - max `p99 = 209.81ms / 230.70ms / 244.76ms`
+  - `dbPoolTimeouts = 0`
+- clean pair
+  - `browse_search+write`
+    - [aggregate](/home/admin0/effective-disco/loadtest/results/scenario-combination-browse_search+write-20260325-112422/scenario-browse_search+write-20260325-112422/sub-stability-20260325-112422-aggregate.tsv)
+    - `0.6 = 5/5 PASS`
+  - `browse_search+relation_mixed`
+    - [suite](/home/admin0/effective-disco/loadtest/results/scenario-combination-browse_search+relation_mixed-20260325-112422/scenario-browse_search+relation_mixed-20260325-112937/sub-stability-20260325-112937.md)
+    - [aggregate](/home/admin0/effective-disco/loadtest/results/scenario-combination-browse_search+relation_mixed-20260325-112422/scenario-browse_search+relation_mixed-20260325-112937/sub-stability-20260325-112937-aggregate.tsv)
+    - `0.6 = 5/5 PASS`
+    - max `p99 = 177.88ms`, `dbPoolTimeouts = 0`
+
+### 해석
+
+- 가장 중요한 결론은, shared DB 기준으로 반복 관측되던 `broad mixed unstable` 과 `browse_search+relation_mixed 재현` 이 clean 전용 DB 기준으로는 더 이상 재현되지 않았다는 점이다.
+- 즉 이전의 `stable factor = n/a`, `browse_search+relation_mixed = 0.6 FAIL` 같은 결론은 현재 코드의 본질적 한계라기보다 shared DB 오염과 데이터 누적의 영향을 크게 받았다고 보는 것이 맞다.
+- clean 기준선에서는 현재 적어도 `broad mixed 0.7` 까지는 안정적이다.
+- 따라서 문서 해석 기준도 바뀐다.
+  - cleanup/전용 DB 분리 이전 결과: 방향성 참고용
+  - cleanup/전용 DB 분리 이후 결과: 현재 baseline
+
+### 다음 액션
+
+- clean baseline 기준으로 `0.8 / 0.85 / 0.9` broad mixed 재측정
+- `0.7 / 30분` soak 실행
+- pair matrix 나머지 조합은 broad mixed 가 다시 흔들릴 때만 보강

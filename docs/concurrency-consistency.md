@@ -730,6 +730,56 @@
 - 이 결과는 최소 재현 조건이 다시 `browse_board_feed + (search/tag/sort) + relation_write` 수준의 더 큰 read pressure 조합으로 남아 있음을 뜻한다.
 - 정합성 불변식은 이 pair screen에서도 유지됐다. `duplicateKeyConflicts=0`, 관계 중복 row `0`, `postLike/comment/unread mismatch=0`.
 
+## 25차 결과
+
+상태: 완료
+
+검증 날짜:
+
+- 2026-03-25
+
+검증 범위:
+
+- `effectivedisco_loadtest` 전용 DB 를 `DROP/CREATE` 로 다시 비운 뒤 clean baseline 재측정
+- single-profile 기준선 재확인
+  - `browse_search`
+- broad mixed 기준선 재확인
+  - `0.6, 0.65, 0.7`, `RUNS=5`
+- 기존 최소 재현 pair 재확인
+  - `browse_search+write`
+  - `browse_search+relation_mixed`
+
+핵심 결론:
+
+- 실행 artifact:
+  - clean `browse_search`
+    - [aggregate](/home/admin0/effective-disco/loadtest/results/scenario-browse_search-20260325-095737/scenario-browse_search-20260325-095737/sub-stability-20260325-095737-aggregate.tsv)
+  - clean broad mixed
+    - [suite](/home/admin0/effective-disco/loadtest/results/sub-stability-20260325-110827.md)
+    - [aggregate](/home/admin0/effective-disco/loadtest/results/sub-stability-20260325-110827-aggregate.tsv)
+  - clean pair
+    - `browse_search+write`
+      - [aggregate](/home/admin0/effective-disco/loadtest/results/scenario-combination-browse_search+write-20260325-112422/scenario-browse_search+write-20260325-112422/sub-stability-20260325-112422-aggregate.tsv)
+    - `browse_search+relation_mixed`
+      - [suite](/home/admin0/effective-disco/loadtest/results/scenario-combination-browse_search+relation_mixed-20260325-112422/scenario-browse_search+relation_mixed-20260325-112937/sub-stability-20260325-112937.md)
+      - [aggregate](/home/admin0/effective-disco/loadtest/results/scenario-combination-browse_search+relation_mixed-20260325-112422/scenario-browse_search+relation_mixed-20260325-112937/sub-stability-20260325-112937-aggregate.tsv)
+- clean `browse_search` 는 `0.5 / 0.55 / 0.6` 전부 `5/5 PASS` 였다.
+  - max `http p99 = 9.77ms / 7.04ms / 7.31ms`
+  - `dbPoolTimeouts = 0`
+- clean broad mixed 는 `0.6 / 0.65 / 0.7` 전부 `5/5 PASS` 였다.
+  - max `http p99 = 209.81ms / 230.70ms / 244.76ms`
+  - `dbPoolTimeouts = 0`
+  - max `waiting = 186 / 187 / 187`
+- 예전 최소 재현 pair 도 clean baseline 에서는 더 이상 깨지지 않았다.
+  - `browse_search+write = 0.6 5/5 PASS`
+  - `browse_search+relation_mixed = 0.6 5/5 PASS`
+    - max `http p99 = 177.88ms`
+    - `dbPoolTimeouts = 0`
+    - max `waiting = 173`
+- 따라서 cleanup/전용 DB 분리 이전에 관측된 broad mixed 불안정성과 pair 재현 결과는, 현재 기준선으로는 유지되지 않는다.
+- 지금부터 "현재 baseline" 으로 봐야 할 값은 `전용 loadtest DB + 자동 cleanup` 조합에서 얻은 결과이며, 현재 clean 기준 stable factor 는 적어도 `broad mixed 0.7` 이다.
+- 이전 결과는 방향성 참고용으로는 의미가 있지만, stable factor 와 p95/p99 의 현재 기준선으로는 더 이상 사용하지 않는 것이 맞다.
+
 ## 1차에서 보장한 불변식
 
 ### 관계형 쓰기 경로
