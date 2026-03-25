@@ -2107,3 +2107,96 @@ BASE_URL=http://127.0.0.1:18084 RUNS=5 STAGE_FACTORS=0.6 COMBINATION_SIZES=2 \
 - clean baseline 기준으로 `0.8 / 0.85 / 0.9` broad mixed 재측정
 - `0.7 / 30분` soak 실행
 - pair matrix 나머지 조합은 broad mixed 가 다시 흔들릴 때만 보강
+
+## 2026-03-25 clean baseline 상향 재측정 + `0.9 / 30분` soak
+
+상태: 완료
+
+### 배경
+
+- clean 전용 DB 기준 첫 baseline 에서 broad mixed `0.7` 까지 안정적이라는 사실은 확인됐다.
+- 따라서 다음 질문은 두 가지였다.
+  - 안정 구간이 실제로 어디까지 올라가느냐
+  - 그 안정 구간이 `30분` 장시간 혼합 부하에서도 유지되느냐
+
+### 문제 해결
+
+- 같은 방식으로 전용 `effectivedisco_loadtest` DB 를 다시 비우고, broad mixed를 더 높은 factor 에서 반복 측정했다.
+- 그 결과를 기준으로 가장 높은 clean stable factor 로 `30분 soak`를 바로 검증했다.
+
+### 실행
+
+반복 측정:
+
+```bash
+PGHOST=localhost PGPORT=5432 PGUSER=postgres PGPASSWORD=4321 \
+  psql -d postgres -c 'DROP DATABASE IF EXISTS "effectivedisco_loadtest" WITH (FORCE);'
+PGHOST=localhost PGPORT=5432 PGUSER=postgres PGPASSWORD=4321 \
+  psql -d postgres -c 'CREATE DATABASE "effectivedisco_loadtest";'
+
+APP_LOAD_TEST_DB_POOL_MAX_SIZE=28 \
+SPRING_PROFILES_ACTIVE=loadtest \
+SERVER_PORT=18084 \
+GRADLE_USER_HOME=/tmp/gradle-home \
+./gradlew bootRun --no-daemon
+
+RUNS=5 STAGE_FACTORS=0.8,0.85,0.9 BASE_URL=http://127.0.0.1:18084 \
+  STOP_ON_HTTP_P99_MS=800 STOP_ON_K6_THRESHOLD=0 \
+  ./loadtest/run-bbs-sub-stability.sh
+```
+
+장시간 soak:
+
+```bash
+PGHOST=localhost PGPORT=5432 PGUSER=postgres PGPASSWORD=4321 \
+  psql -d postgres -c 'DROP DATABASE IF EXISTS "effectivedisco_loadtest" WITH (FORCE);'
+PGHOST=localhost PGPORT=5432 PGUSER=postgres PGPASSWORD=4321 \
+  psql -d postgres -c 'CREATE DATABASE "effectivedisco_loadtest";'
+
+APP_LOAD_TEST_DB_POOL_MAX_SIZE=28 \
+SPRING_PROFILES_ACTIVE=loadtest \
+SERVER_PORT=18084 \
+GRADLE_USER_HOME=/tmp/gradle-home \
+./gradlew bootRun --no-daemon
+
+SOAK_FACTOR=0.9 SOAK_DURATION=30m WARMUP_DURATION=2m SAMPLE_INTERVAL_SECONDS=30 \
+  BASE_URL=http://127.0.0.1:18084 \
+  ./loadtest/run-bbs-soak.sh
+```
+
+### 결과
+
+- clean broad mixed 재측정:
+  - [suite](/home/admin0/effective-disco/loadtest/results/sub-stability-20260325-121551.md)
+  - [aggregate](/home/admin0/effective-disco/loadtest/results/sub-stability-20260325-121551-aggregate.tsv)
+  - `0.8 / 0.85 / 0.9 = 5/5 PASS`
+  - max `p99 = 262.01ms / 276.54ms / 277.59ms`
+  - `dbPoolTimeouts = 0`
+  - clean `highest stable factor = 0.9`
+- clean `0.9 / 30분 soak`:
+  - [suite](/home/admin0/effective-disco/loadtest/results/soak-20260325-125923.md)
+  - [server metrics](/home/admin0/effective-disco/loadtest/results/soak-20260325-125923-server.json)
+  - [metrics timeline](/home/admin0/effective-disco/loadtest/results/soak-20260325-125923-metrics.jsonl)
+  - [sql snapshot](/home/admin0/effective-disco/loadtest/results/soak-20260325-125923-sql.tsv)
+  - `PASS`
+  - `http p95 = 293.97ms`
+  - `http p99 = 377.47ms`
+  - `unexpected_response_rate = 0.0000`
+  - `dbPoolTimeouts = 0`
+  - SQL mismatch = 전부 `0`
+
+### 해석
+
+- 이제 clean 전용 DB 기준으로는 broad mixed 안정 구간이 `0.9` 까지 올라갔다.
+- 더 중요한 점은 `0.9 / 30분 soak` 도 통과했다는 것이다. 즉 이전 shared DB 기준선에서 보였던 불안정성은 현재 baseline 으로는 재현되지 않는다.
+- 장시간 profile 을 보면 `notification.read-all.summary`, `notification.store`, `post.list.browse.rows` 가 상대적으로 커지긴 한다.
+  - 그래도 이번 30분 구간에서는 `dbPoolTimeouts=0`, `unexpected_response_rate=0`, SQL mismatch `0` 를 유지했다.
+- 따라서 현재 실무 해석은 이렇다.
+  - 정합성과 pool 안정성은 clean baseline 기준으로 충분히 확인됐다.
+  - 다음 관심사는 “깨지는가”보다 “장시간에 어떤 경로가 가장 먼저 커지는가” 쪽이다.
+
+### 다음 액션
+
+- `0.9 / 1시간`, `0.9 / 2시간` soak
+- 장기 trend 기준 `notification.read-all.summary`, `notification.store`, `post.list.browse.rows` 추가 분석
+- 필요할 때만 pair matrix / minimal reproduction 재실행

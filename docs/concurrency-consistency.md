@@ -780,6 +780,70 @@
 - 지금부터 "현재 baseline" 으로 봐야 할 값은 `전용 loadtest DB + 자동 cleanup` 조합에서 얻은 결과이며, 현재 clean 기준 stable factor 는 적어도 `broad mixed 0.7` 이다.
 - 이전 결과는 방향성 참고용으로는 의미가 있지만, stable factor 와 p95/p99 의 현재 기준선으로는 더 이상 사용하지 않는 것이 맞다.
 
+## 26차 결과
+
+상태: 완료
+
+검증 날짜:
+
+- 2026-03-25
+
+검증 범위:
+
+- clean 전용 `effectivedisco_loadtest` DB 재생성
+- broad mixed 안정 구간 상향 재측정
+  - `0.8, 0.85, 0.9`, `RUNS=5`
+
+핵심 결론:
+
+- 실행 artifact:
+  - [suite](/home/admin0/effective-disco/loadtest/results/sub-stability-20260325-121551.md)
+  - [aggregate](/home/admin0/effective-disco/loadtest/results/sub-stability-20260325-121551-aggregate.tsv)
+- `0.8 / 0.85 / 0.9` 전부 `5/5 PASS` 였다.
+  - `0.8` max `p99 = 262.01ms`
+  - `0.85` max `p99 = 276.54ms`
+  - `0.9` max `p99 = 277.59ms`
+  - 전 factor 에서 `dbPoolTimeouts = 0`
+  - max `waiting = 194 / 188 / 188`
+- clean baseline 기준 broad mixed `highest stable factor` 는 `0.9` 로 올라갔다.
+- 이는 전용 DB 기준선에서 현재 혼합 부하 안정성이 예전 문서보다 훨씬 높다는 뜻이다.
+
+## 27차 결과
+
+상태: 완료
+
+검증 날짜:
+
+- 2026-03-25
+
+검증 범위:
+
+- clean 전용 `effectivedisco_loadtest` DB 재생성
+- broad mixed `0.9 / 30분 soak`
+  - `WARMUP=2m`
+  - `SOAK=30m`
+
+핵심 결론:
+
+- 실행 artifact:
+  - [suite](/home/admin0/effective-disco/loadtest/results/soak-20260325-125923.md)
+  - [server metrics](/home/admin0/effective-disco/loadtest/results/soak-20260325-125923-server.json)
+  - [metrics timeline](/home/admin0/effective-disco/loadtest/results/soak-20260325-125923-metrics.jsonl)
+  - [sql snapshot](/home/admin0/effective-disco/loadtest/results/soak-20260325-125923-sql.tsv)
+- 결과는 `PASS` 였다.
+  - `http p95 = 293.97ms`
+  - `http p99 = 377.47ms`
+  - `unexpected_response_rate = 0.0000`
+  - `dbPoolTimeouts = 0`
+  - `duplicateKeyConflicts = 0`
+  - `maxActiveConnections = 28`
+  - `maxThreadsAwaitingConnection = 194`
+- SQL 정합성 snapshot 은 전부 `0` 이었다.
+  - 관계 중복 row `0`
+  - `postLike/comment/unread mismatch = 0`
+- 30분 장시간 관찰에서도 정합성, pool timeout, 응답 오류는 발생하지 않았다.
+- 다만 장시간 누적 profile 에서는 `notification.read-all.summary`, `notification.store`, `post.list.browse.rows` wall time 이 상대적으로 커졌으므로, 다음 장기 관찰 우선순위는 이 세 경로다.
+
 ## 1차에서 보장한 불변식
 
 ### 관계형 쓰기 경로
@@ -999,7 +1063,10 @@ done
 
 - 2026-03-25 까지 `loadtest` 프로필은 개발 기본 DB와 같은 PostgreSQL 인스턴스를 공유했고, k6 `setup()` / write 시나리오는 실제 row 를 생성했다.
 - 이후 [cleanup-loadtest-data.sh](/home/admin0/effective-disco/loadtest/cleanup-loadtest-data.sh) 와 loadtest 전용 DB 분리를 도입해 이 문제를 막았다.
-- 따라서 cleanup/DB 분리 이전의 `p95/p99`, `stable factor`, soak 결과는 방향성 참고용으로는 의미가 있지만, "현재 기준선" 으로는 다시 측정하는 것이 맞다.
+- cleanup/DB 분리 이전의 `p95/p99`, `stable factor`, soak 결과는 방향성 참고용으로는 의미가 있지만, "현재 기준선" 으로는 더 이상 사용하지 않는 것이 맞다.
+- 현재 기준선은 clean 전용 DB 에서 다시 측정한 결과다.
+  - broad mixed `highest stable factor = 0.9`
+  - `0.9 / 30분 soak = PASS`
 - 반면 prefix 기반 SQL 정합성 검증과 테스트 기반 동시성 불변식은 데이터 누적의 영향을 상대적으로 덜 받으므로 여전히 참고 가치가 높다.
 
 ### 분산 환경
@@ -1009,10 +1076,9 @@ done
 
 ### 장시간/대규모 스트레스
 
-- 2차 스트레스 런으로 단기 혼합 부하 검증은 완료
-- 3차 반복 ramp-up 으로 경계점은 `1.5x~1.75x` 구간으로 좁혔음
-- 다만 장시간 soak test 에서 counter drift, connection leak, slow creep, deadlock 여부는 아직 별도 확인이 필요
-- 현재는 "어디서 깨지는가"만 찾았고 "왜 그 지점에서 깨지는가"는 쿼리/트랜잭션 분석이 남아 있음
+- clean 전용 DB 기준으로 broad mixed `0.9 / 30분 soak` 는 통과했다.
+- 따라서 현재 남은 장시간 리스크는 `0.9 / 1시간`, `0.9 / 2시간` 같은 더 긴 soak 와 장기 추세 관찰이다.
+- 특히 장기 profile 에서 `notification.read-all.summary`, `notification.store`, `post.list.browse.rows` 가 상대적으로 커지고 있으므로, 다음 분석 우선순위는 이 경로들이다.
 
 ### 대용량 데이터
 
