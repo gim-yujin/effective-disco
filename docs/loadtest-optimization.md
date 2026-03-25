@@ -2937,3 +2937,59 @@ GRADLE_USER_HOME=/tmp/gradle-home ./gradlew test --no-daemon
   단발성 노이즈로 보는 쪽이 맞다.
 - 다만 `maxThreadsAwaitingConnection = 200` 수준의 대기 압력은 그대로이므로,
   `0.9 / 1시간`은 통과했지만 여유가 큰 구간은 아니라는 해석이 맞다.
+
+## 2026-03-26 clean broad mixed `0.9 / 2시간` soak
+
+상태: 완료
+
+### 실행 조건
+
+- clean `effectivedisco_loadtest` DB `DROP/CREATE`
+- fresh `loadtest` 앱
+- `SOAK_FACTOR=0.9`
+- `SOAK_DURATION=2h`
+- `WARMUP_DURATION=2m`
+
+### 결과
+
+- suite:
+  [soak-20260326-021537.md](/home/admin0/effective-disco/loadtest/results/soak-20260326-021537.md)
+- server:
+  [soak-20260326-021537-server.json](/home/admin0/effective-disco/loadtest/results/soak-20260326-021537-server.json)
+- sql:
+  [soak-20260326-021537-sql.tsv](/home/admin0/effective-disco/loadtest/results/soak-20260326-021537-sql.tsv)
+
+숫자:
+
+- `status = FAIL`
+- `p95 = 706.22ms`
+- `p99 = 991.52ms`
+- `unexpected_response_rate = 0.0000`
+- `duplicateKeyConflicts = 0`
+- `dbPoolTimeouts = 380`
+- `unreadNotificationMismatchUsers = 0`
+
+5분 모니터링 요약:
+
+- `35분`: `dbPoolTimeouts = 17`
+- `55분`: `dbPoolTimeouts = 19`
+- `1시간`: `dbPoolTimeouts = 31`
+- `1시간 25분`: `dbPoolTimeouts = 328`
+- `최종`: `dbPoolTimeouts = 380`
+
+주요 profile:
+
+- `notification.read-page.summary.transition avgWall = 2.77ms`, `avgSql = 1.77ms`
+- `notification.store avgWall = 5.68ms`, `avgSql = 5.05ms`
+- `post.list.browse.rows avgWall = 32.32ms`, `avgSql = 31.75ms`
+- `post.list.search.rows avgWall = 20.62ms`, `avgSql = 20.10ms`
+- `post.like.add avgWall = 5.18ms`, `avgSql = 4.48ms`
+- `post.like.remove avgWall = 5.11ms`, `avgSql = 4.41ms`
+
+### 해석
+
+- `0.9 / 2시간`에서는 장시간 broad mixed read pressure가 누적되며
+  pool timeout 이 재현성 있게 증가했다.
+- 반면 `duplicateKeyConflicts`, `unread counter mismatch`, SQL 정합성 mismatch 는 모두 `0` 으로 유지됐다.
+- 따라서 현재 남은 문제는 정합성이 아니라
+  `0.9` 부하에서 `2시간`을 버티지 못하는 장시간 saturation 이다.
