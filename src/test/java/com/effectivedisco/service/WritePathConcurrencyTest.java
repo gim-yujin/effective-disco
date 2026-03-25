@@ -1,13 +1,17 @@
 package com.effectivedisco.service;
 
+import com.effectivedisco.domain.Board;
 import com.effectivedisco.domain.Post;
 import com.effectivedisco.domain.User;
+import com.effectivedisco.dto.request.PostRequest;
 import com.effectivedisco.repository.BlockRepository;
+import com.effectivedisco.repository.BoardRepository;
 import com.effectivedisco.repository.BookmarkRepository;
 import com.effectivedisco.repository.FollowRepository;
 import com.effectivedisco.repository.NotificationRepository;
 import com.effectivedisco.repository.PostLikeRepository;
 import com.effectivedisco.repository.PostRepository;
+import com.effectivedisco.repository.TagRepository;
 import com.effectivedisco.repository.UserRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -18,6 +22,7 @@ import org.springframework.test.context.ActiveProfiles;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Set;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -42,6 +47,8 @@ class WritePathConcurrencyTest {
     @Autowired BookmarkRepository bookmarkRepository;
     @Autowired BlockRepository blockRepository;
     @Autowired NotificationRepository notificationRepository;
+    @Autowired BoardRepository boardRepository;
+    @Autowired TagRepository tagRepository;
     @Autowired PasswordEncoder passwordEncoder;
 
     @BeforeEach
@@ -52,6 +59,8 @@ class WritePathConcurrencyTest {
         followRepository.deleteAll();
         notificationRepository.deleteAll();
         postRepository.deleteAll();
+        tagRepository.deleteAll();
+        boardRepository.deleteAll();
         userRepository.deleteAll();
     }
 
@@ -243,6 +252,38 @@ class WritePathConcurrencyTest {
                 .isBetween(0L, 1L);
     }
 
+    @Test
+    void createPost_concurrentSameNewTag_createsSingleTagAndSucceeds() throws Exception {
+        User authorA = saveUser("authorA");
+        User authorB = saveUser("authorB");
+        Board board = saveBoard("write-concurrency-board");
+        String tagName = "write-race-tag";
+
+        PostRequest requestA = new PostRequest();
+        requestA.setTitle("race-a");
+        requestA.setContent("content-a");
+        requestA.setBoardSlug(board.getSlug());
+        requestA.setTagsInput("loadtest," + tagName);
+
+        PostRequest requestB = new PostRequest();
+        requestB.setTitle("race-b");
+        requestB.setContent("content-b");
+        requestB.setBoardSlug(board.getSlug());
+        requestB.setTagsInput("loadtest," + tagName);
+
+        runConcurrently(List.of(
+                () -> postService.createPost(requestA, authorA.getUsername()),
+                () -> postService.createPost(requestB, authorB.getUsername())
+        ));
+
+        assertThat(tagRepository.findAllByNameIn(Set.of(tagName)))
+                .as("문제 해결 검증: 같은 새 태그를 동시에 포함한 게시물 작성이 와도 tags.name row는 1개만 남아야 한다")
+                .hasSize(1);
+        assertThat(postRepository.count())
+                .as("문제 해결 검증: 태그 생성 race가 나도 게시물 작성 자체는 둘 다 성공해야 한다")
+                .isEqualTo(2);
+    }
+
     private User saveUser(String username) {
         return userRepository.save(User.builder()
                 .username(username)
@@ -256,6 +297,14 @@ class WritePathConcurrencyTest {
                 .title(title)
                 .content("content")
                 .author(author)
+                .build());
+    }
+
+    private Board saveBoard(String slug) {
+        return boardRepository.save(Board.builder()
+                .name("Board " + slug)
+                .slug(slug)
+                .description("test board")
                 .build());
     }
 

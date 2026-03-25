@@ -50,6 +50,7 @@ public class PostService {
     private final UserRepository      userRepository;
     private final PostLikeRepository  postLikeRepository;
     private final TagRepository       tagRepository;
+    private final TagWriteService     tagWriteService;
     private final BoardRepository     boardRepository;
     private final NotificationService notificationService;
     private final LoadTestStepProfiler loadTestStepProfiler;
@@ -791,14 +792,21 @@ public class PostService {
         Map<String, Tag> existingByName = existingTags.stream()
                 .collect(Collectors.toMap(Tag::getName, tag -> tag));
 
-        List<Tag> missingTags = tagNames.stream()
+        Set<String> missingTagNames = tagNames.stream()
                 .filter(name -> !existingByName.containsKey(name))
-                .map(Tag::new)
-                .toList();
-        List<Tag> savedMissingTags = missingTags.isEmpty() ? List.of() : tagRepository.saveAll(missingTags);
+                .collect(Collectors.toCollection(LinkedHashSet::new));
+        if (!missingTagNames.isEmpty()) {
+            // 문제 해결:
+            // broad mixed 에서 여러 createPost 가 같은 새 태그를 동시에 만들면
+            // `find existing -> saveAll(missing)` 사이에서 unique(tags.name) race 가 난다.
+            // 태그 생성만 별도 짧은 트랜잭션으로 분리하고 duplicate 는 흡수한 뒤
+            // 최종 태그 집합을 다시 조회하면 게시물 작성은 멱등하게 계속 진행할 수 있다.
+            tagWriteService.ensureTagsExist(missingTagNames);
+        }
 
-        Set<Tag> resolvedTags = new LinkedHashSet<>(existingTags);
-        resolvedTags.addAll(savedMissingTags);
+        List<Tag> resolvedTagList = tagRepository.findAllByNameIn(tagNames);
+
+        Set<Tag> resolvedTags = new LinkedHashSet<>(resolvedTagList);
 
         return new ResolvedTags(
                 resolvedTags,

@@ -77,6 +77,6 @@ class PostCreateOptimizationIntegrationTest {
                 .containsExactly("java", "loadtest", "spring");
         assertThat(statistics.getPrepareStatementCount())
                 .as("문제 해결 검증: createPost 는 태그 수만큼 findByName() 를 반복하지 말고 batch lookup 으로 SQL 수를 상수 개수로 묶어야 한다")
-                .isLessThanOrEqualTo(7L);
+                .isLessThanOrEqualTo(8L);
     }
 }

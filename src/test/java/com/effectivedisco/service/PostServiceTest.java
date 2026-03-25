@@ -41,6 +41,7 @@ class PostServiceTest {
     @Mock UserRepository      userRepository;
     @Mock PostLikeRepository  postLikeRepository;
     @Mock TagRepository       tagRepository;
+    @Mock TagWriteService     tagWriteService;
     @Mock BoardRepository     boardRepository;
     @Mock NotificationService notificationService;
     @Mock EntityManager       entityManager;
@@ -54,6 +55,7 @@ class PostServiceTest {
                 userRepository,
                 postLikeRepository,
                 tagRepository,
+                tagWriteService,
                 boardRepository,
                 notificationService,
                 new NoOpLoadTestStepProfiler(),
