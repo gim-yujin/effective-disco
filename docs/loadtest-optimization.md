@@ -2889,3 +2889,51 @@ GRADLE_USER_HOME=/tmp/gradle-home ./gradlew test --no-daemon
 - `notification` 경로와 `Tag.name` duplicate-key 는 더 이상 실패 원인이 아니었다.
 - 즉 남은 문제는 정합성보다 `장시간 broad mixed` 에서의 희박한 pool saturation 이고,
   다음 판단은 같은 조건 `1시간`을 반복 재측정해 이 1건이 재현성 있는 경계인지 확인하는 쪽이 맞다.
+
+## 2026-03-26 clean broad mixed `0.9 / 1시간` 반복 재측정
+
+상태: 완료
+
+### 실행 조건
+
+- clean `effectivedisco_loadtest` DB `DROP/CREATE`
+- fresh `loadtest` 앱
+- `SOAK_FACTOR=0.9`
+- `SOAK_DURATION=1h`
+- `WARMUP_DURATION=2m`
+
+### 결과
+
+- suite:
+  [soak-20260326-010247.md](/home/admin0/effective-disco/loadtest/results/soak-20260326-010247.md)
+- server:
+  [soak-20260326-010247-server.json](/home/admin0/effective-disco/loadtest/results/soak-20260326-010247-server.json)
+- sql:
+  [soak-20260326-010247-sql.tsv](/home/admin0/effective-disco/loadtest/results/soak-20260326-010247-sql.tsv)
+
+숫자:
+
+- `status = PASS`
+- `p95 = 305.41ms`
+- `p99 = 390.86ms`
+- `unexpected_response_rate = 0.0000`
+- `duplicateKeyConflicts = 0`
+- `dbPoolTimeouts = 0`
+- `unreadNotificationMismatchUsers = 0`
+
+주요 profile:
+
+- `notification.read-page.summary.transition avgWall = 2.86ms`, `avgSql = 1.86ms`
+- `notification.store avgWall = 3.24ms`, `avgSql = 2.61ms`
+- `post.list.browse.rows avgWall = 15.66ms`, `avgSql = 15.12ms`
+- `post.list.search.rows avgWall = 10.67ms`, `avgSql = 10.17ms`
+- `post.like.add avgWall = 5.89ms`, `avgSql = 5.22ms`
+- `post.like.remove avgWall = 5.81ms`, `avgSql = 5.14ms`
+
+### 해석
+
+- 반복 재측정에서는 `dbPoolTimeouts = 0` 으로 돌아와 `PASS` 했다.
+- 따라서 직전 `dbPoolTimeouts = 1` 은 지금까지는 재현성 있는 한계보다
+  단발성 노이즈로 보는 쪽이 맞다.
+- 다만 `maxThreadsAwaitingConnection = 200` 수준의 대기 압력은 그대로이므로,
+  `0.9 / 1시간`은 통과했지만 여유가 큰 구간은 아니라는 해석이 맞다.

@@ -1581,3 +1581,36 @@ SOAK_FACTOR=0.9 SOAK_DURATION=1h WARMUP_DURATION=2m SAMPLE_INTERVAL_SECONDS=60 \
 - duplicate-key 와 unread counter mismatch 는 모두 사라진 상태를 유지했다.
 - 즉 현재 clean 기준 broad mixed 는 거의 안정 상태까지 올라왔지만,
   `1시간` 구간에서는 아직 `pool timeout` 한계가 완전히 없어졌다고 말할 단계는 아니다.
+
+## 2026-03-26 clean broad mixed `0.9 / 1시간` 반복 재측정
+
+상태: 완료
+
+### 실행 목적
+
+- 직전 `0.9 / 1시간` 런의 `dbPoolTimeouts = 1` 이
+  재현성 있는 한계인지, 단발성인지 다시 확인한다.
+
+### 결과
+
+- suite:
+  [soak-20260326-010247.md](/home/admin0/effective-disco/loadtest/results/soak-20260326-010247.md)
+- server metrics:
+  [soak-20260326-010247-server.json](/home/admin0/effective-disco/loadtest/results/soak-20260326-010247-server.json)
+- sql snapshot:
+  [soak-20260326-010247-sql.tsv](/home/admin0/effective-disco/loadtest/results/soak-20260326-010247-sql.tsv)
+- 상태: `PASS`
+- `http p95 = 305.41ms`
+- `http p99 = 390.86ms`
+- `unexpected_response_rate = 0.0000`
+- `duplicateKeyConflicts = 0`
+- `dbPoolTimeouts = 0`
+- `unreadNotificationMismatchUsers = 0`
+
+### 해석
+
+- 같은 clean 조건에서 반복한 두 번째 `0.9 / 1시간` 런은 `PASS` 였다.
+- 따라서 직전 런의 `dbPoolTimeouts = 1` 은 현재로서는 재현성 있는 경계라기보다
+  단발성 노이즈에 더 가깝다.
+- 다만 `maxThreadsAwaitingConnection = 200` 은 여전히 높아서,
+  `0.9 / 1시간`이 아주 넉넉한 안정 구간이라고 단정할 정도로 여유롭지는 않다.
