@@ -1734,3 +1734,39 @@ SOAK_FACTOR=0.9 SOAK_DURATION=1h WARMUP_DURATION=2m SAMPLE_INTERVAL_SECONDS=60 \
 - `0.8`도 strict 기준에서는 `2시간 stable factor`는 아니었다.
 - 다만 timeout 누적은 `0.85`, `0.9`보다 훨씬 작아서,
   현재 `2시간 stable factor`에 가장 가까운 구간은 `0.8`로 볼 수 있다.
+
+## 2026-03-26 clean broad mixed `0.9 / 5분` 재측정 after browse/search/store 최적화
+
+상태: 완료
+
+### 실행 목적
+
+- `post.list.browse.rows`, `post.list.search.rows`, `notification.store` 최적화가
+  clean broad mixed 기준선에서 정합성과 timeout을 유지하는지 빠르게 확인한다.
+- 이번 런은 장시간 stable factor 확정용이 아니라
+  최신 hot-path 변경의 국소 회귀 여부를 빠르게 닫기 위한 short validation이다.
+
+### 결과
+
+- suite:
+  [soak-20260326-113432.md](/home/admin0/effective-disco/loadtest/results/soak-20260326-113432.md)
+- server metrics:
+  [soak-20260326-113432-server.json](/home/admin0/effective-disco/loadtest/results/soak-20260326-113432-server.json)
+- sql snapshot:
+  [soak-20260326-113432-sql.tsv](/home/admin0/effective-disco/loadtest/results/soak-20260326-113432-sql.tsv)
+- 상태: `PASS`
+- `http p95 = 221.28ms`
+- `http p99 = 282.98ms`
+- `unexpected_response_rate = 0.0000`
+- `duplicateKeyConflicts = 0`
+- `dbPoolTimeouts = 0`
+- `unreadNotificationMismatchUsers = 0`
+
+### 해석
+
+- 이번 browse/search/store 최적화는 clean broad mixed short baseline에서
+  정합성을 깨뜨리지 않았고 timeout도 만들지 않았다.
+- 따라서 변경 방향은 `일부 경로 개선 대신 다른 경로를 크게 악화시키는 trade-off`가 아니라,
+  현재 기준선에서 받아들일 수 있는 방향으로 보인다.
+- 다만 이것은 `5분` validation이므로,
+  장시간 `2시간 stable factor` 판단은 기존 soak 기록과 별도로 계속 봐야 한다.

@@ -574,13 +574,15 @@ public class PostService {
         // 문제 해결:
         // browse latest 는 정렬과 join projection 을 같은 SQL 에서 처리할 때 시간이 길어졌다.
         // 먼저 posts 인덱스에서 현재 window 의 id 만 keyset 으로 자르고,
-        // author/board projection 은 작은 id 집합에만 적용해 최신 board browse 의 hot read 폭을 줄인다.
-        Map<Long, PostRepository.PostListRow> rowsById = postRepository.findPostListRowsByIdIn(postIds).stream()
-                .collect(Collectors.toMap(PostRepository.PostListRow::getId, row -> row));
+        // author projection 은 작은 id 집합에만 적용하고, board name/slug 는 이미 요청에서 확정된 값을 재사용해
+        // browse rows hot query 에서 boards join 자체를 제거한다.
+        Map<Long, PostRepository.BoardScopedPostListRow> rowsById = postRepository.findBoardScopedPostListRowsByIdIn(postIds).stream()
+                .collect(Collectors.toMap(PostRepository.BoardScopedPostListRow::getId, row -> row));
 
         List<PostRepository.PostListRow> orderedRows = postIds.stream()
                 .map(rowsById::get)
                 .filter(java.util.Objects::nonNull)
+                .map(row -> withBoardContext(row, board))
                 .toList();
 
         return new org.springframework.data.domain.SliceImpl<>(orderedRows, limit, hasNext);
@@ -592,14 +594,25 @@ public class PostService {
                                                                     Long cursorSortValue,
                                                                     Long cursorId,
                                                                     boolean likesSort) {
+        Slice<PostRepository.BoardScopedPostListRow> slice;
         if (cursorCreatedAt == null || cursorId == null || cursorSortValue == null) {
-            return likesSort
-                    ? postRepository.findScrollPostListRowsByBoardOrderByLikeCountDesc(board, limit)
-                    : postRepository.findScrollPostListRowsByBoardOrderByCommentCountDesc(board, limit);
+            slice = likesSort
+                    ? postRepository.findBoardScopedScrollPostListRowsByBoardOrderByLikeCountDesc(board, limit)
+                    : postRepository.findBoardScopedScrollPostListRowsByBoardOrderByCommentCountDesc(board, limit);
+        } else {
+            slice = likesSort
+                    ? postRepository.findBoardScopedScrollPostListRowsByBoardAndLikeCountAfter(
+                    board, cursorSortValue, cursorCreatedAt, cursorId, limit
+            )
+                    : postRepository.findBoardScopedScrollPostListRowsByBoardAndCommentCountAfter(
+                    board, cursorSortValue, cursorCreatedAt, cursorId, limit
+            );
         }
-        return likesSort
-                ? postRepository.findScrollPostListRowsByBoardAndLikeCountAfter(board, cursorSortValue, cursorCreatedAt, cursorId, limit)
-                : postRepository.findScrollPostListRowsByBoardAndCommentCountAfter(board, cursorSortValue, cursorCreatedAt, cursorId, limit);
+        return new org.springframework.data.domain.SliceImpl<>(
+                slice.getContent().stream().map(row -> withBoardContext(row, board)).toList(),
+                slice.getPageable(),
+                slice.hasNext()
+        );
     }
 
     private Slice<PostRepository.PostListRow> loadSearchSlice(Board board,
@@ -665,6 +678,10 @@ public class PostService {
         return new PostScrollCursor(last.getCreatedAt(), sortValue, last.getId());
     }
 
+    private PostRepository.PostListRow withBoardContext(PostRepository.BoardScopedPostListRow row, Board board) {
+        return new BoardScopedPostListRowView(row, board.getName(), board.getSlug());
+    }
+
     private void preloadListRelations(List<Post> posts) {
         if (posts.isEmpty()) {
             return;
@@ -707,6 +724,81 @@ public class PostService {
     @Transactional
     public void incrementViewCount(Long id) {
         postRepository.incrementViewCount(id);
+    }
+
+    private record BoardScopedPostListRowView(PostRepository.BoardScopedPostListRow delegate,
+                                              String boardName,
+                                              String boardSlug) implements PostRepository.PostListRow {
+
+        @Override
+        public Long getId() {
+            return delegate.getId();
+        }
+
+        @Override
+        public String getTitle() {
+            return delegate.getTitle();
+        }
+
+        @Override
+        public String getContent() {
+            return delegate.getContent();
+        }
+
+        @Override
+        public LocalDateTime getCreatedAt() {
+            return delegate.getCreatedAt();
+        }
+
+        @Override
+        public LocalDateTime getUpdatedAt() {
+            return delegate.getUpdatedAt();
+        }
+
+        @Override
+        public int getCommentCount() {
+            return delegate.getCommentCount();
+        }
+
+        @Override
+        public long getLikeCount() {
+            return delegate.getLikeCount();
+        }
+
+        @Override
+        public int getViewCount() {
+            return delegate.getViewCount();
+        }
+
+        @Override
+        public boolean isPinned() {
+            return delegate.isPinned();
+        }
+
+        @Override
+        public boolean isDraft() {
+            return delegate.isDraft();
+        }
+
+        @Override
+        public String getLegacyImageUrl() {
+            return delegate.getLegacyImageUrl();
+        }
+
+        @Override
+        public String getAuthorUsername() {
+            return delegate.getAuthorUsername();
+        }
+
+        @Override
+        public String getBoardName() {
+            return boardName;
+        }
+
+        @Override
+        public String getBoardSlug() {
+            return boardSlug;
+        }
     }
 
     /**

@@ -126,6 +126,25 @@ public interface UserRepository extends JpaRepository<User, Long> {
             """)
     Optional<NotificationRecipientSnapshot> findNotificationRecipientSnapshotByUsername(@Param("username") String username);
 
+    /**
+     * 문제 해결:
+     * notification.store 는 수신자 직렬화는 필요하지만 User 전체 엔티티 hydration 은 불필요하다.
+     * username 기준으로 unread counter 스냅샷만 FOR UPDATE 로 잠그면
+     * store 경로의 row lock 은 유지하면서 entity materialize 비용과 후속 drift 보정 쿼리를 줄일 수 있다.
+     */
+    @Query(
+            value = """
+                    SELECT id AS id,
+                           username AS username,
+                           unread_notification_count AS unreadNotificationCount
+                    FROM users
+                    WHERE username = :username
+                    FOR UPDATE
+                    """,
+            nativeQuery = true
+    )
+    Optional<NotificationRecipientSnapshot> findNotificationRecipientSnapshotByUsernameForUpdate(@Param("username") String username);
+
     @Modifying(flushAutomatically = true, clearAutomatically = true)
     @Query("""
             UPDATE User u

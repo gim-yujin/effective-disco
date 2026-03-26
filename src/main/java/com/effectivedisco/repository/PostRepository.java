@@ -46,6 +46,21 @@ public interface PostRepository extends JpaRepository<Post, Long>, PostRepositor
         String getBoardSlug();
     }
 
+    interface BoardScopedPostListRow {
+        Long getId();
+        String getTitle();
+        String getContent();
+        LocalDateTime getCreatedAt();
+        LocalDateTime getUpdatedAt();
+        int getCommentCount();
+        long getLikeCount();
+        int getViewCount();
+        boolean isPinned();
+        boolean isDraft();
+        String getLegacyImageUrl();
+        String getAuthorUsername();
+    }
+
     interface PostTagRow {
         Long getPostId();
         String getTagName();
@@ -115,15 +130,12 @@ public interface PostRepository extends JpaRepository<Post, Long>, PostRepositor
                 p.pinned AS pinned,
                 p.draft AS draft,
                 p.imageUrl AS legacyImageUrl,
-                a.username AS authorUsername,
-                b.name AS boardName,
-                b.slug AS boardSlug
+                a.username AS authorUsername
             FROM Post p
             JOIN p.author a
-            LEFT JOIN p.board b
             WHERE p.id IN :postIds
             """)
-    List<PostListRow> findPostListRowsByIdIn(@Param("postIds") List<Long> postIds);
+    List<BoardScopedPostListRow> findBoardScopedPostListRowsByIdIn(@Param("postIds") List<Long> postIds);
 
     /**
      * 문제 해결:
@@ -643,6 +655,35 @@ public interface PostRepository extends JpaRepository<Post, Long>, PostRepositor
             """)
     Slice<PostListRow> findScrollPostListRowsByBoardOrderByLikeCountDesc(@Param("board") Board board, Pageable pageable);
 
+    /**
+     * 문제 해결:
+     * board-scoped browse rows 는 게시판이 이미 요청 파라미터로 확정되어 있다.
+     * 그런데도 매 row마다 boards join 으로 name/slug 를 다시 읽으면 장시간 soak 에서 browse.rows SQL 시간이 누적된다.
+     * board 정보는 서비스에서 한 번만 주입하고, hot query 는 posts + author projection 으로만 유지한다.
+     */
+    @Query("""
+            SELECT
+                p.id AS id,
+                p.title AS title,
+                '' AS content,
+                p.createdAt AS createdAt,
+                p.updatedAt AS updatedAt,
+                p.commentCount AS commentCount,
+                p.likeCount AS likeCount,
+                p.viewCount AS viewCount,
+                p.pinned AS pinned,
+                p.draft AS draft,
+                p.imageUrl AS legacyImageUrl,
+                a.username AS authorUsername
+            FROM Post p
+            JOIN p.author a
+            WHERE p.board = :board
+              AND p.draft = false
+            ORDER BY p.likeCount DESC, p.createdAt DESC, p.id DESC
+            """)
+    Slice<BoardScopedPostListRow> findBoardScopedScrollPostListRowsByBoardOrderByLikeCountDesc(@Param("board") Board board,
+                                                                                               Pageable pageable);
+
     @Query("""
             SELECT
                 p.id AS id,
@@ -681,6 +722,42 @@ public interface PostRepository extends JpaRepository<Post, Long>, PostRepositor
                                                                       @Param("cursorCreatedAt") LocalDateTime cursorCreatedAt,
                                                                       @Param("cursorId") Long cursorId,
                                                                       Pageable pageable);
+
+    @Query("""
+            SELECT
+                p.id AS id,
+                p.title AS title,
+                '' AS content,
+                p.createdAt AS createdAt,
+                p.updatedAt AS updatedAt,
+                p.commentCount AS commentCount,
+                p.likeCount AS likeCount,
+                p.viewCount AS viewCount,
+                p.pinned AS pinned,
+                p.draft AS draft,
+                p.imageUrl AS legacyImageUrl,
+                a.username AS authorUsername
+            FROM Post p
+            JOIN p.author a
+            WHERE p.board = :board
+              AND p.draft = false
+              AND (
+                p.likeCount < :cursorSortValue
+                OR (
+                    p.likeCount = :cursorSortValue
+                    AND (
+                        p.createdAt < :cursorCreatedAt
+                        OR (p.createdAt = :cursorCreatedAt AND p.id < :cursorId)
+                    )
+                )
+              )
+            ORDER BY p.likeCount DESC, p.createdAt DESC, p.id DESC
+            """)
+    Slice<BoardScopedPostListRow> findBoardScopedScrollPostListRowsByBoardAndLikeCountAfter(@Param("board") Board board,
+                                                                                            @Param("cursorSortValue") Long cursorSortValue,
+                                                                                            @Param("cursorCreatedAt") LocalDateTime cursorCreatedAt,
+                                                                                            @Param("cursorId") Long cursorId,
+                                                                                            Pageable pageable);
 
     @Query(value = """
             SELECT
@@ -751,6 +828,29 @@ public interface PostRepository extends JpaRepository<Post, Long>, PostRepositor
                 p.pinned AS pinned,
                 p.draft AS draft,
                 p.imageUrl AS legacyImageUrl,
+                a.username AS authorUsername
+            FROM Post p
+            JOIN p.author a
+            WHERE p.board = :board
+              AND p.draft = false
+            ORDER BY p.commentCount DESC, p.createdAt DESC, p.id DESC
+            """)
+    Slice<BoardScopedPostListRow> findBoardScopedScrollPostListRowsByBoardOrderByCommentCountDesc(@Param("board") Board board,
+                                                                                                   Pageable pageable);
+
+    @Query("""
+            SELECT
+                p.id AS id,
+                p.title AS title,
+                '' AS content,
+                p.createdAt AS createdAt,
+                p.updatedAt AS updatedAt,
+                p.commentCount AS commentCount,
+                p.likeCount AS likeCount,
+                p.viewCount AS viewCount,
+                p.pinned AS pinned,
+                p.draft AS draft,
+                p.imageUrl AS legacyImageUrl,
                 a.username AS authorUsername,
                 b.name AS boardName,
                 b.slug AS boardSlug
@@ -776,6 +876,42 @@ public interface PostRepository extends JpaRepository<Post, Long>, PostRepositor
                                                                          @Param("cursorCreatedAt") LocalDateTime cursorCreatedAt,
                                                                          @Param("cursorId") Long cursorId,
                                                                          Pageable pageable);
+
+    @Query("""
+            SELECT
+                p.id AS id,
+                p.title AS title,
+                '' AS content,
+                p.createdAt AS createdAt,
+                p.updatedAt AS updatedAt,
+                p.commentCount AS commentCount,
+                p.likeCount AS likeCount,
+                p.viewCount AS viewCount,
+                p.pinned AS pinned,
+                p.draft AS draft,
+                p.imageUrl AS legacyImageUrl,
+                a.username AS authorUsername
+            FROM Post p
+            JOIN p.author a
+            WHERE p.board = :board
+              AND p.draft = false
+              AND (
+                p.commentCount < :cursorSortValue
+                OR (
+                    p.commentCount = :cursorSortValue
+                    AND (
+                        p.createdAt < :cursorCreatedAt
+                        OR (p.createdAt = :cursorCreatedAt AND p.id < :cursorId)
+                    )
+                )
+              )
+            ORDER BY p.commentCount DESC, p.createdAt DESC, p.id DESC
+            """)
+    Slice<BoardScopedPostListRow> findBoardScopedScrollPostListRowsByBoardAndCommentCountAfter(@Param("board") Board board,
+                                                                                                @Param("cursorSortValue") Long cursorSortValue,
+                                                                                                @Param("cursorCreatedAt") LocalDateTime cursorCreatedAt,
+                                                                                                @Param("cursorId") Long cursorId,
+                                                                                                Pageable pageable);
 
     /**
      * 문제 해결:

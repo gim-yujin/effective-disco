@@ -128,8 +128,7 @@ class NotificationServiceTest {
     // ── store after commit ───────────────────────────────
 
     @Test
-    void storeNotificationAfterCommit_savesNotification_incrementsCounter_andPushesRefreshedCount() {
-        User recipient = makeUser("alice");
+    void storeNotificationAfterCommit_savesNotification_incrementsCounter_andPushesKnownCount() {
         NotificationRequestedEvent event = new NotificationRequestedEvent(
                 "alice",
                 NotificationType.LIKE,
@@ -137,15 +136,13 @@ class NotificationServiceTest {
                 "/posts/1"
         );
 
-        ReflectionTestUtils.setField(recipient, "id", 11L);
-        given(userRepository.findByUsernameForUpdate("alice")).willReturn(Optional.of(recipient));
-        given(userRepository.findUnreadNotificationCountByUsername("alice")).willReturn(Optional.of(3L));
+        given(userRepository.findNotificationRecipientSnapshotByUsernameForUpdate("alice"))
+                .willReturn(Optional.of(notificationRecipient(11L, "alice", 2L)));
 
         notificationService.storeNotificationAfterCommit(event);
 
         verify(notificationRepository).save(any(Notification.class));
-        verify(userRepository).refreshUnreadNotificationCount(11L);
-        verify(userRepository).findUnreadNotificationCountByUsername("alice");
+        verify(userRepository).incrementUnreadNotificationCount(11L);
         verify(sseEmitterService).sendCount("alice", 3L);
     }
 
@@ -157,7 +154,7 @@ class NotificationServiceTest {
                 "좋아요!",
                 "/posts/1"
         );
-        given(userRepository.findByUsernameForUpdate("ghost")).willReturn(Optional.empty());
+        given(userRepository.findNotificationRecipientSnapshotByUsernameForUpdate("ghost")).willReturn(Optional.empty());
 
         notificationService.storeNotificationAfterCommit(event);
 

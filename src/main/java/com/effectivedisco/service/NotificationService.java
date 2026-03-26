@@ -109,25 +109,26 @@ public class NotificationService {
      */
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public void storeNotificationAfterCommit(NotificationRequestedEvent event) {
-        User recipient = userRepository.findByUsernameForUpdate(event.recipientUsername()).orElse(null);
+        UserRepository.NotificationRecipientSnapshot recipient =
+                userRepository.findNotificationRecipientSnapshotByUsernameForUpdate(event.recipientUsername()).orElse(null);
         if (recipient == null) {
             return;
         }
 
         Notification notification = Notification.builder()
-                .recipient(recipient)
+                .recipient(userRepository.getReferenceById(recipient.getId()))
                 .type(event.type())
                 .message(event.message())
                 .link(event.link())
                 .build();
         notificationRepository.save(notification);
         // 문제 해결:
-        // notification unread counter 의 핵심 요구사항은 속도보다 정합성이다.
-        // store/read-page/read-all 이 같은 recipient 에서 서로 엇갈릴 때 stale snapshot 으로 +1/-N 을 적용하면
-        // counter drift 가 남는다. 수신자 행을 직렬화한 상태에서 실제 unread row 수로 refresh 하면
-        // mutation 경합 후에도 counter 가 항상 DB 실값으로 수렴한다.
-        userRepository.refreshUnreadNotificationCount(recipient.getId());
-        scheduleUnreadCountRefreshAfterCommit(recipient.getUsername());
+        // notification.store 는 같은 recipient 잠금 아래에서만 실행되므로
+        // 저장 직후 unread counter 는 "현재 잠금 스냅샷 + 1" 이 정확한 값이다.
+        // 매 insert 마다 COUNT(*) refresh 를 다시 치면 hot path 에서 불필요한 DB 시간을 쓰므로
+        // store 경로는 원자 increment 와 확정 unread 값 전파로 마무리한다.
+        userRepository.incrementUnreadNotificationCount(recipient.getId());
+        scheduleUnreadCountRefreshAfterCommit(recipient.getUsername(), recipient.getUnreadNotificationCount() + 1);
     }
 
     /**
@@ -277,8 +278,8 @@ public class NotificationService {
      * 불필요하게 한 번 더 DB를 친다. 트랜잭션 안에서 확정한 unread 값을 그대로 넘겨
      * UI와 DB 시점을 맞추면서 post-commit 재조회도 없앤다.
      */
-    private void scheduleUnreadCountRefreshAfterCommit(String username) {
-        Runnable push = () -> sseEmitterService.sendCount(username, getUnreadCount(username));
+    private void scheduleUnreadCountRefreshAfterCommit(String username, long unreadCount) {
+        Runnable push = () -> sseEmitterService.sendCount(username, unreadCount);
 
         if (!TransactionSynchronizationManager.isSynchronizationActive()) {
             push.run();
@@ -291,6 +292,10 @@ public class NotificationService {
                 push.run();
             }
         });
+    }
+
+    private void scheduleUnreadCountRefreshAfterCommit(String username) {
+        scheduleUnreadCountRefreshAfterCommit(username, getUnreadCount(username));
     }
 
     private UserRepository.NotificationRecipientSnapshot findNotificationRecipient(String username) {

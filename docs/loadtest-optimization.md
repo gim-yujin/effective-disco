@@ -3105,3 +3105,97 @@ GRADLE_USER_HOME=/tmp/gradle-home ./gradlew test --no-daemon
   현재 2시간 stable factor 후보로는 가장 근접한 구간이다.
 - 즉 다음 단계는 `0.75 / 2시간`로 안정 구간을 확정하거나,
   `0.8`을 목표 기준으로 추가 최적화를 하는 것 중 하나다.
+
+## 2026-03-26 `post.list.browse.rows`, `post.list.search.rows`, `notification.store` 최적화
+
+상태: 구현 및 clean short soak 검증 완료
+
+### 변경 배경
+
+- `0.8 / 2시간`, `0.85 / 2시간`, `0.9 / 2시간` soak 추세에서
+  장시간 drift의 핵심은 `post.list.browse.rows`, `post.list.search.rows`, `notification.store`였다.
+- 여기서 중요한 점은 개별 경로의 1% 개선보다,
+  hot path 전체 data flow를 줄이면서 다른 모듈을 악화시키지 않는 변경이어야 한다는 것이다.
+- 이번 변경은 다음 trade-off를 피하는 데 초점을 뒀다.
+  - browse/search를 빠르게 만들겠다고 응답 계약을 줄여 웹/API 소비자를 깨는 것
+  - notification.store를 빠르게 만들겠다고 unread counter 정합성을 희생하는 것
+
+### data flow 분석 결과
+
+- `post.list.browse.rows`
+  - latest browse는 이미 `id window -> row projection` 2단계였지만,
+    작은 id 집합 projection에서도 `boards` join을 계속 타고 있었다.
+  - board-scoped browse 요청은 `boardSlug`로 이미 게시판이 확정되므로,
+    row마다 board name/slug를 DB에서 다시 읽는 것은 중복이었다.
+- `post.list.search.rows`
+  - board-scoped keyword search도 같은 문제를 가졌다.
+  - 서비스는 이미 `Board`를 들고 있는데,
+    native query는 `boards` join으로 같은 `name/slug`를 다시 붙였다.
+- `notification.store`
+  - notification mutation의 consistency 모델은 유지해야 한다.
+  - 하지만 store 경로는 `recipient 잠금 -> insert -> unread COUNT(*) refresh -> after-commit unread 재조회`로
+    직렬화 비용 외에 추가 count/read 비용이 있었다.
+  - store는 같은 recipient 잠금 아래에서 실행되므로
+    `현재 unread snapshot + 1`이 이미 정확한 확정값이다.
+
+### 구현 내용
+
+- board-scoped browse rows
+  - [PostRepository.java](/home/admin0/effective-disco/src/main/java/com/effectivedisco/repository/PostRepository.java)
+  - [PostService.java](/home/admin0/effective-disco/src/main/java/com/effectivedisco/service/PostService.java)
+  - latest browse의 small id batch projection에서 `boards` join을 제거했다.
+  - likes/comments browse도 board-scoped 전용 projection을 추가해 `posts + author`만 읽게 했다.
+  - board name/slug는 서비스 레이어에서 이미 확보한 `Board`로 주입한다.
+- board-scoped search rows
+  - [PostRepositoryImpl.java](/home/admin0/effective-disco/src/main/java/com/effectivedisco/repository/PostRepositoryImpl.java)
+  - PostgreSQL/H2 fallback keyword search row/slice query에서
+    board-scoped 요청은 `boards` join 없이 `:boardName`, `:boardSlug`를 직접 select 하도록 바꿨다.
+  - count query와 slice query가 서로 다른 named parameter 집합을 가지므로,
+    실제로 존재하는 parameter에만 값을 바인딩하도록 정리했다.
+- notification.store
+  - [UserRepository.java](/home/admin0/effective-disco/src/main/java/com/effectivedisco/repository/UserRepository.java)
+  - [NotificationService.java](/home/admin0/effective-disco/src/main/java/com/effectivedisco/service/NotificationService.java)
+  - `findByUsernameForUpdate(User entity)` 대신
+    `NotificationRecipientSnapshot FOR UPDATE` 경로를 추가했다.
+  - store는 `save -> incrementUnreadNotificationCount -> after-commit exact unread push`로 마무리한다.
+  - 즉 store hot path에서 `refreshUnreadNotificationCount()`와 `getUnreadCount()` 재조회가 빠졌다.
+
+### 검증
+
+- targeted test
+  - `NotificationServiceTest`
+  - `NotificationAfterCommitIntegrationTest`
+  - `PostListOptimizationIntegrationTest`
+  - `PostControllerTest`
+- full test
+  - `GRADLE_USER_HOME=/tmp/gradle-home ./gradlew test --no-daemon`
+- clean short soak
+  - [soak-20260326-113432.md](/home/admin0/effective-disco/loadtest/results/soak-20260326-113432.md)
+  - [soak-20260326-113432-server.json](/home/admin0/effective-disco/loadtest/results/soak-20260326-113432-server.json)
+
+### 결과
+
+- `status = PASS`
+- `http p95 = 221.28ms`
+- `http p99 = 282.98ms`
+- `duplicateKeyConflicts = 0`
+- `dbPoolTimeouts = 0`
+- `unreadNotificationMismatchUsers = 0`
+
+주요 profile:
+
+- `post.list.browse.rows avgWall = 1.89ms`, `avgSql = 1.45ms`, `avgSqlStatementCount = 1.22`
+- `post.list.search.rows avgWall = 2.03ms`, `avgSql = 1.57ms`, `avgSqlStatementCount = 1.0`
+- `notification.store avgWall = 2.02ms`, `avgSql = 1.29ms`, `avgSqlStatementCount = 3.0`
+- `notification.read-page.summary.transition avgWall = 2.76ms`, `avgSql = 1.78ms`
+
+### 해석
+
+- 이번 변경은 응답 계약과 notification consistency를 유지한 채
+  `browse/search/store` hot path의 중복 data flow를 직접 줄였다.
+- 특히 board-scoped browse/search에서 `boards` join을 제거한 것은
+  게시판 정보가 이미 요청 컨텍스트에 있을 때만 적용되는 국소 최적화라
+  다른 목록 경로를 악화시키지 않는다.
+- notification.store는 consistency 모델을 유지한 채
+  `COUNT(*) refresh + after-commit unread 재조회`를 제거했기 때문에,
+  read-page/read-all 경로의 exact refresh 전략과도 충돌하지 않는다.
