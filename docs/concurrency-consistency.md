@@ -2212,3 +2212,52 @@ SOAK_FACTOR=0.9 SOAK_DURATION=1h WARMUP_DURATION=2m SAMPLE_INTERVAL_SECONDS=60 \
   `search id-first` 실험 이전 흐름을 기준으로 이어가야 한다.
 - 다음 성능 검증은 rollback 된 코드 기준으로
   `clean 0.9 / 15분 -> clean 0.9 / 2시간` 순서로 다시 잡는 것이 맞다.
+
+## 2026-03-27 clean broad mixed `0.9 / 15분` rerun after search rollback
+
+상태: 완료
+
+### 실행 목적
+
+- search `id-first` 실험 rollback 이후,
+  clean broad mixed `0.9 / 15분` strict 기준이 실제로 어디까지 회복됐는지 확인한다.
+- `dbPoolTimeouts` 중심 회귀가 rollback 으로 사라졌는지,
+  아니면 다른 strict failure 가 남는지 분리한다.
+
+### 결과
+
+- suite:
+  [soak-20260327-063924.md](/home/admin0/effective-disco/loadtest/results/soak-20260327-063924.md)
+- k6 summary:
+  [soak-20260327-063924-k6.json](/home/admin0/effective-disco/loadtest/results/soak-20260327-063924-k6.json)
+- server snapshot:
+  [soak-20260327-063924-server.json](/home/admin0/effective-disco/loadtest/results/soak-20260327-063924-server.json)
+- timeline:
+  [soak-20260327-063924-metrics.jsonl](/home/admin0/effective-disco/loadtest/results/soak-20260327-063924-metrics.jsonl)
+- sql snapshot:
+  [soak-20260327-063924-sql.tsv](/home/admin0/effective-disco/loadtest/results/soak-20260327-063924-sql.tsv)
+- 상태: `FAIL (strict)`
+- `http p95 = 231.56ms`
+- `http p99 = 293.50ms`
+- `unexpected_response_rate = 0.0002`
+- `dbPoolTimeouts = 0`
+- `duplicateKeyConflicts = 0`
+- `unreadNotificationMismatchUsers = 0`
+
+### 5분 모니터링 요약
+
+- `5분`: `dbPoolTimeouts = 0`, `post.list.search.rows avgWall ≈ 2.96ms`
+- `10분`: `dbPoolTimeouts = 0`, `post.list.search.rows avgWall ≈ 3.79ms`
+- `15분`: `dbPoolTimeouts = 0`, `post.list.search.rows avgWall ≈ 4.48ms`
+
+### 해석
+
+- rollback 이후 `dbPoolTimeouts = 4 -> 0`으로 회귀는 사라졌다.
+- `duplicateKeyConflicts`, `unreadNotificationMismatchUsers`, SQL mismatch도 모두 `0`이었다.
+- 이번 strict fail 원인은 성능 saturation 이 아니라
+  `unexpected_response_rate = 0.0002` 단 하나였다.
+- 즉 현재 clean `0.9 / 15분`의 남은 gap은
+  pool 고갈이 아니라 소량의 unexpected response 이다.
+- 이 런은 k6 threshold 자체로는 통과 가능하지만,
+  soak runner 는 `unexpected_response_rate == 0.0000`만 허용하는
+  zero-tolerance 규칙을 쓰기 때문에 최종 상태가 `FAIL`로 남는다.

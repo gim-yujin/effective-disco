@@ -3973,3 +3973,71 @@ GRADLE_USER_HOME=/tmp/gradle-home ./gradlew test --no-daemon
 - 다음 실측 우선순위는
   rollback 된 코드 기준으로
   `clean 0.9 / 15분 -> clean 0.9 / 2시간`을 다시 재는 것이다.
+
+## 2026-03-27 rollback 이후 clean `0.9 / 15분` 재측정
+
+상태: 실측 완료
+
+### 결과
+
+- suite:
+  [soak-20260327-063924.md](/home/admin0/effective-disco/loadtest/results/soak-20260327-063924.md)
+- k6 summary:
+  [soak-20260327-063924-k6.json](/home/admin0/effective-disco/loadtest/results/soak-20260327-063924-k6.json)
+- server snapshot:
+  [soak-20260327-063924-server.json](/home/admin0/effective-disco/loadtest/results/soak-20260327-063924-server.json)
+- timeline:
+  [soak-20260327-063924-metrics.jsonl](/home/admin0/effective-disco/loadtest/results/soak-20260327-063924-metrics.jsonl)
+- sql snapshot:
+  [soak-20260327-063924-sql.tsv](/home/admin0/effective-disco/loadtest/results/soak-20260327-063924-sql.tsv)
+
+숫자:
+
+- `status = FAIL (strict)`
+- `http p95 = 231.56ms`
+- `http p99 = 293.50ms`
+- `unexpected_response_rate = 0.0002`
+- `dbPoolTimeouts = 0`
+- `duplicateKeyConflicts = 0`
+- `unreadNotificationMismatchUsers = 0`
+
+5분 구간 관측:
+
+- `5분`: `post.list.search.rows avgWall ≈ 2.96ms`
+- `10분`: `post.list.search.rows avgWall ≈ 3.79ms`
+- `15분`: `post.list.search.rows avgWall ≈ 4.48ms`
+- 전 구간 `dbPoolTimeouts = 0`
+
+### rollback 효과
+
+- rollback 전 실험 런:
+  [soak-20260327-053923.md](/home/admin0/effective-disco/loadtest/results/soak-20260327-053923.md)
+- rollback 후 런:
+  [soak-20260327-063924.md](/home/admin0/effective-disco/loadtest/results/soak-20260327-063924.md)
+- `dbPoolTimeouts = 4 -> 0`, `100% 개선`
+- `unexpected_response_rate = 0.0000 -> 0.0002`, strict 기준으로는 악화
+- `http p95 = 230.07ms -> 231.56ms`, `0.6% 악화`
+- `http p99 = 293.39ms -> 293.50ms`, `0.0% 수준의 사실상 동일`
+
+### 해석
+
+- search `id-first` rollback 은 목적대로
+  `dbPoolTimeouts` 회귀를 제거했다.
+- 하지만 clean `0.9 / 15분` strict 기준은 아직 완전 통과가 아니다.
+- 남은 failure 는 `unexpected_response_rate = 0.0002`이며,
+  성격상 pool saturation 보다는 소량의 endpoint/check noise 에 가깝다.
+- 이 차이는 중요하다.
+  - 이전 failure 는 `search rows` 구조 변경이 직접 만든
+    `connection contention`이었다.
+  - 현재 failure 는 strict runner 가
+    `unexpected_response_rate != 0.0000`을 허용하지 않기 때문에 발생한다.
+
+### 교훈
+
+- 잘못된 최적화는 빨리 rollback 해서 기준선을 복원해야 한다.
+- strict soak 판정은
+  `성능 문제`와 `운영 정책상 zero-tolerance`를 구분해서 읽어야 한다.
+- 현재 search path 의 다음 최적화는
+  browse 의 `id-first`를 복제하는 방식이 아니라,
+  실제 unexpected response 원인이나
+  keyword search matching cost 를 좁히는 방식으로 가야 한다.
