@@ -3449,3 +3449,90 @@ GRADLE_USER_HOME=/tmp/gradle-home ./gradlew test --no-daemon
   이번 ranked browse 최적화는 바로 그 경우였다.
 - 부작용을 줄이는 방법도 확인됐다.
   API/SSR 계약은 유지하고, 서비스/리포지토리 내부 data flow만 바꿔도 큰 개선을 낼 수 있다.
+
+## 2026-03-26 clean broad mixed `0.85 / 2시간` 재측정 after ranked browse 최적화
+
+상태: 완료
+
+### 실행 조건
+
+- clean `effectivedisco_loadtest` DB `DROP/CREATE`
+- fresh `loadtest` 앱
+- `SOAK_FACTOR=0.85`
+- `SOAK_DURATION=2h`
+- `WARMUP_DURATION=2m`
+
+### 결과
+
+- suite:
+  [soak-20260326-170952.md](/home/admin0/effective-disco/loadtest/results/soak-20260326-170952.md)
+- server:
+  [soak-20260326-170952-server.json](/home/admin0/effective-disco/loadtest/results/soak-20260326-170952-server.json)
+- sql:
+  [soak-20260326-170952-sql.tsv](/home/admin0/effective-disco/loadtest/results/soak-20260326-170952-sql.tsv)
+
+숫자:
+
+- `status = PASS`
+- `p95 = 244.29ms`
+- `p99 = 314.73ms`
+- `unexpected_response_rate = 0.0000`
+- `duplicateKeyConflicts = 0`
+- `dbPoolTimeouts = 0`
+- `unreadNotificationMismatchUsers = 0`
+
+5분 모니터링 요약:
+
+- `80분`: `dbPoolTimeouts = 0`
+- `85분`: `dbPoolTimeouts = 0`
+- `90분`: `dbPoolTimeouts = 0`
+- `95분`: `dbPoolTimeouts = 0`
+- `100분`: `dbPoolTimeouts = 0`
+- `105분`: `dbPoolTimeouts = 0`
+- `110분`: `dbPoolTimeouts = 0`
+- `115분`: `dbPoolTimeouts = 0`
+- `120분`: `dbPoolTimeouts = 0`
+
+주요 profile:
+
+- `post.list.browse.rows avgWall = 1.79ms`, `avgSql = 0.76ms`
+- `post.list.search.rows avgWall = 19.01ms`, `avgSql = 18.49ms`
+- `notification.store avgWall = 2.24ms`, `avgSql = 1.44ms`
+- `notification.read-page.summary.transition avgWall = 3.07ms`, `avgSql = 1.95ms`
+
+### strict same-condition 전후 비교
+
+- 비교 기준:
+  [soak-20260326-042905.md](/home/admin0/effective-disco/loadtest/results/soak-20260326-042905.md)
+  대비
+  [soak-20260326-170952.md](/home/admin0/effective-disco/loadtest/results/soak-20260326-170952.md)
+- `http p95 = 519.43ms -> 244.29ms`, `53.0% 개선`
+- `http p99 = 1103.31ms -> 314.73ms`, `71.5% 개선`
+- `dbPoolTimeouts = 956 -> 0`, `100% 개선`
+- `post.list.browse.rows avgWall = 30.52ms -> 1.79ms`, `94.1% 개선`
+- `post.list.browse.rows avgSql = 29.94ms -> 0.76ms`, `97.5% 개선`
+- `post.list.search.rows avgWall = 19.74ms -> 19.01ms`, `3.7% 개선`
+- `post.list.search.rows avgSql = 19.22ms -> 18.49ms`, `3.8% 개선`
+- `notification.store avgWall = 5.76ms -> 2.24ms`, `61.2% 개선`
+- `notification.store avgSql = 5.11ms -> 1.44ms`, `71.8% 개선`
+- `notification.read-page.summary.transition avgWall = 2.83ms -> 3.07ms`, `8.2% 악화`
+
+### 원인 분석
+
+- ranked browse 최적화가 `0.8 / 2시간`에서만 통했던 것이 아니라
+  바로 위 factor인 `0.85 / 2시간`에서도 그대로 유지됐다.
+- 전체 결과를 움직인 건 여전히 `post.list.browse.rows`의 급감이다.
+  즉 `board scoped likes/comments browse`의 window 추출을 인덱스로 먼저 받고,
+  projection join을 작은 id 집합으로 제한한 것이 핵심이다.
+- `post.list.search.rows`는 여전히 가장 큰 read drift 경로다.
+  다만 현재 구조에선 browse가 더 이상 pool을 먼저 포화시키지 않아서,
+  search drift가 `0.85 / 2시간` PASS를 깨뜨리지는 못했다.
+
+### 이번 결과의 교훈
+
+- 장시간 기준선은 가장 비싼 read path 하나만 바로잡아도 크게 올라갈 수 있다.
+- `browse`와 `search`가 동시에 존재하더라도,
+  먼저 더 비싼 `browse`를 지우면 전체 pool saturation이 급격히 줄어든다.
+- 국소 지표 중 일부가 완벽하지 않아도 된다.
+  이번에는 `notification.read-page.summary.transition`이 소폭 악화됐지만,
+  시스템 전체 결과는 오히려 크게 개선됐다.

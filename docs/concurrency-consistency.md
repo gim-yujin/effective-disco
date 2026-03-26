@@ -1920,3 +1920,62 @@ SOAK_FACTOR=0.9 SOAK_DURATION=1h WARMUP_DURATION=2m SAMPLE_INTERVAL_SECONDS=60 \
   이 국소 개선이 broad mixed 전체 `p95/p99`와 `dbPoolTimeouts`를 함께 끌어내렸다.
 - 즉 이번 결과는 `일부 경로 1% 개선`이 아니라,
   실제 장시간 기준선까지 바꾼 `핫 read path 구조 변경`의 효과로 보는 것이 맞다.
+
+## 2026-03-26 clean broad mixed `0.85 / 2시간` 재측정 after ranked browse 최적화
+
+상태: 완료
+
+### 실행 목적
+
+- ranked browse 최적화가 `0.8 / 2시간`뿐 아니라
+  바로 위 factor인 `0.85 / 2시간`까지 stable factor를 끌어올렸는지 확인한다.
+
+### 결과
+
+- suite:
+  [soak-20260326-170952.md](/home/admin0/effective-disco/loadtest/results/soak-20260326-170952.md)
+- server metrics:
+  [soak-20260326-170952-server.json](/home/admin0/effective-disco/loadtest/results/soak-20260326-170952-server.json)
+- sql snapshot:
+  [soak-20260326-170952-sql.tsv](/home/admin0/effective-disco/loadtest/results/soak-20260326-170952-sql.tsv)
+- 상태: `PASS`
+- `http p95 = 244.29ms`
+- `http p99 = 314.73ms`
+- `unexpected_response_rate = 0.0000`
+- `duplicateKeyConflicts = 0`
+- `dbPoolTimeouts = 0`
+- `unreadNotificationMismatchUsers = 0`
+
+### 5분 모니터링 요약
+
+- `80분`: `dbPoolTimeouts = 0`
+- `85분`: `dbPoolTimeouts = 0`
+- `90분`: `dbPoolTimeouts = 0`
+- `95분`: `dbPoolTimeouts = 0`
+- `100분`: `dbPoolTimeouts = 0`
+- `105분`: `dbPoolTimeouts = 0`
+- `110분`: `dbPoolTimeouts = 0`
+- `115분`: `dbPoolTimeouts = 0`
+- `120분`: `dbPoolTimeouts = 0`
+
+### 직전 동일 조건 대비 개선율
+
+- 비교 기준:
+  [soak-20260326-042905.md](/home/admin0/effective-disco/loadtest/results/soak-20260326-042905.md)
+  대비
+  [soak-20260326-170952.md](/home/admin0/effective-disco/loadtest/results/soak-20260326-170952.md)
+- `http p95 = 519.43ms -> 244.29ms`, `53.0% 개선`
+- `http p99 = 1103.31ms -> 314.73ms`, `71.5% 개선`
+- `dbPoolTimeouts = 956 -> 0`, `100% 개선`
+- `post.list.browse.rows avgWall = 30.52ms -> 1.79ms`, `94.1% 개선`
+- `post.list.search.rows avgWall = 19.74ms -> 19.01ms`, `3.7% 개선`
+- `notification.store avgWall = 5.76ms -> 2.24ms`, `61.2% 개선`
+
+### 해석
+
+- clean `0.85 / 2시간`은 이제 strict 기준으로도 `PASS`다.
+- 핵심은 여전히 `post.list.browse.rows`였고,
+  ranked browse를 `id-first -> small row batch`로 바꾼 효과가
+  `0.85 / 2시간`에서도 그대로 유지됐다.
+- `post.list.search.rows`는 여전히 가장 큰 장시간 drift 경로지만,
+  현재 구조에서는 `0.85 / 2시간` 기준선을 깨뜨릴 정도는 아니었다.
