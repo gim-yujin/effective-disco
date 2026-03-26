@@ -2035,3 +2035,55 @@ SOAK_FACTOR=0.9 SOAK_DURATION=1h WARMUP_DURATION=2m SAMPLE_INTERVAL_SECONDS=60 \
 - 반대로 `duplicateKeyConflicts`, `unreadNotificationMismatchUsers`, SQL mismatch는 모두 `0`이었고,
   long-run profile도 이전 `0.9 / 2시간` 실패 대비 크게 안정적이었다.
 - 따라서 현재 `0.9 / 2시간`의 남은 과제는 장시간 drift보다는 초기 구간의 connection contention을 더 줄이는 것이다.
+
+## 2026-03-26~27 clean initial-burst 분리 측정
+
+상태: 완료
+
+### 실행 목적
+
+- clean `0.9 / 2시간` broad mixed 재측정에서 보인
+  `5분 내 dbPoolTimeouts = 64`가
+  실제로 재현 가능한 초기 burst인지,
+  아니면 full long-run 특유의 단발성 noise인지 확인한다.
+- 이를 위해 `5분 soak + 30초 샘플링`만 따로 떼어
+  broad mixed / pair profile / 원래 warmup 조건을 각각 비교한다.
+
+### 실행 도구
+
+- runner:
+  [run-bbs-initial-burst.sh](/home/admin0/effective-disco/loadtest/run-bbs-initial-burst.sh)
+
+### 결과
+
+- broad mixed, `warmup = 30s`:
+  [soak-20260326-234830.md](/home/admin0/effective-disco/loadtest/results/soak-20260326-234830.md)
+  - `status = PASS`
+  - `dbPoolTimeouts = 0`
+  - `http p95 = 223.42ms`
+  - `http p99 = 284.99ms`
+- `browse_search+relation_mixed`, `warmup = 30s`:
+  [soak-20260326-235634.md](/home/admin0/effective-disco/loadtest/results/soak-20260326-235634.md)
+  - `status = PASS`
+  - `dbPoolTimeouts = 0`
+  - `http p95 = 188.23ms`
+  - `http p99 = 214.08ms`
+- broad mixed, `warmup = 2m`:
+  [soak-20260327-000344.md](/home/admin0/effective-disco/loadtest/results/soak-20260327-000344.md)
+  - `status = PASS`
+  - `dbPoolTimeouts = 0`
+  - `http p95 = 232.15ms`
+  - `http p99 = 295.48ms`
+
+### 해석
+
+- 초기 `5분 burst`는 분리된 short run에서는 재현되지 않았다.
+- 같은 clean DB, 같은 `0.9` factor, 같은 broad mixed profile,
+  심지어 원래 `2시간` 실패 런과 같은 `2분 warmup` 조건에서도
+  `dbPoolTimeouts = 0`이었다.
+- 따라서 [soak-20260326-194048.md](/home/admin0/effective-disco/loadtest/results/soak-20260326-194048.md)
+  의 `dbPoolTimeouts = 64`는 현재로서는
+  `독립적으로 재현 가능한 초기 병목`이라기보다
+  full long-run 중 한 번 겹친 단발성 contention noise로 보는 편이 더 맞다.
+- 즉 strict `0.9 / 2시간` gap은 여전히 남아 있지만,
+  그것을 설명하는 근거로 `초기 5분 burst가 항상 재현된다`고 말할 수는 없게 됐다.

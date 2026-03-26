@@ -198,6 +198,22 @@ NOTIFICATION_STRESS_VUS=20           # read-all stress 시나리오 VU
 NOTIFICATION_STRESS_DURATION=45s     # read-all stress duration
 ```
 
+초기 burst만 따로 보려면:
+
+```bash
+SCENARIO_PROFILE=full \
+SOAK_FACTOR=0.9 \
+SOAK_DURATION=5m \
+WARMUP_DURATION=2m \
+SAMPLE_INTERVAL_SECONDS=30 \
+BASE_URL=http://127.0.0.1:18082 \
+./loadtest/run-bbs-initial-burst.sh
+```
+
+- 목적: `2시간 soak` 전체를 다시 돌리지 않고,
+  warmup 직후 `5분` 구간의 timeout burst 재현 여부만 분리 측정
+- broad mixed 외에도 `SCENARIO_PROFILE=browse_search+relation_mixed` 같은 pair profile 비교에 그대로 쓸 수 있다.
+
 ## 결과물
 
 - `loadtest/results/k6-summary-*.json`: 클라이언트 관점 p95/p99, 실패율

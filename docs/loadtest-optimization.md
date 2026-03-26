@@ -3619,3 +3619,61 @@ GRADLE_USER_HOME=/tmp/gradle-home ./gradlew test --no-daemon
   warmup 직후의 burst 구간까지 따로 봐야 한다.
 - 이번 결과는 `browse`가 해결된 뒤 남은 다음 타깃이
   `search rows`와 초기 구간 contention이라는 점을 분명하게 보여준다.
+
+## 2026-03-26~27 initial-burst 분리 계측
+
+상태: 완료
+
+### 구현
+
+- runner:
+  [run-bbs-initial-burst.sh](/home/admin0/effective-disco/loadtest/run-bbs-initial-burst.sh)
+
+의도:
+
+- 기존 [run-bbs-soak.sh](/home/admin0/effective-disco/loadtest/run-bbs-soak.sh)
+  전체 흐름(cleanup, SQL snapshot, metrics timeline)은 그대로 재사용하고,
+  `5분 soak + 30초 샘플링` 조건만 쉽게 반복 실행하게 한다.
+- `0.9 / 2시간` 실패 런에서 보였던
+  `5분 내 dbPoolTimeouts = 64`가
+  실제로 재현 가능한 startup burst인지 따로 확인하기 위한 도구다.
+
+### 측정 결과
+
+- broad mixed, `warmup = 30s`:
+  [soak-20260326-234830.md](/home/admin0/effective-disco/loadtest/results/soak-20260326-234830.md)
+  - `status = PASS`
+  - `dbPoolTimeouts = 0`
+  - `maxThreadsAwaitingConnection = 198`
+- `browse_search+relation_mixed`, `warmup = 30s`:
+  [soak-20260326-235634.md](/home/admin0/effective-disco/loadtest/results/soak-20260326-235634.md)
+  - `status = PASS`
+  - `dbPoolTimeouts = 0`
+  - `maxThreadsAwaitingConnection = 182`
+- broad mixed, `warmup = 2m`:
+  [soak-20260327-000344.md](/home/admin0/effective-disco/loadtest/results/soak-20260327-000344.md)
+  - `status = PASS`
+  - `dbPoolTimeouts = 0`
+  - `maxThreadsAwaitingConnection = 193`
+
+### 원인 분석
+
+- 분리된 `5분` 런에서는 broad mixed도, 주요 pair profile도,
+  원래와 같은 `2분 warmup` 조건에서도 timeout burst가 재현되지 않았다.
+- 즉 [soak-20260326-194048.md](/home/admin0/effective-disco/loadtest/results/soak-20260326-194048.md)
+  의 `dbPoolTimeouts = 64`는
+  현재 코드 기준 `항상 재현되는 startup 병목`이라고 보긴 어렵다.
+- 오히려 현재 data는:
+  - steady-state browse는 충분히 줄었고
+  - search drift는 남아 있지만 short burst를 직접 만들진 않았으며
+  - 문제는 full `2시간` long-run 안에서 우연히 겹친 contention noise일 수 있음을 가리킨다.
+
+### 교훈
+
+- long-run에서 한번 나온 초기 timeout만으로
+  곧바로 `재현 가능한 startup bottleneck`이라고 단정하면 안 된다.
+- 같은 factor와 warmup 조건으로 짧게 분리해 보면,
+  많은 경우 long-run 고유 노이즈와 실제 구조적 병목을 분리할 수 있다.
+- 이 단계 덕분에 다음 우선순위는
+  `초기 burst 전용 응급처치`가 아니라
+  여전히 남아 있는 `post.list.search.rows` 최적화 쪽으로 돌아갔다.
