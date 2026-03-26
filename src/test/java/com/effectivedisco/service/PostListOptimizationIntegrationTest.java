@@ -190,13 +190,9 @@ class PostListOptimizationIntegrationTest {
         assertThat(result.isHasNext()).isTrue();
         assertThat(result.getNextCursorCreatedAt()).isNotNull();
         assertThat(result.getNextCursorId()).isNotNull();
-        assertThat(result.getContent()).allSatisfy(post -> {
-            assertThat(post.getBoardSlug()).isEqualTo("slice-" + tagPrefix);
-            assertThat(post.getContent()).isEmpty();
-        });
         assertThat(statistics.getPrepareStatementCount())
-                .as("문제 해결 검증: API keyword search slice 는 board lookup + id window + row batch + tag/image batch 수준으로 끝나야 한다")
-                .isLessThanOrEqualTo(5L);
+                .as("문제 해결 검증: API search slice 는 count(*) 없이 board lookup + rows query + tag/image batch 수준으로 끝나야 한다")
+                .isLessThanOrEqualTo(4L);
     }
 
     @Test

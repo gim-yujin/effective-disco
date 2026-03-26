@@ -2182,3 +2182,33 @@ SOAK_FACTOR=0.9 SOAK_DURATION=1h WARMUP_DURATION=2m SAMPLE_INTERVAL_SECONDS=60 \
 - 따라서 이번 search `id-first` 변경은
   `국소 경로 개선`은 일부 있었지만,
   broad mixed strict 기준으로는 아직 받아들일 수 있는 최적화라고 보기 어렵다.
+
+## 2026-03-27 `post.list.search.rows` recent optimization rollback
+
+상태: 완료
+
+### 배경
+
+- [soak-20260327-053923.md](/home/admin0/effective-disco/loadtest/results/soak-20260327-053923.md)
+  에서 확인한 것처럼
+  `post.list.search.rows` `id-first -> small row batch` 실험은
+  clean broad mixed `0.9 / 15분` strict 기준을 `PASS -> FAIL`로 바꿨다.
+- browse 와 notification 의 국소 개선은 있었지만,
+  핵심 타깃인 search rows 는 `35.7%` 악화됐다.
+
+### 조치
+
+- 현재 코드에서는 search slice 경로를 다시
+  기존 `single row query` data flow 로 복구했다.
+- rollback 대상은 search 관련 source 만 한정했고,
+  ranked browse 최적화와 soak runner readiness 수정은 유지했다.
+
+### 현재 해석
+
+- `2026-03-27 search rows optimization` 측정 결과는
+  유효한 실험 기록이지만,
+  더 이상 현재 코드 baseline 으로 간주하지 않는다.
+- 현재 baseline 해석은
+  `search id-first` 실험 이전 흐름을 기준으로 이어가야 한다.
+- 다음 성능 검증은 rollback 된 코드 기준으로
+  `clean 0.9 / 15분 -> clean 0.9 / 2시간` 순서로 다시 잡는 것이 맞다.

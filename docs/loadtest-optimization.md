@@ -3924,3 +3924,52 @@ GRADLE_USER_HOME=/tmp/gradle-home ./gradlew test --no-daemon
   `browse 63% 개선` 같은 국소 성공이 있어도,
   `search 35.7% 악화`와 strict `PASS -> FAIL`이 생기면
   전체 최적화로 채택하면 안 된다는 좋은 예다.
+
+## 2026-03-27 `post.list.search.rows` `id-first` 실험 rollback
+
+상태: 완료
+
+### rollback 이유
+
+- 위 실험은 의도와 달리
+  `post.list.search.rows`를 느리게 만들었고,
+  clean broad mixed `0.9 / 15분` strict 기준을
+  `PASS -> FAIL`로 되돌렸다.
+- data flow 관점에서 보면
+  browse 와 달리 search 는
+  `정렬 window 절감`보다 `statement 추가 + row 재물질화` 비용이 더 컸다.
+- 즉 browse 에서 성공한 모양을 search 에 그대로 복제한 것이
+  잘못된 trade-off 였다.
+
+### rollback 범위
+
+- search 관련 source 만 되돌렸다.
+  - [PostRepositoryCustom.java](/home/admin0/effective-disco/src/main/java/com/effectivedisco/repository/PostRepositoryCustom.java)
+  - [PostRepository.java](/home/admin0/effective-disco/src/main/java/com/effectivedisco/repository/PostRepository.java)
+  - [PostRepositoryImpl.java](/home/admin0/effective-disco/src/main/java/com/effectivedisco/repository/PostRepositoryImpl.java)
+  - [PostService.java](/home/admin0/effective-disco/src/main/java/com/effectivedisco/service/PostService.java)
+  - [PostListOptimizationIntegrationTest.java](/home/admin0/effective-disco/src/test/java/com/effectivedisco/service/PostListOptimizationIntegrationTest.java)
+- 유지한 변경:
+  - ranked browse `id-first` 최적화
+  - notification consistency / store 최적화
+  - soak runner readiness 정규화
+
+### 검증
+
+- targeted:
+  - `PostListOptimizationIntegrationTest`
+  - `PostControllerTest`
+- full:
+  - `GRADLE_USER_HOME=/tmp/gradle-home ./gradlew test --no-daemon`
+- 결과:
+  - targeted 통과
+  - full test 통과
+
+### 현재 해석
+
+- `search id-first` 실험 결과는
+  최적화 설계 교훈으로는 남겨두되,
+  현재 코드 baseline 으로는 사용하지 않는다.
+- 다음 실측 우선순위는
+  rollback 된 코드 기준으로
+  `clean 0.9 / 15분 -> clean 0.9 / 2시간`을 다시 재는 것이다.

@@ -545,16 +545,8 @@ public class PostService {
                 "post.list.browse.rows",
                 false,
                 () -> switch (sortKey) {
-                    case "likes" -> loadTestStepProfiler.profile(
-                            "post.list.search.sort.rows",
-                            false,
-                            () -> loadRankedBrowseSlice(board, limit, cursorCreatedAt, cursorSortValue, cursorId, true)
-                    );
-                    case "comments" -> loadTestStepProfiler.profile(
-                            "post.list.search.sort.rows",
-                            false,
-                            () -> loadRankedBrowseSlice(board, limit, cursorCreatedAt, cursorSortValue, cursorId, false)
-                    );
+                    case "likes" -> loadRankedBrowseSlice(board, limit, cursorCreatedAt, cursorSortValue, cursorId, true);
+                    case "comments" -> loadRankedBrowseSlice(board, limit, cursorCreatedAt, cursorSortValue, cursorId, false);
                     default -> loadLatestBrowseSlice(board, limit, cursorCreatedAt, cursorId);
                 }
         );
@@ -637,27 +629,6 @@ public class PostService {
         return new org.springframework.data.domain.SliceImpl<>(orderedRows, limit, hasNext);
     }
 
-    private Slice<PostRepository.PostListRow> toGlobalProjectionSlice(Pageable limit,
-                                                                      List<Long> postIds,
-                                                                      boolean hasNext) {
-        if (postIds.isEmpty()) {
-            return new org.springframework.data.domain.SliceImpl<>(List.of(), limit, false);
-        }
-
-        // 문제 해결:
-        // global keyword search 도 id-first 로 바꾸면 row materialization 은 작은 id 집합에만 필요하다.
-        // 이렇게 해야 FTS/username matching 과 author/board projection 을 분리해 search drift 를 낮출 수 있다.
-        Map<Long, PostRepository.PostListRow> rowsById = postRepository.findPostListRowsByIdIn(postIds).stream()
-                .collect(Collectors.toMap(PostRepository.PostListRow::getId, row -> row));
-
-        List<PostRepository.PostListRow> orderedRows = postIds.stream()
-                .map(rowsById::get)
-                .filter(java.util.Objects::nonNull)
-                .toList();
-
-        return new org.springframework.data.domain.SliceImpl<>(orderedRows, limit, hasNext);
-    }
-
     private Slice<PostRepository.PostListRow> loadSearchSlice(Board board,
                                                               String keyword,
                                                               Pageable limit,
@@ -674,18 +645,9 @@ public class PostService {
         return loadTestStepProfiler.profile(
                 "post.list.search.rows",
                 false,
-                () -> loadTestStepProfiler.profile(
-                        "post.list.search.keyword.rows",
-                        false,
-                        () -> {
-                            Slice<Long> idSlice = board == null
-                                    ? postRepository.searchPublicPostIdsSlice(keyword, limit, effectiveCursorCreatedAt, effectiveCursorId)
-                                    : postRepository.searchPublicPostIdsInBoardSlice(board, keyword, limit, effectiveCursorCreatedAt, effectiveCursorId);
-                            return board == null
-                                    ? toGlobalProjectionSlice(limit, idSlice.getContent(), idSlice.hasNext())
-                                    : toBoardScopedSlice(board, limit, idSlice.getContent(), idSlice.hasNext());
-                        }
-                )
+                () -> board == null
+                        ? postRepository.searchPublicPostListRowsSlice(keyword, limit, effectiveCursorCreatedAt, effectiveCursorId)
+                        : postRepository.searchPublicPostListRowsInBoardSlice(board, keyword, limit, effectiveCursorCreatedAt, effectiveCursorId)
         );
     }
 
@@ -700,20 +662,16 @@ public class PostService {
         return loadTestStepProfiler.profile(
                 "post.list.tag.rows",
                 false,
-                () -> loadTestStepProfiler.profile(
-                        "post.list.search.tag.rows",
-                        false,
-                        () -> {
-                            if (cursorCreatedAt == null || cursorId == null) {
-                                return board == null
-                                        ? postRepository.findScrollPostListRowsByTagName(tag, limit)
-                                        : postRepository.findScrollPostListRowsByBoardAndTagName(board, tag, limit);
-                            }
-                            return board == null
-                                    ? postRepository.findScrollPostListRowsByTagNameAndCreatedAtBefore(tag, cursorCreatedAt, cursorId, limit)
-                                    : postRepository.findScrollPostListRowsByBoardAndTagNameAndCreatedAtBefore(board, tag, cursorCreatedAt, cursorId, limit);
-                        }
-                )
+                () -> {
+                    if (cursorCreatedAt == null || cursorId == null) {
+                        return board == null
+                                ? postRepository.findScrollPostListRowsByTagName(tag, limit)
+                                : postRepository.findScrollPostListRowsByBoardAndTagName(board, tag, limit);
+                    }
+                    return board == null
+                            ? postRepository.findScrollPostListRowsByTagNameAndCreatedAtBefore(tag, cursorCreatedAt, cursorId, limit)
+                            : postRepository.findScrollPostListRowsByBoardAndTagNameAndCreatedAtBefore(board, tag, cursorCreatedAt, cursorId, limit);
+                }
         );
     }
 
