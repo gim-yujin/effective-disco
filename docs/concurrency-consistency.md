@@ -2261,3 +2261,48 @@ SOAK_FACTOR=0.9 SOAK_DURATION=1h WARMUP_DURATION=2m SAMPLE_INTERVAL_SECONDS=60 \
 - 이 런은 k6 threshold 자체로는 통과 가능하지만,
   soak runner 는 `unexpected_response_rate == 0.0000`만 허용하는
   zero-tolerance 규칙을 쓰기 때문에 최종 상태가 `FAIL`로 남는다.
+
+## 2026-03-27 clean broad mixed `0.9 / 15분` rerun to check `dbPoolTimeouts=3` reproducibility
+
+상태: 완료
+
+### 실행 목적
+
+- 직전 [soak-20260327-074551.md](/home/admin0/effective-disco/loadtest/results/soak-20260327-074551.md)
+  에서 나온 `dbPoolTimeouts = 3` 이
+  같은 clean 조건에서 다시 재현되는지 확인한다.
+- 이 값이 재현되면 `0.9 / 15분` strict gap 을
+  `pool saturation` 으로 계속 취급해야 하고,
+  재현되지 않으면 우선 `noise`로 분류할 수 있다.
+
+### 결과
+
+- manual summary:
+  [soak-20260327-081109.md](/home/admin0/effective-disco/loadtest/results/soak-20260327-081109.md)
+- k6 summary:
+  [soak-20260327-081109-k6.json](/home/admin0/effective-disco/loadtest/results/soak-20260327-081109-k6.json)
+- metrics timeline:
+  [soak-20260327-081109-metrics.jsonl](/home/admin0/effective-disco/loadtest/results/soak-20260327-081109-metrics.jsonl)
+- log:
+  [soak-20260327-081109.log](/home/admin0/effective-disco/loadtest/results/soak-20260327-081109.log)
+- 상태: `PASS (manual summary)`
+- `http p95 = 252.34ms`
+- `http p99 = 321.57ms`
+- `unexpected_response_rate = 0.0000`
+- `dbPoolTimeouts = 0`
+- `duplicateKeyConflicts = 0`
+- `unreadNotificationMismatchUsers = 0`
+
+### 5분 모니터링 요약
+
+- `5분`: `dbPoolTimeouts = 0`, `post.list.search.rows avgWall ≈ 3.18ms`
+- `10분`: `dbPoolTimeouts = 0`, `post.list.search.rows avgWall ≈ 4.13ms`
+- `15분`: `dbPoolTimeouts = 0`, `post.list.search.rows avgWall ≈ 4.93ms`
+
+### 해석
+
+- 직전 `dbPoolTimeouts = 3` 은 같은 clean `0.9 / 15분` 조건에서 재현되지 않았다.
+- 현재로서는 그 `3건`을 재현성 있는 한계보다는 `noise`로 보는 편이 맞다.
+- 이 런에서도 `duplicateKeyConflicts`, `unreadNotificationMismatchUsers`, `Request Failed` 는 모두 `0`이었다.
+- 다만 soak runner 후처리 단계는 여전히 불안정해서,
+  final SQL snapshot 과 정상 server summary 는 생성되지 않았다.

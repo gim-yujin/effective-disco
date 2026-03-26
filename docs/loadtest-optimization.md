@@ -4041,3 +4041,54 @@ GRADLE_USER_HOME=/tmp/gradle-home ./gradlew test --no-daemon
   browse 의 `id-first`를 복제하는 방식이 아니라,
   실제 unexpected response 원인이나
   keyword search matching cost 를 좁히는 방식으로 가야 한다.
+
+## 2026-03-27 clean `0.9 / 15분` `dbPoolTimeouts=3` 재현성 확인
+
+상태: 실측 완료
+
+### 결과
+
+- manual summary:
+  [soak-20260327-081109.md](/home/admin0/effective-disco/loadtest/results/soak-20260327-081109.md)
+- k6 summary:
+  [soak-20260327-081109-k6.json](/home/admin0/effective-disco/loadtest/results/soak-20260327-081109-k6.json)
+- metrics timeline:
+  [soak-20260327-081109-metrics.jsonl](/home/admin0/effective-disco/loadtest/results/soak-20260327-081109-metrics.jsonl)
+- log:
+  [soak-20260327-081109.log](/home/admin0/effective-disco/loadtest/results/soak-20260327-081109.log)
+
+숫자:
+
+- `status = PASS (manual summary)`
+- `http p95 = 252.34ms`
+- `http p99 = 321.57ms`
+- `unexpected_response_rate = 0.0000`
+- `dbPoolTimeouts = 0`
+- `duplicateKeyConflicts = 0`
+- `unreadNotificationMismatchUsers = 0`
+
+5분 구간 관측:
+
+- `5분`: `post.list.search.rows avgWall ≈ 3.18ms`
+- `10분`: `post.list.search.rows avgWall ≈ 4.13ms`
+- `15분`: `post.list.search.rows avgWall ≈ 4.93ms`
+- 전 구간 `dbPoolTimeouts = 0`, `Request Failed = 0`
+
+### 해석
+
+- 직전 [soak-20260327-074551.md](/home/admin0/effective-disco/loadtest/results/soak-20260327-074551.md)
+  의 `dbPoolTimeouts = 3` 은 같은 조건에서 재현되지 않았다.
+- 즉 현재 strict `0.9 / 15분` gap 을
+  `재현성 있는 pool saturation`으로 바로 확정할 단계는 아니다.
+- 남은 steady-state hot path는 여전히 `post.list.search.rows` 이지만,
+  이번 재측정 결과만 보면 `3건 timeout`은 search 구조의 확정적 한계보다는
+  런 노이즈에 더 가깝다.
+
+### 운영상 교훈
+
+- strict soak gap 을 한 번의 런으로 확정하면 안 된다.
+- `dbPoolTimeouts = 3 -> 0`처럼 작은 절대값은
+  같은 clean 조건에서 최소 1회 이상 재현성을 확인해야 해석할 수 있다.
+- 동시에 runner 후처리 안정성도 별도 문제다.
+  이번 런은 main phase 는 정상 종료했지만,
+  후처리 hang 때문에 final SQL snapshot 과 server summary 는 수동으로 보완했다.
