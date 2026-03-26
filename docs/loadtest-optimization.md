@@ -3536,3 +3536,86 @@ GRADLE_USER_HOME=/tmp/gradle-home ./gradlew test --no-daemon
 - 국소 지표 중 일부가 완벽하지 않아도 된다.
   이번에는 `notification.read-page.summary.transition`이 소폭 악화됐지만,
   시스템 전체 결과는 오히려 크게 개선됐다.
+
+## 2026-03-26 clean broad mixed `0.9 / 2시간` 재측정 after ranked browse 최적화
+
+상태: 완료
+
+### 실행 조건
+
+- clean `effectivedisco_loadtest` DB `DROP/CREATE`
+- fresh `loadtest` app
+- `SOAK_FACTOR=0.9`
+- `SOAK_DURATION=2h`
+- `WARMUP_DURATION=2m`
+- `SAMPLE_INTERVAL_SECONDS=300`
+
+### 결과
+
+- suite:
+  [soak-20260326-194048.md](/home/admin0/effective-disco/loadtest/results/soak-20260326-194048.md)
+- k6:
+  [soak-20260326-194048-k6.json](/home/admin0/effective-disco/loadtest/results/soak-20260326-194048-k6.json)
+- server:
+  [soak-20260326-194048-server.json](/home/admin0/effective-disco/loadtest/results/soak-20260326-194048-server.json)
+- sql:
+  [soak-20260326-194048-sql.tsv](/home/admin0/effective-disco/loadtest/results/soak-20260326-194048-sql.tsv)
+
+숫자:
+
+- `status = FAIL`
+- `p95 = 259.81ms`
+- `p99 = 331.91ms`
+- `unexpected_response_rate = 0.00038%`
+- `duplicateKeyConflicts = 0`
+- `dbPoolTimeouts = 64`
+- `unreadNotificationMismatchUsers = 0`
+
+5분 모니터링 요약:
+
+- `5분`: `dbPoolTimeouts = 64`
+- `30분`: `dbPoolTimeouts = 64`
+- `60분`: `dbPoolTimeouts = 64`
+- `90분`: `dbPoolTimeouts = 64`
+- `120분`: `dbPoolTimeouts = 64`
+
+주요 profile:
+
+- `post.list.browse.rows avgWall = 1.80ms`, `avgSql = 0.77ms`
+- `post.list.search.rows avgWall = 20.37ms`, `avgSql = 19.84ms`
+- `notification.store avgWall = 2.28ms`, `avgSql = 1.46ms`
+- `notification.read-page.summary.transition avgWall = 3.09ms`, `avgSql = 2.02ms`
+
+### strict same-factor 전후 비교
+
+- 비교 기준:
+  [soak-20260326-021537.md](/home/admin0/effective-disco/loadtest/results/soak-20260326-021537.md)
+  대비
+  [soak-20260326-194048.md](/home/admin0/effective-disco/loadtest/results/soak-20260326-194048.md)
+- `http p95 = 706.22ms -> 259.81ms`, `63.2% 개선`
+- `http p99 = 991.52ms -> 331.91ms`, `66.5% 개선`
+- `dbPoolTimeouts = 380 -> 64`, `83.2% 개선`
+- `post.list.browse.rows avgWall = 32.32ms -> 1.80ms`, `94.4% 개선`
+- `post.list.browse.rows avgSql = 31.76ms -> 0.77ms`, `97.6% 개선`
+- `post.list.search.rows avgWall = 20.62ms -> 20.37ms`, `1.2% 개선`
+- `post.list.search.rows avgSql = 20.10ms -> 19.84ms`, `1.3% 개선`
+- `notification.store avgWall = 5.68ms -> 2.28ms`, `59.9% 개선`
+- `notification.store avgSql = 4.93ms -> 1.46ms`, `70.4% 개선`
+
+### 원인 분석
+
+- ranked browse 최적화는 `0.9 / 2시간` strict 기준을 아직 완전히 통과시키진 못했지만,
+  실패 양상을 `후반 drift`에서 `초기 timeout burst`로 바꾸는 데는 성공했다.
+- `post.list.browse.rows`는 사실상 더 이상 병목이 아니고,
+  장시간 누적 profile 기준 남은 가장 큰 read drift는 `post.list.search.rows`다.
+- 이번 run의 `dbPoolTimeouts=64`는 `5분` 시점에 이미 전부 발생했고
+  이후 증가하지 않았으므로,
+  남은 과제는 steady-state saturation보다 startup 직후 connection contention 완화에 가깝다.
+
+### 최적화 교훈
+
+- 가장 비싼 hot path를 줄이면 장시간 soak는 물론 초기 saturation 양상도 크게 바뀔 수 있다.
+- 다만 strict long-run PASS를 만들려면 steady-state 경로뿐 아니라
+  warmup 직후의 burst 구간까지 따로 봐야 한다.
+- 이번 결과는 `browse`가 해결된 뒤 남은 다음 타깃이
+  `search rows`와 초기 구간 contention이라는 점을 분명하게 보여준다.

@@ -1979,3 +1979,59 @@ SOAK_FACTOR=0.9 SOAK_DURATION=1h WARMUP_DURATION=2m SAMPLE_INTERVAL_SECONDS=60 \
   `0.85 / 2시간`에서도 그대로 유지됐다.
 - `post.list.search.rows`는 여전히 가장 큰 장시간 drift 경로지만,
   현재 구조에서는 `0.85 / 2시간` 기준선을 깨뜨릴 정도는 아니었다.
+
+## 2026-03-26 clean broad mixed `0.9 / 2시간` 재측정 after ranked browse 최적화
+
+상태: 완료
+
+### 실행 목적
+
+- ranked browse 최적화 이후 `0.9 / 2시간` long-run이 strict 기준까지 회복됐는지 확인한다.
+- `0.85 / 2시간 PASS`가 확인된 뒤, 바로 위 factor인 `0.9`의 장시간 한계를 다시 검증한다.
+
+### 결과
+
+- suite:
+  [soak-20260326-194048.md](/home/admin0/effective-disco/loadtest/results/soak-20260326-194048.md)
+- k6:
+  [soak-20260326-194048-k6.json](/home/admin0/effective-disco/loadtest/results/soak-20260326-194048-k6.json)
+- server metrics:
+  [soak-20260326-194048-server.json](/home/admin0/effective-disco/loadtest/results/soak-20260326-194048-server.json)
+- sql snapshot:
+  [soak-20260326-194048-sql.tsv](/home/admin0/effective-disco/loadtest/results/soak-20260326-194048-sql.tsv)
+- 상태: `FAIL`
+- `http p95 = 259.81ms`
+- `http p99 = 331.91ms`
+- `unexpected_response_rate = 0.00038%`
+- `duplicateKeyConflicts = 0`
+- `dbPoolTimeouts = 64`
+- `unreadNotificationMismatchUsers = 0`
+
+### 5분 모니터링 요약
+
+- `5분`: `dbPoolTimeouts = 64`
+- `30분`: `dbPoolTimeouts = 64`
+- `60분`: `dbPoolTimeouts = 64`
+- `90분`: `dbPoolTimeouts = 64`
+- `120분`: `dbPoolTimeouts = 64`
+
+### 직전 동일 factor 실패 대비 비교
+
+- 비교 기준:
+  [soak-20260326-021537.md](/home/admin0/effective-disco/loadtest/results/soak-20260326-021537.md)
+  대비
+  [soak-20260326-194048.md](/home/admin0/effective-disco/loadtest/results/soak-20260326-194048.md)
+- `http p95 = 706.22ms -> 259.81ms`, `63.2% 개선`
+- `http p99 = 991.52ms -> 331.91ms`, `66.5% 개선`
+- `dbPoolTimeouts = 380 -> 64`, `83.2% 개선`
+- `post.list.browse.rows avgWall = 32.32ms -> 1.80ms`, `94.4% 개선`
+- `post.list.search.rows avgWall = 20.62ms -> 20.37ms`, `1.2% 개선`
+- `notification.store avgWall = 5.68ms -> 2.28ms`, `59.9% 개선`
+
+### 해석
+
+- strict 기준으로는 여전히 `FAIL`이지만, 실패 양상은 이전과 다르다.
+- 이번 `0.9 / 2시간`은 장시간 후반 saturation이 아니라, 초기 `5분`에 발생한 timeout burst가 끝까지 누적된 형태였다.
+- 반대로 `duplicateKeyConflicts`, `unreadNotificationMismatchUsers`, SQL mismatch는 모두 `0`이었고,
+  long-run profile도 이전 `0.9 / 2시간` 실패 대비 크게 안정적이었다.
+- 따라서 현재 `0.9 / 2시간`의 남은 과제는 장시간 drift보다는 초기 구간의 connection contention을 더 줄이는 것이다.
