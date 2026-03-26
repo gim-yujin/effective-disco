@@ -139,6 +139,34 @@ public interface PostRepository extends JpaRepository<Post, Long>, PostRepositor
 
     /**
      * 문제 해결:
+     * global search slice 도 id-first 로 전환하면 최종 row materialization 은 현재 window 의 작은 id 집합에만 필요하다.
+     * rows batch 에서만 author/board projection 을 붙이면 FTS/username branch 와 row join 을 분리할 수 있다.
+     */
+    @Query("""
+            SELECT
+                p.id AS id,
+                p.title AS title,
+                '' AS content,
+                p.createdAt AS createdAt,
+                p.updatedAt AS updatedAt,
+                p.commentCount AS commentCount,
+                p.likeCount AS likeCount,
+                p.viewCount AS viewCount,
+                p.pinned AS pinned,
+                p.draft AS draft,
+                p.imageUrl AS legacyImageUrl,
+                a.username AS authorUsername,
+                b.name AS boardName,
+                b.slug AS boardSlug
+            FROM Post p
+            JOIN p.author a
+            LEFT JOIN p.board b
+            WHERE p.id IN :postIds
+            """)
+    List<PostListRow> findPostListRowsByIdIn(@Param("postIds") List<Long> postIds);
+
+    /**
+     * 문제 해결:
      * 태그 검색도 Page count 에서 JOIN post_tags fan-out 이 커진다. 본문/카운트 모두 EXISTS 기반으로 태그 존재만 확인한다.
      */
     @Query(value = """

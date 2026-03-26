@@ -23,14 +23,19 @@ public interface PostRepositoryCustom {
 
     Page<PostRepository.PostListRow> searchPublicPostListRowsInBoard(Board board, String keyword, Pageable pageable);
 
-    Slice<PostRepository.PostListRow> searchPublicPostListRowsSlice(String keyword,
-                                                                    Pageable pageable,
-                                                                    LocalDateTime cursorCreatedAt,
-                                                                    Long cursorId);
+    /**
+     * 문제 해결:
+     * search slice hot path 는 browse 와 달리 아직 "검색 + 정렬 + author/board projection" 을 한 SQL에서 모두 처리했다.
+     * 먼저 id window 만 잘라낸 뒤 작은 row batch 를 읽어야 broad mixed 장시간 soak 에서 search rows drift 를 줄일 수 있다.
+     */
+    Slice<Long> searchPublicPostIdsSlice(String keyword,
+                                         Pageable pageable,
+                                         LocalDateTime cursorCreatedAt,
+                                         Long cursorId);
 
-    Slice<PostRepository.PostListRow> searchPublicPostListRowsInBoardSlice(Board board,
-                                                                           String keyword,
-                                                                           Pageable pageable,
-                                                                           LocalDateTime cursorCreatedAt,
-                                                                           Long cursorId);
+    Slice<Long> searchPublicPostIdsInBoardSlice(Board board,
+                                                String keyword,
+                                                Pageable pageable,
+                                                LocalDateTime cursorCreatedAt,
+                                                Long cursorId);
 }

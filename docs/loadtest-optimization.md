@@ -3753,3 +3753,84 @@ GRADLE_USER_HOME=/tmp/gradle-home ./gradlew test --no-daemon
   steady-state 지표만 보면 search path를 제외한 나머지는 이미 충분히 안정적이었다.
 - 따라서 다음 최적화는 broad browse나 notification이 아니라
   `post.list.search.rows`와 early burst 원인 분해에 집중하는 게 맞다.
+
+## 2026-03-27 `post.list.search.rows` `id-first` 최적화
+
+상태: 구현 완료 / 검증 완료 / soak 재측정 미완료
+
+### 배경
+
+- clean `0.85 / 2시간`은 통과했지만
+  clean `0.9 / 2시간` strict failure는 두 번 다시 재현됐다.
+- 그 시점의 steady-state profile에서
+  `post.list.browse.rows`, `notification.*`는 대부분 안정적이었고,
+  가장 크게 남는 read drift는 `post.list.search.rows`였다.
+- 즉 다음 타깃은 broad browse나 notification이 아니라
+  search rows의 data flow 자체였다.
+
+### 기존 문제
+
+- board/global keyword search slice는
+  검색 매칭과 row projection을 사실상 한 경로로 묶고 있었다.
+- `PostService.getPostSlice()` 기준으로 보면
+  hot API 계약은 이미 `Slice`였지만,
+  search path는 현재 window를 먼저 가볍게 자르지 못한 채
+  FTS/username matching 뒤 projection row를 바로 만들었다.
+- 이 구조는 browse처럼 `id-first -> small row batch`로 줄일 수 있는 여지가 있는데도
+  search만 상대적으로 무거운 row materialization을 유지하게 만들었다.
+
+### 구현
+
+- [PostRepositoryCustom.java](/home/admin0/effective-disco/src/main/java/com/effectivedisco/repository/PostRepositoryCustom.java)
+  - search slice 반환 타입을 `Slice<PostListRow>`에서 `Slice<Long>`으로 바꿨다.
+- [PostRepositoryImpl.java](/home/admin0/effective-disco/src/main/java/com/effectivedisco/repository/PostRepositoryImpl.java)
+  - PostgreSQL/H2 fallback keyword slice SQL을 모두 `id`만 반환하도록 변경했다.
+  - board-scoped/global search 모두 현재 cursor window의 `post id`만 먼저 결정한다.
+- [PostRepository.java](/home/admin0/effective-disco/src/main/java/com/effectivedisco/repository/PostRepository.java)
+  - `findPostListRowsByIdIn(...)` projection batch query를 추가했다.
+- [PostService.java](/home/admin0/effective-disco/src/main/java/com/effectivedisco/service/PostService.java)
+  - `loadSearchSlice()`가 이제 `search ids -> small row batch` 두 단계로 동작한다.
+  - board-scoped search는 기존 browse와 같은 `toBoardScopedSlice(...)`를 재사용하고,
+    global search는 새 `toGlobalProjectionSlice(...)`로 작은 id 집합만 projection 한다.
+
+### 계측 분해
+
+- coarse profile은 유지했다.
+  - `post.list.search.rows`
+- 새 세부 profile을 추가했다.
+  - `post.list.search.keyword.rows`
+  - `post.list.search.tag.rows`
+  - `post.list.search.sort.rows`
+
+이렇게 해야 기존 문서의 추세를 깨지 않으면서도,
+다음 long-run에서 `keyword/tag/sort` 중 어느 검색이 실제 hot path인지 분리할 수 있다.
+
+### trade-off 판단
+
+- statement 수는 search slice 기준으로 `id query + row batch query`로 늘어난다.
+- 하지만 이 변경은 search hot path에서
+  큰 row materialization과 projection join을 current window 이후까지 끌고 가는 비용을 줄인다.
+- 즉 `상수 1회 쿼리 추가`와 맞바꿔
+  long soak에서 커넥션 점유 시간을 낮추는 방향이다.
+- controller/API/SSR 계약은 건드리지 않았기 때문에
+  module dependency 부작용은 `repository -> service` 내부에 국한된다.
+
+### 검증
+
+- targeted:
+  - [PostListOptimizationIntegrationTest.java](/home/admin0/effective-disco/src/test/java/com/effectivedisco/service/PostListOptimizationIntegrationTest.java)
+  - [PostControllerTest.java](/home/admin0/effective-disco/src/test/java/com/effectivedisco/controller/PostControllerTest.java)
+- full:
+  - `GRADLE_USER_HOME=/tmp/gradle-home ./gradlew test --no-daemon`
+- 결과:
+  - targeted 통과
+  - full test 통과
+
+### 보류 사항
+
+- clean short soak를 바로 재측정하려 했지만,
+  [run-bbs-soak.sh](/home/admin0/effective-disco/loadtest/run-bbs-soak.sh)의 readiness check가
+  `localhost`/`127.0.0.1` 환경 차이 때문에 실패해
+  이번 턴에는 soak 결과를 새 기준선으로 추가하지 않았다.
+- 따라서 다음 실측 우선순위는
+  이 search `id-first` 변경 기준으로 다시 `0.9 / 15분 -> 0.9 / 2시간`을 재보는 것이다.
