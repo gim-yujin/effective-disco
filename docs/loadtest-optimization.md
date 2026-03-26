@@ -3049,3 +3049,59 @@ GRADLE_USER_HOME=/tmp/gradle-home ./gradlew test --no-daemon
   `2시간` 기준에서는 결국 pool timeout 이 누적되며 실패했다.
 - 정합성 쪽 문제는 끝까지 보이지 않았으므로,
   현재 남은 과제는 여전히 장시간 read pressure 에 의한 saturation 이다.
+
+## 2026-03-26 clean broad mixed `0.8 / 2시간` soak
+
+상태: 완료
+
+### 실행 조건
+
+- clean `effectivedisco_loadtest` DB `DROP/CREATE`
+- fresh `loadtest` 앱
+- `SOAK_FACTOR=0.8`
+- `SOAK_DURATION=2h`
+- `WARMUP_DURATION=2m`
+
+### 결과
+
+- suite:
+  [soak-20260326-073715.md](/home/admin0/effective-disco/loadtest/results/soak-20260326-073715.md)
+- server:
+  [soak-20260326-073715-server.json](/home/admin0/effective-disco/loadtest/results/soak-20260326-073715-server.json)
+- sql:
+  [soak-20260326-073715-sql.tsv](/home/admin0/effective-disco/loadtest/results/soak-20260326-073715-sql.tsv)
+
+숫자:
+
+- `status = FAIL`
+- `p95 = 364.85ms`
+- `p99 = 499.58ms`
+- `unexpected_response_rate = 0.0000`
+- `duplicateKeyConflicts = 0`
+- `dbPoolTimeouts = 8`
+- `unreadNotificationMismatchUsers = 0`
+
+5분 모니터링 요약:
+
+- `1시간 40분`: `dbPoolTimeouts = 0`
+- `1시간 45분`: `dbPoolTimeouts = 1`
+- `1시간 50분`: `dbPoolTimeouts = 2`
+- `1시간 55분`: `dbPoolTimeouts = 4`
+- `최종`: `dbPoolTimeouts = 8`
+
+주요 profile:
+
+- `notification.read-page.summary.transition avgWall = 2.74ms`, `avgSql = 1.72ms`
+- `notification.store avgWall = 4.42ms`, `avgSql = 3.79ms`
+- `post.list.browse.rows avgWall = 28.15ms`, `avgSql = 27.58ms`
+- `post.list.search.rows avgWall = 18.27ms`, `avgSql = 17.75ms`
+- `post.like.add avgWall = 5.75ms`, `avgSql = 5.06ms`
+- `post.like.remove avgWall = 5.72ms`, `avgSql = 5.02ms`
+
+### 해석
+
+- `0.8`도 strict PASS 기준으로는 `2시간`을 끝까지 버티지 못했다.
+- 하지만 timeout 누적은 `0.85`, `0.9`보다 훨씬 작았고,
+  현재 2시간 stable factor 후보로는 가장 근접한 구간이다.
+- 즉 다음 단계는 `0.75 / 2시간`로 안정 구간을 확정하거나,
+  `0.8`을 목표 기준으로 추가 최적화를 하는 것 중 하나다.
