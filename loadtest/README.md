@@ -110,11 +110,25 @@ RELATION_PROFILES=like_mixed,bookmark_mixed,follow_mixed,block_mixed \
 ./loadtest/run-bbs-soak.sh
 ```
 
+앱 시작/종료까지 포함한 managed soak:
+
+```bash
+SOAK_FACTOR=0.9 \
+SOAK_DURATION=15m \
+WARMUP_DURATION=2m \
+BASE_URL=http://127.0.0.1:18082 \
+./loadtest/run-bbs-managed-soak.sh
+```
+
 주의:
 
 - `run-bbs-soak.sh`는 `BASE_URL=http://localhost:...` 로 호출되면
   local loopback readiness/metrics 호출을 `127.0.0.1`로 자동 정규화한다.
   이 환경에서 `localhost`가 IPv6로 먼저 해석되어 runner 내부 `curl`만 실패하는 문제를 피하기 위한 동작이다.
+- `run-bbs-managed-soak.sh`는 loadtest 앱을 직접 띄우고,
+  soak runner가 완전히 끝난 뒤에만 앱을 종료한다.
+  수동 터미널 종료 때문에 `write_posts_and_comments -> POST /api/posts`
+  가 `connection refused`로 집계되는 teardown artifact를 줄이기 위한 wrapper다.
 
 ## 시나리오
 

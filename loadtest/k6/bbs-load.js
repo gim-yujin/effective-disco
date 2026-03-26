@@ -569,15 +569,35 @@ function createPost(token, payload, strict = false) {
     authParams(token)
   );
 
+  const duration = response && response.timings ? response.timings.duration : 0;
+
   if (strict) {
     assertExpectedStatus(response, [201], `create post ${payload.boardSlug}`);
-  } else {
-    recordResponse(response, [201], `create post ${payload.boardSlug}`);
+    const body = response.json();
+    return {
+      id: body.id,
+      duration,
+    };
   }
+
+  recordResponse(response, [201], `create post ${payload.boardSlug}`);
+
+  // 문제 해결:
+  // soak 종료 직전 transport error가 나면 response.body가 null이어서 기존 response.json()이
+  // 추가 GoError를 일으켰다. broad mixed strict 판정에는 unexpected response 1건만 있으면
+  // 충분하므로, non-strict write path에서는 body가 실제로 있을 때만 JSON을 해석해
+  // teardown 구간 노이즈가 stacktrace 폭증으로 번지지 않게 한다.
+  if (response.status !== 201 || response.body === null || response.body === '') {
+    return {
+      id: null,
+      duration,
+    };
+  }
+
   const body = response.json();
   return {
     id: body.id,
-    duration: response.timings.duration,
+    duration,
   };
 }
 
