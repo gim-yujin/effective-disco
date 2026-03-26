@@ -25,6 +25,28 @@ export PGPASSWORD="${PGPASSWORD:-4321}"
 
 mkdir -p "$RESULT_DIR"
 
+normalize_loopback_base_url() {
+  local url="$1"
+  # 문제 해결:
+  # 이 환경에서는 `localhost`가 IPv6(::1)로 먼저 해석되는데 loadtest 앱은 IPv4 loopback에서만
+  # 열려 있을 수 있다. runner 내부 curl만 실패하고 direct 127.0.0.1 호출은 성공하는
+  # 비대칭을 막기 위해, local soak에서는 `localhost`를 `127.0.0.1`로 정규화해
+  # readiness/reset/metrics/cleanup 과 k6가 같은 endpoint를 보게 한다.
+  url="${url/http:\/\/localhost:/http://127.0.0.1:}"
+  url="${url/http:\/\/localhost\//http://127.0.0.1/}"
+  url="${url/https:\/\/localhost:/https://127.0.0.1:}"
+  url="${url/https:\/\/localhost\//https://127.0.0.1/}"
+  if [[ "$url" == "http://localhost" ]]; then
+    url="http://127.0.0.1"
+  elif [[ "$url" == "https://localhost" ]]; then
+    url="https://127.0.0.1"
+  fi
+  printf '%s' "$url"
+}
+
+REQUEST_BASE_URL="$BASE_URL"
+BASE_URL="$(normalize_loopback_base_url "$BASE_URL")"
+
 if ! command -v k6 >/dev/null 2>&1; then
   printf 'k6 is not installed.\n' >&2
   exit 1
@@ -35,7 +57,21 @@ if ! command -v psql >/dev/null 2>&1; then
   exit 1
 fi
 
-if ! curl -fsS "$BASE_URL/internal/load-test/metrics" >/dev/null; then
+wait_for_metrics_endpoint() {
+  local url="$1"
+  local attempts="${2:-30}"
+  local sleep_seconds="${3:-1}"
+  local try
+  for ((try = 1; try <= attempts; try++)); do
+    if curl -fsS "$url" >/dev/null 2>&1; then
+      return 0
+    fi
+    sleep "$sleep_seconds"
+  done
+  return 1
+}
+
+if ! wait_for_metrics_endpoint "$BASE_URL/internal/load-test/metrics" 30 1; then
   printf 'load-test metrics endpoint is not reachable: %s\n' "$BASE_URL/internal/load-test/metrics" >&2
   exit 1
 fi
@@ -194,7 +230,8 @@ fi
 
 printf '# BBS Soak Suite\n\n' >"$SUMMARY_REPORT_FILE"
 printf -- '- executed_at: %s\n' "$SUITE_TIMESTAMP" >>"$SUMMARY_REPORT_FILE"
-printf -- '- base_url: `%s`\n' "$BASE_URL" >>"$SUMMARY_REPORT_FILE"
+printf -- '- requested_base_url: `%s`\n' "$REQUEST_BASE_URL" >>"$SUMMARY_REPORT_FILE"
+printf -- '- effective_base_url: `%s`\n' "$BASE_URL" >>"$SUMMARY_REPORT_FILE"
 printf -- '- soak_factor: `%s`\n' "$SOAK_FACTOR" >>"$SUMMARY_REPORT_FILE"
 printf -- '- soak_duration: `%s`\n' "$SOAK_DURATION" >>"$SUMMARY_REPORT_FILE"
 printf -- '- warmup_duration: `%s`\n' "$WARMUP_DURATION" >>"$SUMMARY_REPORT_FILE"

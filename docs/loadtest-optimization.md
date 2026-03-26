@@ -3834,3 +3834,93 @@ GRADLE_USER_HOME=/tmp/gradle-home ./gradlew test --no-daemon
   이번 턴에는 soak 결과를 새 기준선으로 추가하지 않았다.
 - 따라서 다음 실측 우선순위는
   이 search `id-first` 변경 기준으로 다시 `0.9 / 15분 -> 0.9 / 2시간`을 재보는 것이다.
+
+## 2026-03-27 soak runner readiness 정규화 + clean `0.9 / 15분` 재측정
+
+상태: 구현 완료 / 실측 완료
+
+### runner 수정
+
+- [run-bbs-soak.sh](/home/admin0/effective-disco/loadtest/run-bbs-soak.sh)
+  - `BASE_URL=http://localhost:...` 입력을 내부적으로
+    `127.0.0.1` loopback으로 정규화하도록 바꿨다.
+  - readiness check, reset, metrics sampling, final metrics, cleanup가
+    같은 effective endpoint를 쓰도록 맞췄다.
+  - `문제 해결`의 목적은
+    이 환경에서 `localhost`가 IPv6로 먼저 해석되고
+    runner 내부 `curl`만 실패하는 현상을 제거하는 것이었다.
+- [loadtest/README.md](/home/admin0/effective-disco/loadtest/README.md)
+  - 위 동작을 사용법에 반영했다.
+
+### 실행 결과
+
+- suite:
+  [soak-20260327-053923.md](/home/admin0/effective-disco/loadtest/results/soak-20260327-053923.md)
+- k6 summary:
+  [soak-20260327-053923-k6.json](/home/admin0/effective-disco/loadtest/results/soak-20260327-053923-k6.json)
+- timeline:
+  [soak-20260327-053923-metrics.jsonl](/home/admin0/effective-disco/loadtest/results/soak-20260327-053923-metrics.jsonl)
+- sql snapshot:
+  [soak-20260327-053923-sql.tsv](/home/admin0/effective-disco/loadtest/results/soak-20260327-053923-sql.tsv)
+
+숫자:
+
+- `status = FAIL`
+- `http p95 = 230.07ms`
+- `http p99 = 293.39ms`
+- `unexpected_response_rate = 0.0000`
+- `duplicateKeyConflicts = 0`
+- `dbPoolTimeouts = 4`
+- `unreadNotificationMismatchUsers = 0`
+
+주요 profile:
+
+- `post.list.search.rows wall ≈ 5.11ms / sql ≈ 4.09ms`
+- `post.list.search.keyword.rows wall ≈ 5.10ms / sql ≈ 4.09ms`
+- `post.list.search.tag.rows wall ≈ 1.45ms`
+- `post.list.search.sort.rows wall ≈ 1.65ms`
+- `post.list.browse.rows wall ≈ 1.67ms`
+- `notification.store wall ≈ 2.09ms`
+- `notification.read-page.summary.transition wall ≈ 2.89ms`
+
+### 직전 동일 factor clean baseline 대비 비교
+
+- 비교 기준:
+  [soak-20260325-203507.md](/home/admin0/effective-disco/loadtest/results/soak-20260325-203507.md)
+  대비
+  [soak-20260327-053923.md](/home/admin0/effective-disco/loadtest/results/soak-20260327-053923.md)
+- `http p95 = 246.53ms -> 230.07ms`, `6.7% 개선`
+- `http p99 = 314.19ms -> 293.39ms`, `6.6% 개선`
+- `post.list.browse.rows avgWall = 4.53ms -> 1.67ms`, `63.2% 개선`
+- `post.list.browse.rows avgSql = 4.02ms -> 0.74ms`, `81.7% 개선`
+- `post.list.search.rows avgWall = 3.76ms -> 5.11ms`, `35.7% 악화`
+- `post.list.search.rows avgSql = 3.31ms -> 4.09ms`, `23.3% 악화`
+- `notification.store avgWall = 2.53ms -> 2.09ms`, `17.7% 개선`
+- `notification.store avgSql = 1.95ms -> 1.34ms`, `31.6% 개선`
+- `notification.read-page.summary.transition avgWall = 2.93ms -> 2.89ms`, `1.1% 개선`
+- `notification.read-page.summary.transition avgSql = 1.98ms -> 1.88ms`, `4.9% 개선`
+
+### 원인 분석
+
+- `browse` 경로는 search 변경의 간접 효과까지 포함해 크게 좋아졌다.
+- `notification.store`와 `notification.read-page.summary.transition`도 소폭 개선됐다.
+- 하지만 이번 변경의 직접 타깃이던 `post.list.search.rows`는
+  `id-first -> small row batch`로 바꾼 뒤 오히려 느려졌다.
+- data flow 관점에서 보면:
+  - 이전에는 search rows가 `1 statement`로 끝났고
+  - 지금은 `search id query + small row batch query`의 `2 statements` 구조다.
+  - browse에서는 이 trade-off가 이득이었지만,
+    현재 search hot path에선 `window 축소 이득`보다
+    `statement 추가 + 재물질화 비용`이 더 컸다.
+
+### 교훈
+
+- `browse`에서 성공한 `id-first` 패턴이
+  `search`에서도 그대로 통할 것이라고 가정하면 안 된다.
+- 정렬 window가 지배적인 경로와
+  검색 매칭 자체가 지배적인 경로는
+  같은 모양의 최적화라도 trade-off가 다르다.
+- 이번 케이스는
+  `browse 63% 개선` 같은 국소 성공이 있어도,
+  `search 35.7% 악화`와 strict `PASS -> FAIL`이 생기면
+  전체 최적화로 채택하면 안 된다는 좋은 예다.

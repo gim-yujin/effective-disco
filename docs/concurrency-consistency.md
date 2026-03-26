@@ -2125,3 +2125,60 @@ SOAK_FACTOR=0.9 SOAK_DURATION=1h WARMUP_DURATION=2m SAMPLE_INTERVAL_SECONDS=60 \
   이후 `1시간 10분`까지 추가 증가 없이 plateau였다.
 - `duplicateKeyConflicts`, `unreadNotificationMismatchUsers`, SQL mismatch는 계속 `0`이었다.
 - steady-state 경로 중 남는 가장 큰 drift는 여전히 `post.list.search.rows`였다.
+
+## 2026-03-27 clean broad mixed `0.9 / 15분` rerun after search rows optimization
+
+상태: 완료
+
+### 실행 목적
+
+- `post.list.search.rows` `id-first -> small row batch` 변경과
+  soak runner loopback readiness 수정 이후,
+  clean broad mixed `0.9 / 15분` strict 기준이 실제로 어떻게 바뀌는지 다시 확인한다.
+- 직전 같은 factor clean 기준선과 비교해
+  `browse`, `search`, `notification` 각 경로의 trade-off를 수치로 남긴다.
+
+### 결과
+
+- suite:
+  [soak-20260327-053923.md](/home/admin0/effective-disco/loadtest/results/soak-20260327-053923.md)
+- k6 summary:
+  [soak-20260327-053923-k6.json](/home/admin0/effective-disco/loadtest/results/soak-20260327-053923-k6.json)
+- timeline:
+  [soak-20260327-053923-metrics.jsonl](/home/admin0/effective-disco/loadtest/results/soak-20260327-053923-metrics.jsonl)
+- sql snapshot:
+  [soak-20260327-053923-sql.tsv](/home/admin0/effective-disco/loadtest/results/soak-20260327-053923-sql.tsv)
+- 상태: `FAIL`
+- `http p95 = 230.07ms`
+- `http p99 = 293.39ms`
+- `unexpected_response_rate = 0.0000`
+- `duplicateKeyConflicts = 0`
+- `dbPoolTimeouts = 4`
+- `unreadNotificationMismatchUsers = 0`
+
+### 직전 동일 조건 대비 비교
+
+- 비교 기준:
+  [soak-20260325-203507.md](/home/admin0/effective-disco/loadtest/results/soak-20260325-203507.md)
+  대비
+  [soak-20260327-053923.md](/home/admin0/effective-disco/loadtest/results/soak-20260327-053923.md)
+- `http p95 = 246.53ms -> 230.07ms`, `6.7% 개선`
+- `http p99 = 314.19ms -> 293.39ms`, `6.6% 개선`
+- `post.list.browse.rows avgWall = 4.53ms -> 1.67ms`, `63.2% 개선`
+- `post.list.browse.rows avgSql = 4.02ms -> 0.74ms`, `81.7% 개선`
+- `post.list.search.rows avgWall = 3.76ms -> 5.11ms`, `35.7% 악화`
+- `post.list.search.rows avgSql = 3.31ms -> 4.09ms`, `23.3% 악화`
+- `notification.store avgWall = 2.53ms -> 2.09ms`, `17.7% 개선`
+- `notification.store avgSql = 1.95ms -> 1.34ms`, `31.6% 개선`
+- `notification.read-page.summary.transition avgWall = 2.93ms -> 2.89ms`, `1.1% 개선`
+- `notification.read-page.summary.transition avgSql = 1.98ms -> 1.88ms`, `4.9% 개선`
+
+### 해석
+
+- `browse`와 `notification.store`는 실제로 좋아졌다.
+- 하지만 이번 변경의 핵심 타깃이었던 `post.list.search.rows`는 오히려 느려졌다.
+- strict 기준으로도 `dbPoolTimeouts = 0 -> 4`라서
+  전체 판정은 `PASS -> FAIL`로 나빠졌다.
+- 따라서 이번 search `id-first` 변경은
+  `국소 경로 개선`은 일부 있었지만,
+  broad mixed strict 기준으로는 아직 받아들일 수 있는 최적화라고 보기 어렵다.
