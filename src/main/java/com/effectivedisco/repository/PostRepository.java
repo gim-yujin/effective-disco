@@ -301,6 +301,76 @@ public interface PostRepository extends JpaRepository<Post, Long>, PostRepositor
                                                           @Param("cursorId") Long cursorId,
                                                           Pageable pageable);
 
+    /**
+     * 문제 해결:
+     * likes/comments browse 도 latest 와 같은 방식으로 먼저 posts 인덱스에서 id window 만 잘라내야
+     * 정렬 + join projection 을 한 SQL 에서 모두 처리할 때 생기던 장시간 drift 를 줄일 수 있다.
+     * board-scoped ranked browse 의 첫 단계는 id 목록만 읽고, projection join 은 작은 id 집합에만 적용한다.
+     */
+    @Query("""
+            SELECT p.id
+            FROM Post p
+            WHERE p.board = :board
+              AND p.draft = false
+            ORDER BY p.likeCount DESC, p.createdAt DESC, p.id DESC
+            """)
+    List<Long> findScrollPostIdsByBoardOrderByLikeCountDesc(@Param("board") Board board, Pageable pageable);
+
+    @Query("""
+            SELECT p.id
+            FROM Post p
+            WHERE p.board = :board
+              AND p.draft = false
+              AND (
+                p.likeCount < :cursorSortValue
+                OR (
+                    p.likeCount = :cursorSortValue
+                    AND (
+                        p.createdAt < :cursorCreatedAt
+                        OR (p.createdAt = :cursorCreatedAt AND p.id < :cursorId)
+                    )
+                )
+              )
+            ORDER BY p.likeCount DESC, p.createdAt DESC, p.id DESC
+            """)
+    List<Long> findScrollPostIdsByBoardAndLikeCountAfter(@Param("board") Board board,
+                                                         @Param("cursorSortValue") Long cursorSortValue,
+                                                         @Param("cursorCreatedAt") LocalDateTime cursorCreatedAt,
+                                                         @Param("cursorId") Long cursorId,
+                                                         Pageable pageable);
+
+    @Query("""
+            SELECT p.id
+            FROM Post p
+            WHERE p.board = :board
+              AND p.draft = false
+            ORDER BY p.commentCount DESC, p.createdAt DESC, p.id DESC
+            """)
+    List<Long> findScrollPostIdsByBoardOrderByCommentCountDesc(@Param("board") Board board, Pageable pageable);
+
+    @Query("""
+            SELECT p.id
+            FROM Post p
+            WHERE p.board = :board
+              AND p.draft = false
+              AND (
+                p.commentCount < :cursorSortValue
+                OR (
+                    p.commentCount = :cursorSortValue
+                    AND (
+                        p.createdAt < :cursorCreatedAt
+                        OR (p.createdAt = :cursorCreatedAt AND p.id < :cursorId)
+                    )
+                )
+              )
+            ORDER BY p.commentCount DESC, p.createdAt DESC, p.id DESC
+            """)
+    List<Long> findScrollPostIdsByBoardAndCommentCountAfter(@Param("board") Board board,
+                                                            @Param("cursorSortValue") Long cursorSortValue,
+                                                            @Param("cursorCreatedAt") LocalDateTime cursorCreatedAt,
+                                                            @Param("cursorId") Long cursorId,
+                                                            Pageable pageable);
+
     @Query("""
             SELECT
                 p.id AS id,

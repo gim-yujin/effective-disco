@@ -3273,3 +3273,90 @@ GRADLE_USER_HOME=/tmp/gradle-home ./gradlew test --no-daemon
 - 즉 다음 최적화는 `notification.store` 추가 미세 조정보다
   `post.list.browse.rows` 내부의 `latest/likes/comments` 분해와
   ranked browse 경로 최적화에 초점을 두는 것이 합리적이다.
+
+## 2026-03-26 ranked browse(`likes/comments`) `id-first` 최적화
+
+상태: 구현 및 clean short soak 검증 완료
+
+### 변경 배경
+
+- strict same-condition `0.8 / 2시간` 비교에서
+  `notification.store`는 크게 개선됐지만 broad mixed 전체는 regression이었다.
+- 남은 장시간 drift의 1순위는 `post.list.browse.rows`였고,
+  latest browse는 이미 `id-first -> small row batch`인데
+  ranked browse(`likes/comments`)는 아직 정렬 + author projection을 한 SQL에서 같이 처리하고 있었다.
+- 이 비대칭 때문에 latest만 빨라지고 likes/comments browse는 계속 긴 soak에서 풀 점유를 키우는 구조였다.
+
+### data flow 분석 결과
+
+- [PostService.java](/home/admin0/effective-disco/src/main/java/com/effectivedisco/service/PostService.java)의
+  `loadRankedBrowseSlice()`는
+  [PostRepository.java](/home/admin0/effective-disco/src/main/java/com/effectivedisco/repository/PostRepository.java)
+  의 ranked projection slice를 바로 호출했다.
+- 즉 ranked browse는
+  `정렬 + board filter + author join projection`
+  을 한 번에 처리했고,
+  latest browse가 이미 제거한 join/정렬 동시 비용이 그대로 남아 있었다.
+- 응답 계약 측면에서는 `nextCursorSortValue`, `nextCursorCreatedAt`, `nextCursorId`만 유지하면 되므로,
+  내부를 `id-first`로 바꿔도 API/SSR 소비자를 깨지 않는다.
+
+### 구현 내용
+
+- [PostRepository.java](/home/admin0/effective-disco/src/main/java/com/effectivedisco/repository/PostRepository.java)
+  - ranked browse 전용 id window query 4개를 추가했다.
+    - `findScrollPostIdsByBoardOrderByLikeCountDesc`
+    - `findScrollPostIdsByBoardAndLikeCountAfter`
+    - `findScrollPostIdsByBoardOrderByCommentCountDesc`
+    - `findScrollPostIdsByBoardAndCommentCountAfter`
+- [PostService.java](/home/admin0/effective-disco/src/main/java/com/effectivedisco/service/PostService.java)
+  - `loadRankedBrowseSlice()`를 latest와 같은 구조로 바꿨다.
+  - 즉 `ranked id window -> small id batch projection -> withBoardContext` 순서로 통일했다.
+  - latest/ranked가 같은 `toBoardScopedSlice()`로 수렴하게 정리했다.
+- [Post.java](/home/admin0/effective-disco/src/main/java/com/effectivedisco/domain/Post.java)
+  - ranked browse용 인덱스 2개를 추가했다.
+    - `idx_post_board_draft_like_created_id_desc`
+    - `idx_post_board_draft_comment_created_id_desc`
+
+### module dependency / 부작용 검토
+
+- [PostController.java](/home/admin0/effective-disco/src/main/java/com/effectivedisco/controller/PostController.java)
+  의 `/api/posts/slice` 계약은 유지된다.
+- `nextCursorSortValue` 계산은 마지막 row의 `likeCount` / `commentCount`를 그대로 사용하므로
+  클라이언트 cursor 의미가 바뀌지 않는다.
+- SSR/page 기반 `Page<PostResponse>` 경로는 건드리지 않았고,
+  이번 변경은 board-scoped slice browse 내부 구현에만 국한된다.
+- latest browse에서 이미 쓰던 `small id batch + board context 주입` 패턴을 재사용했기 때문에,
+  새로운 데이터 흐름을 도입하기보다 기존 검증된 구조를 ranked browse까지 확장한 형태다.
+
+### 검증
+
+- targeted test
+  - [PostListOptimizationIntegrationTest.java](/home/admin0/effective-disco/src/test/java/com/effectivedisco/service/PostListOptimizationIntegrationTest.java)
+  - [PostControllerTest.java](/home/admin0/effective-disco/src/test/java/com/effectivedisco/controller/PostControllerTest.java)
+- full test
+  - `GRADLE_USER_HOME=/tmp/gradle-home ./gradlew test --no-daemon`
+- clean short soak
+  - [soak-20260326-142343.md](/home/admin0/effective-disco/loadtest/results/soak-20260326-142343.md)
+  - [soak-20260326-142343-server.json](/home/admin0/effective-disco/loadtest/results/soak-20260326-142343-server.json)
+
+### 결과
+
+- `status = PASS`
+- `http p95 = 220.33ms`
+- `http p99 = 281.45ms`
+- `duplicateKeyConflicts = 0`
+- `dbPoolTimeouts = 0`
+- `unreadNotificationMismatchUsers = 0`
+
+주요 profile:
+
+- `post.list.browse.rows avgWall = 1.63ms`, `avgSql = 0.72ms`, `avgSqlStatementCount = 2.0`
+- `post.list.search.rows avgWall = 2.77ms`, `avgSql = 2.31ms`, `avgSqlStatementCount = 1.0`
+- `notification.store avgWall = 2.06ms`, `avgSql = 1.34ms`, `avgSqlStatementCount = 3.0`
+
+### 해석
+
+- 이번 변경은 ranked browse를 latest와 동일한 data flow 구조로 맞춰
+  board-scoped browse 경로의 내부 비대칭을 제거했다.
+- short baseline 기준으로는 회귀 없이 통과했고,
+  다음 평가는 `0.8 / 2시간` long-run에서 browse/search drift가 실제로 줄어드는지로 이어진다.

@@ -567,15 +567,56 @@ public class PostService {
         if (hasNext) {
             postIds = postIds.subList(0, batchSize);
         }
+        return toBoardScopedSlice(board, limit, postIds, hasNext);
+    }
+
+    private Slice<PostRepository.PostListRow> loadRankedBrowseSlice(Board board,
+                                                                    Pageable limit,
+                                                                    LocalDateTime cursorCreatedAt,
+                                                                    Long cursorSortValue,
+                                                                    Long cursorId,
+                                                                    boolean likesSort) {
+        int batchSize = limit.isPaged() ? limit.getPageSize() : 20;
+        Pageable idWindow = PageRequest.of(0, batchSize + 1);
+
+        List<Long> postIds;
+        if (cursorCreatedAt == null || cursorId == null || cursorSortValue == null) {
+            postIds = likesSort
+                    ? postRepository.findScrollPostIdsByBoardOrderByLikeCountDesc(board, idWindow)
+                    : postRepository.findScrollPostIdsByBoardOrderByCommentCountDesc(board, idWindow);
+        } else {
+            postIds = likesSort
+                    ? postRepository.findScrollPostIdsByBoardAndLikeCountAfter(
+                    board, cursorSortValue, cursorCreatedAt, cursorId, idWindow
+            )
+                    : postRepository.findScrollPostIdsByBoardAndCommentCountAfter(
+                    board, cursorSortValue, cursorCreatedAt, cursorId, idWindow
+            );
+        }
+
+        boolean hasNext = postIds.size() > batchSize;
+        if (hasNext) {
+            postIds = postIds.subList(0, batchSize);
+        }
+
+        // 문제 해결:
+        // ranked browse(likes/comments)는 latest와 달리 아직 "정렬 + author projection"을 한 방 쿼리로 처리하고 있었다.
+        // 이 경로를 latest와 같은 `id-first -> small row batch` 구조로 맞추면
+        // 긴 soak에서 like/comment 정렬 browse가 joins와 정렬을 동시에 붙잡아 pool을 오래 점유하는 문제를 줄일 수 있다.
+        return toBoardScopedSlice(board, limit, postIds, hasNext);
+    }
+
+    private Slice<PostRepository.PostListRow> toBoardScopedSlice(Board board,
+                                                                 Pageable limit,
+                                                                 List<Long> postIds,
+                                                                 boolean hasNext) {
         if (postIds.isEmpty()) {
             return new org.springframework.data.domain.SliceImpl<>(List.of(), limit, false);
         }
 
         // 문제 해결:
-        // browse latest 는 정렬과 join projection 을 같은 SQL 에서 처리할 때 시간이 길어졌다.
-        // 먼저 posts 인덱스에서 현재 window 의 id 만 keyset 으로 자르고,
-        // author projection 은 작은 id 집합에만 적용하고, board name/slug 는 이미 요청에서 확정된 값을 재사용해
-        // browse rows hot query 에서 boards join 자체를 제거한다.
+        // board-scoped browse 최신/좋아요/댓글 정렬은 모두 "작은 id 집합 + author projection"으로 동일하게 수렴해야 한다.
+        // 이렇게 해야 latest만 빠르고 ranked browse가 다시 느려지는 비대칭을 만들지 않는다.
         Map<Long, PostRepository.BoardScopedPostListRow> rowsById = postRepository.findBoardScopedPostListRowsByIdIn(postIds).stream()
                 .collect(Collectors.toMap(PostRepository.BoardScopedPostListRow::getId, row -> row));
 
@@ -586,33 +627,6 @@ public class PostService {
                 .toList();
 
         return new org.springframework.data.domain.SliceImpl<>(orderedRows, limit, hasNext);
-    }
-
-    private Slice<PostRepository.PostListRow> loadRankedBrowseSlice(Board board,
-                                                                    Pageable limit,
-                                                                    LocalDateTime cursorCreatedAt,
-                                                                    Long cursorSortValue,
-                                                                    Long cursorId,
-                                                                    boolean likesSort) {
-        Slice<PostRepository.BoardScopedPostListRow> slice;
-        if (cursorCreatedAt == null || cursorId == null || cursorSortValue == null) {
-            slice = likesSort
-                    ? postRepository.findBoardScopedScrollPostListRowsByBoardOrderByLikeCountDesc(board, limit)
-                    : postRepository.findBoardScopedScrollPostListRowsByBoardOrderByCommentCountDesc(board, limit);
-        } else {
-            slice = likesSort
-                    ? postRepository.findBoardScopedScrollPostListRowsByBoardAndLikeCountAfter(
-                    board, cursorSortValue, cursorCreatedAt, cursorId, limit
-            )
-                    : postRepository.findBoardScopedScrollPostListRowsByBoardAndCommentCountAfter(
-                    board, cursorSortValue, cursorCreatedAt, cursorId, limit
-            );
-        }
-        return new org.springframework.data.domain.SliceImpl<>(
-                slice.getContent().stream().map(row -> withBoardContext(row, board)).toList(),
-                slice.getPageable(),
-                slice.hasNext()
-        );
     }
 
     private Slice<PostRepository.PostListRow> loadSearchSlice(Board board,

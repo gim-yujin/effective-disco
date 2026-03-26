@@ -21,6 +21,9 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.data.domain.Page;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.ArrayList;
+import java.util.List;
+
 import static org.assertj.core.api.Assertions.assertThat;
 
 @SpringBootTest(properties = "spring.jpa.properties.hibernate.generate_statistics=true")
@@ -237,6 +240,126 @@ class PostListOptimizationIntegrationTest {
         });
         assertThat(statistics.getPrepareStatementCount())
                 .as("문제 해결 검증: latest browse slice 는 board lookup + id window + id batch projection + tag/image batch 수준으로 끝나야 한다")
+                .isLessThanOrEqualTo(5L);
+    }
+
+    @Test
+    void getPostSlice_likeRankedBrowseUsesIdWindowBeforeProjectionJoin() {
+        String tagPrefix = "slice-like-rank";
+        Board board = boardRepository.save(Board.builder()
+                .name("좋아요 랭킹 게시판")
+                .slug("like-rank-" + tagPrefix)
+                .description("좋아요 ranked browse 최적화 게시판")
+                .build());
+
+        Tag spring = tagRepository.save(new Tag("like-rank-tag-" + tagPrefix));
+        List<Post> posts = new ArrayList<>();
+
+        for (int i = 0; i < 6; i++) {
+            User author = userRepository.save(User.builder()
+                    .username("like-rank-author" + i + "-" + tagPrefix)
+                    .email("like-rank-author" + i + "-" + tagPrefix + "@example.com")
+                    .password("encoded-password")
+                    .build());
+
+            Post post = Post.builder()
+                    .title("like-rank-post-" + i)
+                    .content("like-rank-content-" + i)
+                    .author(author)
+                    .board(board)
+                    .build();
+            post.getTags().add(spring);
+            post.addImage(new PostImage(post, "/like-rank-images/" + i + ".jpg", 0));
+            posts.add(postRepository.save(post));
+        }
+
+        for (int i = 0; i < posts.size(); i++) {
+            for (int repeat = 0; repeat <= i; repeat++) {
+                postRepository.incrementLikeCount(posts.get(i).getId());
+            }
+        }
+
+        entityManager.flush();
+        entityManager.clear();
+        statistics.clear();
+
+        PostScrollResponse result = postService.getPostSlice(3, null, null, "like-rank-" + tagPrefix, "likes", null, null, null);
+
+        assertThat(result.getContent()).hasSize(3);
+        assertThat(result.isHasNext()).isTrue();
+        assertThat(result.getContent()).extracting(PostResponse::getTitle)
+                .containsExactly("like-rank-post-5", "like-rank-post-4", "like-rank-post-3");
+        assertThat(result.getNextCursorSortValue())
+                .as("문제 해결 검증: ranked browse slice 는 id-window 구조로 바뀌어도 마지막 row의 like cursor 계약을 그대로 유지해야 한다")
+                .isEqualTo(4L);
+        assertThat(result.getContent()).allSatisfy(post -> {
+            assertThat(post.getBoardSlug()).isEqualTo("like-rank-" + tagPrefix);
+            assertThat(post.getContent()).isEmpty();
+            assertThat(post.getTags()).containsExactly("like-rank-tag-" + tagPrefix);
+            assertThat(post.getImageUrls()).hasSize(1);
+        });
+        assertThat(statistics.getPrepareStatementCount())
+                .as("문제 해결 검증: like ranked browse slice 도 board lookup + id window + id batch projection + tag/image batch 수준으로 끝나야 한다")
+                .isLessThanOrEqualTo(5L);
+    }
+
+    @Test
+    void getPostSlice_commentRankedBrowseUsesIdWindowBeforeProjectionJoin() {
+        String tagPrefix = "slice-comment-rank";
+        Board board = boardRepository.save(Board.builder()
+                .name("댓글 랭킹 게시판")
+                .slug("comment-rank-" + tagPrefix)
+                .description("댓글 ranked browse 최적화 게시판")
+                .build());
+
+        Tag spring = tagRepository.save(new Tag("comment-rank-tag-" + tagPrefix));
+        List<Post> posts = new ArrayList<>();
+
+        for (int i = 0; i < 5; i++) {
+            User author = userRepository.save(User.builder()
+                    .username("comment-rank-author" + i + "-" + tagPrefix)
+                    .email("comment-rank-author" + i + "-" + tagPrefix + "@example.com")
+                    .password("encoded-password")
+                    .build());
+
+            Post post = Post.builder()
+                    .title("comment-rank-post-" + i)
+                    .content("comment-rank-content-" + i)
+                    .author(author)
+                    .board(board)
+                    .build();
+            post.getTags().add(spring);
+            post.addImage(new PostImage(post, "/comment-rank-images/" + i + ".jpg", 0));
+            posts.add(postRepository.save(post));
+        }
+
+        for (int i = 0; i < posts.size(); i++) {
+            for (int repeat = 0; repeat <= i; repeat++) {
+                postRepository.incrementCommentCount(posts.get(i).getId());
+            }
+        }
+
+        entityManager.flush();
+        entityManager.clear();
+        statistics.clear();
+
+        PostScrollResponse result = postService.getPostSlice(2, null, null, "comment-rank-" + tagPrefix, "comments", null, null, null);
+
+        assertThat(result.getContent()).hasSize(2);
+        assertThat(result.isHasNext()).isTrue();
+        assertThat(result.getContent()).extracting(PostResponse::getTitle)
+                .containsExactly("comment-rank-post-4", "comment-rank-post-3");
+        assertThat(result.getNextCursorSortValue())
+                .as("문제 해결 검증: comment ranked browse slice 도 마지막 row의 comment cursor 계약을 그대로 유지해야 한다")
+                .isEqualTo(4L);
+        assertThat(result.getContent()).allSatisfy(post -> {
+            assertThat(post.getBoardSlug()).isEqualTo("comment-rank-" + tagPrefix);
+            assertThat(post.getContent()).isEmpty();
+            assertThat(post.getTags()).containsExactly("comment-rank-tag-" + tagPrefix);
+            assertThat(post.getImageUrls()).hasSize(1);
+        });
+        assertThat(statistics.getPrepareStatementCount())
+                .as("문제 해결 검증: comment ranked browse slice 도 board lookup + id window + id batch projection + tag/image batch 수준으로 끝나야 한다")
                 .isLessThanOrEqualTo(5L);
     }
 

@@ -180,6 +180,33 @@ class PostControllerTest {
     }
 
     @Test
+    void getPostSlice_commentRankedBrowse_returnsSortCursor() throws Exception {
+        Board board = boardRepository.save(Board.builder()
+                .name("댓글 랭킹 게시판")
+                .slug("comment-rank-board")
+                .build());
+        Post low = Post.builder().title("low-comment").content("content").author(testUser).board(board).build();
+        Post high = Post.builder().title("high-comment").content("content").author(testUser).board(board).build();
+        postRepository.save(low);
+        postRepository.save(high);
+        postRepository.incrementCommentCount(high.getId());
+        postRepository.incrementCommentCount(high.getId());
+        postRepository.incrementCommentCount(low.getId());
+
+        mockMvc.perform(get("/api/posts/slice")
+                        .param("boardSlug", "comment-rank-board")
+                        .param("sort", "comments")
+                        .param("size", "1"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.content.length()").value(1))
+                .andExpect(jsonPath("$.content[0].title").value("high-comment"))
+                .andExpect(jsonPath("$.hasNext").value(true))
+                .andExpect(jsonPath("$.nextCursorSortValue").value(2))
+                .andExpect(jsonPath("$.nextCursorCreatedAt").isNotEmpty())
+                .andExpect(jsonPath("$.nextCursorId").isNumber());
+    }
+
+    @Test
     void getPost_success_returns200() throws Exception {
         Post post = postRepository.save(
                 Post.builder().title("Hello").content("World").author(testUser).build());

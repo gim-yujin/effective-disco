@@ -1830,3 +1830,38 @@ SOAK_FACTOR=0.9 SOAK_DURATION=1h WARMUP_DURATION=2m SAMPLE_INTERVAL_SECONDS=60 \
   전체 soak 성능이 개선됐다고 말할 수 없다.
 - 즉 현재 남은 장시간 saturation 원인은 `notification.store`보다
   browse/search read path 쪽이 더 강하다고 보는 것이 맞다.
+
+## 2026-03-26 clean broad mixed `0.9 / 5분` 재측정 after ranked browse 최적화
+
+상태: 완료
+
+### 실행 목적
+
+- `post.list.browse.rows`의 남은 핵심 후보였던 ranked browse(`likes/comments`)를
+  `latest`와 같은 `id-first -> small row batch` 구조로 바꾼 뒤,
+  clean broad mixed 기준선에서 국소 회귀가 없는지 먼저 확인한다.
+
+### 결과
+
+- suite:
+  [soak-20260326-142343.md](/home/admin0/effective-disco/loadtest/results/soak-20260326-142343.md)
+- server metrics:
+  [soak-20260326-142343-server.json](/home/admin0/effective-disco/loadtest/results/soak-20260326-142343-server.json)
+- sql snapshot:
+  [soak-20260326-142343-sql.tsv](/home/admin0/effective-disco/loadtest/results/soak-20260326-142343-sql.tsv)
+- 상태: `PASS`
+- `http p95 = 220.33ms`
+- `http p99 = 281.45ms`
+- `unexpected_response_rate = 0.0000`
+- `duplicateKeyConflicts = 0`
+- `dbPoolTimeouts = 0`
+- `unreadNotificationMismatchUsers = 0`
+
+### 해석
+
+- ranked browse 최적화 직후 clean short baseline에서는
+  timeout, duplicate-key, unread counter drift가 모두 재현되지 않았다.
+- 즉 이번 변경은 적어도 short soak 기준으로는
+  broad mixed hot path에 새 regression을 만들지 않았다고 볼 수 있다.
+- 다음 판단은 다시 `0.8 / 2시간` long-run에서
+  browse/search drift가 실제로 줄어드는지 확인하는 것이다.

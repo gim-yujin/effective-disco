@@ -13,14 +13,17 @@ import java.util.Set;
 
 /**
  * 문제 해결:
- * 게시판 목록/검색은 `board_id + draft` 조건 뒤에 최신순(`created_at desc`) 정렬을 반복한다.
- * 기존 인덱스는 board slice 까지만 줄였고 정렬 비용은 남아 있었으므로,
- * `board_id, draft, created_at desc` 복합 인덱스를 추가해 최신 목록 read pressure를 낮춘다.
+ * 게시판 목록/검색과 ranked browse 는 모두 `board_id + draft` 범위를 먼저 줄인 뒤
+ * `created_at`, `like_count`, `comment_count` 정렬을 반복한다.
+ * latest/likes/comments 각각이 다른 sort key 를 쓰므로,
+ * board 범위 내 keyset window 를 바로 잘라낼 수 있게 정렬별 복합 인덱스를 둔다.
  */
 @Entity
 @Table(name = "posts", indexes = {
         @Index(name = "idx_post_board_draft", columnList = "board_id, draft"),
         @Index(name = "idx_post_board_draft_created_at_desc", columnList = "board_id, draft, created_at DESC"),
+        @Index(name = "idx_post_board_draft_like_created_id_desc", columnList = "board_id, draft, like_count DESC, created_at DESC, id DESC"),
+        @Index(name = "idx_post_board_draft_comment_created_id_desc", columnList = "board_id, draft, comment_count DESC, created_at DESC, id DESC"),
         @Index(name = "idx_post_user", columnList = "user_id")
 })
 @Getter
