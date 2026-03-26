@@ -1865,3 +1865,58 @@ SOAK_FACTOR=0.9 SOAK_DURATION=1h WARMUP_DURATION=2m SAMPLE_INTERVAL_SECONDS=60 \
   broad mixed hot path에 새 regression을 만들지 않았다고 볼 수 있다.
 - 다음 판단은 다시 `0.8 / 2시간` long-run에서
   browse/search drift가 실제로 줄어드는지 확인하는 것이다.
+
+## 2026-03-26 clean broad mixed `0.8 / 2시간` 재측정 after ranked browse 최적화
+
+상태: 완료
+
+### 실행 목적
+
+- ranked browse(`likes/comments`)를 `id-first -> small row batch`로 바꾼 뒤,
+  strict same-condition `0.8 / 2시간` 기준선이 실제로 회복되는지 확인한다.
+
+### 결과
+
+- suite:
+  [soak-20260326-143758.md](/home/admin0/effective-disco/loadtest/results/soak-20260326-143758.md)
+- server metrics:
+  [soak-20260326-143758-server.json](/home/admin0/effective-disco/loadtest/results/soak-20260326-143758-server.json)
+- sql snapshot:
+  [soak-20260326-143758-sql.tsv](/home/admin0/effective-disco/loadtest/results/soak-20260326-143758-sql.tsv)
+- 상태: `PASS`
+- `http p95 = 228.53ms`
+- `http p99 = 297.84ms`
+- `unexpected_response_rate = 0.0000`
+- `duplicateKeyConflicts = 0`
+- `dbPoolTimeouts = 0`
+- `unreadNotificationMismatchUsers = 0`
+
+### 5분 모니터링 요약
+
+- `5분`: `dbPoolTimeouts = 0`
+- `30분`: `dbPoolTimeouts = 0`
+- `60분`: `dbPoolTimeouts = 0`
+- `90분`: `dbPoolTimeouts = 0`
+- `120분`: `dbPoolTimeouts = 0`
+
+### 직전 동일 조건 대비 개선율
+
+- 비교 기준:
+  [soak-20260326-114456.md](/home/admin0/effective-disco/loadtest/results/soak-20260326-114456.md)
+  대비
+  [soak-20260326-143758.md](/home/admin0/effective-disco/loadtest/results/soak-20260326-143758.md)
+- `http p95 = 385.38ms -> 228.53ms`, `40.7% 개선`
+- `http p99 = 593.96ms -> 297.84ms`, `49.9% 개선`
+- `dbPoolTimeouts = 179 -> 0`, `100% 개선`
+- `post.list.browse.rows avgWall = 23.97ms -> 1.76ms`, `92.7% 개선`
+- `post.list.search.rows avgWall = 18.80ms -> 17.75ms`, `5.6% 개선`
+- `notification.store avgWall = 2.39ms -> 2.17ms`, `9.5% 개선`
+- `notification.read-page.summary.transition avgWall = 3.22ms -> 2.95ms`, `8.6% 개선`
+
+### 해석
+
+- ranked browse 최적화 이후 clean `0.8 / 2시간`은 strict 기준으로 `PASS`까지 회복됐다.
+- 개선의 대부분은 `post.list.browse.rows`에서 나왔고,
+  이 국소 개선이 broad mixed 전체 `p95/p99`와 `dbPoolTimeouts`를 함께 끌어내렸다.
+- 즉 이번 결과는 `일부 경로 1% 개선`이 아니라,
+  실제 장시간 기준선까지 바꾼 `핫 read path 구조 변경`의 효과로 보는 것이 맞다.

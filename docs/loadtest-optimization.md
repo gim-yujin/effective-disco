@@ -3360,3 +3360,92 @@ GRADLE_USER_HOME=/tmp/gradle-home ./gradlew test --no-daemon
   board-scoped browse 경로의 내부 비대칭을 제거했다.
 - short baseline 기준으로는 회귀 없이 통과했고,
   다음 평가는 `0.8 / 2시간` long-run에서 browse/search drift가 실제로 줄어드는지로 이어진다.
+
+## 2026-03-26 clean broad mixed `0.8 / 2시간` 재측정 after ranked browse 최적화
+
+상태: 완료
+
+### 실행 조건
+
+- clean `effectivedisco_loadtest` DB `DROP/CREATE`
+- fresh `loadtest` 앱
+- `SOAK_FACTOR=0.8`
+- `SOAK_DURATION=2h`
+- `WARMUP_DURATION=2m`
+
+### 결과
+
+- suite:
+  [soak-20260326-143758.md](/home/admin0/effective-disco/loadtest/results/soak-20260326-143758.md)
+- server:
+  [soak-20260326-143758-server.json](/home/admin0/effective-disco/loadtest/results/soak-20260326-143758-server.json)
+- sql:
+  [soak-20260326-143758-sql.tsv](/home/admin0/effective-disco/loadtest/results/soak-20260326-143758-sql.tsv)
+
+숫자:
+
+- `status = PASS`
+- `p95 = 228.53ms`
+- `p99 = 297.84ms`
+- `unexpected_response_rate = 0.0000`
+- `duplicateKeyConflicts = 0`
+- `dbPoolTimeouts = 0`
+- `unreadNotificationMismatchUsers = 0`
+
+5분 모니터링 요약:
+
+- `5분`: `dbPoolTimeouts = 0`
+- `30분`: `dbPoolTimeouts = 0`
+- `60분`: `dbPoolTimeouts = 0`
+- `90분`: `dbPoolTimeouts = 0`
+- `120분`: `dbPoolTimeouts = 0`
+
+주요 profile:
+
+- `post.list.browse.rows avgWall = 1.76ms`, `avgSql = 0.74ms`
+- `post.list.search.rows avgWall = 17.75ms`, `avgSql = 17.24ms`
+- `notification.store avgWall = 2.17ms`, `avgSql = 1.38ms`
+- `notification.read-page.summary.transition avgWall = 2.95ms`, `avgSql = 1.86ms`
+
+### strict same-condition 전후 비교
+
+- 비교 기준:
+  [soak-20260326-114456.md](/home/admin0/effective-disco/loadtest/results/soak-20260326-114456.md)
+  대비
+  [soak-20260326-143758.md](/home/admin0/effective-disco/loadtest/results/soak-20260326-143758.md)
+- `http p95 = 385.38ms -> 228.53ms`, `40.7% 개선`
+- `http p99 = 593.96ms -> 297.84ms`, `49.9% 개선`
+- `dbPoolTimeouts = 179 -> 0`, `100% 개선`
+- `post.list.browse.rows avgWall = 23.97ms -> 1.76ms`, `92.7% 개선`
+- `post.list.browse.rows avgSql = 23.41ms -> 0.74ms`, `96.9% 개선`
+- `post.list.search.rows avgWall = 18.80ms -> 17.75ms`, `5.6% 개선`
+- `post.list.search.rows avgSql = 18.23ms -> 17.24ms`, `5.4% 개선`
+- `notification.store avgWall = 2.39ms -> 2.17ms`, `9.5% 개선`
+- `notification.store avgSql = 1.53ms -> 1.38ms`, `10.0% 개선`
+- `notification.read-page.summary.transition avgWall = 3.22ms -> 2.95ms`, `8.6% 개선`
+- `notification.read-page.summary.transition avgSql = 2.08ms -> 1.86ms`, `10.6% 개선`
+
+### 원인 분석
+
+- 가장 큰 변화는 [PostService.java](/home/admin0/effective-disco/src/main/java/com/effectivedisco/service/PostService.java)
+  의 `loadRankedBrowseSlice()`와
+  [PostRepository.java](/home/admin0/effective-disco/src/main/java/com/effectivedisco/repository/PostRepository.java)
+  의 ranked browse query shape였다.
+- 이전 ranked browse는 `정렬 + author/board projection`을 한 번에 처리했고,
+  board-scoped latest browse가 이미 제거한 join/정렬 동시 비용을 그대로 안고 있었다.
+- 이번 변경은 ranked browse도 latest와 같은 `id-first -> small row batch`로 바꾸고,
+  [Post.java](/home/admin0/effective-disco/src/main/java/com/effectivedisco/domain/Post.java)
+  의 정렬별 복합 인덱스로 window 추출을 바로 받도록 만들었다.
+- 그 결과 broad mixed long-run에서 가장 비쌌던 `post.list.browse.rows`의
+  커넥션 점유 시간이 거의 사라졌고,
+  이 국소 개선이 전체 `p95/p99`와 `dbPoolTimeouts` 감소로 이어졌다.
+
+### 최적화 교훈
+
+- `pool size`나 timeout 설정을 만지기 전에, 실제로 커넥션을 오래 잡는 `핫 read path`의 data flow를 바꾸는 것이 훨씬 강하다.
+- `정렬 + projection`을 한 SQL에 몰아넣는 구조보다,
+  `인덱스로 작은 id window를 먼저 자르고 그 다음 projection` 하는 구조가 장시간 soak에서 훨씬 안정적이다.
+- 가장 중요한 건 `국소 1% 개선`이 아니라 `시스템 전체 strict baseline`을 움직이는 변경이다.
+  이번 ranked browse 최적화는 바로 그 경우였다.
+- 부작용을 줄이는 방법도 확인됐다.
+  API/SSR 계약은 유지하고, 서비스/리포지토리 내부 data flow만 바꿔도 큰 개선을 낼 수 있다.
