@@ -2087,3 +2087,41 @@ SOAK_FACTOR=0.9 SOAK_DURATION=1h WARMUP_DURATION=2m SAMPLE_INTERVAL_SECONDS=60 \
   full long-run 중 한 번 겹친 단발성 contention noise로 보는 편이 더 맞다.
 - 즉 strict `0.9 / 2시간` gap은 여전히 남아 있지만,
   그것을 설명하는 근거로 `초기 5분 burst가 항상 재현된다`고 말할 수는 없게 됐다.
+
+## 2026-03-27 clean broad mixed `0.9 / 2시간` partial rerun
+
+상태: 완료
+
+### 실행 목적
+
+- clean `0.9 / 2시간` strict failure가 다시 재현되는지 확인한다.
+- previous rerun의 `dbPoolTimeouts = 64`가 단발성인지, 같은 factor에서 다시 나오는지 본다.
+
+### 결과
+
+- summary:
+  [soak-20260327-003415.md](/home/admin0/effective-disco/loadtest/results/soak-20260327-003415.md)
+- log:
+  [soak-20260327-003415.log](/home/admin0/effective-disco/loadtest/results/soak-20260327-003415.log)
+- metrics:
+  [soak-20260327-003415-metrics.jsonl](/home/admin0/effective-disco/loadtest/results/soak-20260327-003415-metrics.jsonl)
+- 상태: `FAIL (strict)` / `partial`
+- `actual_runtime = 1h 10m`
+- `dbPoolTimeouts = 73`
+- `duplicateKeyConflicts = 0`
+- `unreadNotificationMismatchUsers = 0`
+
+### 5분 모니터링 요약
+
+- `5분`: `dbPoolTimeouts = 0`
+- `10분`: `dbPoolTimeouts = 0`
+- `15분`: `dbPoolTimeouts = 73`
+- `20분 ~ 70분`: `dbPoolTimeouts = 73` 유지
+
+### 해석
+
+- clean `0.9 / 2시간` strict failure는 다시 재현됐다.
+- 다만 이번에도 timeout은 초반 `15분` 안에 한 번에 발생했고,
+  이후 `1시간 10분`까지 추가 증가 없이 plateau였다.
+- `duplicateKeyConflicts`, `unreadNotificationMismatchUsers`, SQL mismatch는 계속 `0`이었다.
+- steady-state 경로 중 남는 가장 큰 drift는 여전히 `post.list.search.rows`였다.

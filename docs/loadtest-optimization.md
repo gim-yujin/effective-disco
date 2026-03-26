@@ -3677,3 +3677,79 @@ GRADLE_USER_HOME=/tmp/gradle-home ./gradlew test --no-daemon
 - 이 단계 덕분에 다음 우선순위는
   `초기 burst 전용 응급처치`가 아니라
   여전히 남아 있는 `post.list.search.rows` 최적화 쪽으로 돌아갔다.
+
+## 2026-03-27 clean broad mixed `0.9 / 2시간` partial rerun
+
+상태: 완료
+
+### 실행 조건
+
+- clean `effectivedisco_loadtest` DB `DROP/CREATE`
+- fresh `loadtest` app
+- `SOAK_FACTOR=0.9`
+- `SOAK_DURATION=2h`
+- `WARMUP_DURATION=2m`
+- `SAMPLE_INTERVAL_SECONDS=300`
+
+주의:
+
+- 이번 런은 strict failure가 `15분` 시점에 이미 확정됐고,
+  `70분`까지 같은 수치로 plateau가 유지돼
+  runner를 `1시간 10분` 시점에서 중단했다.
+- 따라서 full runner 산출 `.md`가 아니라
+  수동 summary 파일로 결과를 정리했다.
+
+### 결과
+
+- summary:
+  [soak-20260327-003415.md](/home/admin0/effective-disco/loadtest/results/soak-20260327-003415.md)
+- log:
+  [soak-20260327-003415.log](/home/admin0/effective-disco/loadtest/results/soak-20260327-003415.log)
+- metrics:
+  [soak-20260327-003415-metrics.jsonl](/home/admin0/effective-disco/loadtest/results/soak-20260327-003415-metrics.jsonl)
+
+숫자:
+
+- `status = FAIL (strict)`
+- `actual_runtime = 1h 10m`
+- `dbPoolTimeouts = 73`
+- `duplicateKeyConflicts = 0`
+- `unreadNotificationMismatchUsers = 0`
+- `currentThreadsAwaitingConnection = 177`
+- `maxThreadsAwaitingConnection = 200`
+
+주요 profile:
+
+- `post.list.browse.rows avgWall ≈ 1.78ms`
+- `post.list.search.rows avgWall ≈ 14.77ms`
+- `notification.store avgWall ≈ 2.25ms`
+- `notification.read-page.summary.transition avgWall ≈ 3.07ms`
+
+### 직전 clean `0.9 / 2시간` rerun과의 비교
+
+- 비교 기준:
+  [soak-20260326-194048.md](/home/admin0/effective-disco/loadtest/results/soak-20260326-194048.md)
+  대비
+  [soak-20260327-003415.md](/home/admin0/effective-disco/loadtest/results/soak-20260327-003415.md)
+- `dbPoolTimeouts = 64 -> 73`, `14.1% 악화`
+- `post.list.browse.rows avgWall = 1.80ms -> 1.78ms`, `1.1% 개선`
+- `post.list.search.rows avgWall = 20.37ms -> 14.77ms`, `27.5% 개선`
+- `notification.store avgWall = 2.28ms -> 2.25ms`, `1.3% 개선`
+- `notification.read-page.summary.transition avgWall = 3.09ms -> 3.07ms`, `0.6% 개선`
+
+### 원인 분석
+
+- strict failure는 다시 재현됐지만,
+  steady-state read/write drift 자체는 직전 rerun보다 오히려 더 좋아졌다.
+- 즉 현재 `0.9 / 2시간` gap은
+  long-run 후반 saturation보다
+  초반에 한 번 발생하는 timeout burst의 영향이 더 크다.
+- 그와 동시에 steady-state 경로의 우선순위는 계속 `post.list.search.rows`다.
+
+### 교훈
+
+- `strict fail 재현`과 `steady-state 성능`은 분리해서 봐야 한다.
+- 이번 partial rerun은 strict 기준에선 다시 실패였지만,
+  steady-state 지표만 보면 search path를 제외한 나머지는 이미 충분히 안정적이었다.
+- 따라서 다음 최적화는 broad browse나 notification이 아니라
+  `post.list.search.rows`와 early burst 원인 분해에 집중하는 게 맞다.
