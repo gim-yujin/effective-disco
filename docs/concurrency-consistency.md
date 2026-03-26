@@ -1770,3 +1770,63 @@ SOAK_FACTOR=0.9 SOAK_DURATION=1h WARMUP_DURATION=2m SAMPLE_INTERVAL_SECONDS=60 \
   현재 기준선에서 받아들일 수 있는 방향으로 보인다.
 - 다만 이것은 `5분` validation이므로,
   장시간 `2시간 stable factor` 판단은 기존 soak 기록과 별도로 계속 봐야 한다.
+
+## 2026-03-26 clean broad mixed `0.8 / 2시간` 재측정 after browse/search/store 최적화
+
+상태: 완료
+
+### 실행 목적
+
+- [PostService.java](/home/admin0/effective-disco/src/main/java/com/effectivedisco/service/PostService.java),
+  [PostRepository.java](/home/admin0/effective-disco/src/main/java/com/effectivedisco/repository/PostRepository.java),
+  [PostRepositoryImpl.java](/home/admin0/effective-disco/src/main/java/com/effectivedisco/repository/PostRepositoryImpl.java),
+  [NotificationService.java](/home/admin0/effective-disco/src/main/java/com/effectivedisco/service/NotificationService.java)
+  의 browse/search/store 최적화가
+  실제 `0.8 / 2시간` long-run 기준선까지 밀어 올리는지 확인한다.
+
+### 결과
+
+- suite:
+  [soak-20260326-114456.md](/home/admin0/effective-disco/loadtest/results/soak-20260326-114456.md)
+- server metrics:
+  [soak-20260326-114456-server.json](/home/admin0/effective-disco/loadtest/results/soak-20260326-114456-server.json)
+- sql snapshot:
+  [soak-20260326-114456-sql.tsv](/home/admin0/effective-disco/loadtest/results/soak-20260326-114456-sql.tsv)
+- 상태: `FAIL`
+- `http p95 = 385.38ms`
+- `http p99 = 593.96ms`
+- `unexpected_response_rate = 0.0000`
+- `duplicateKeyConflicts = 0`
+- `dbPoolTimeouts = 179`
+- `unreadNotificationMismatchUsers = 0`
+
+### 5분 모니터링 요약
+
+- `1시간 25분`: `dbPoolTimeouts = 0`
+- `1시간 30분`: `dbPoolTimeouts = 4`
+- `1시간 35분`: `dbPoolTimeouts = 20`
+- `1시간 40분`: `dbPoolTimeouts = 48`
+- `1시간 45분`: `dbPoolTimeouts = 144`
+- `1시간 50분`: `dbPoolTimeouts = 179`
+- `최종`: `dbPoolTimeouts = 179`
+
+### 같은 조건 전후 비교
+
+- 비교 기준:
+  [soak-20260326-073715.md](/home/admin0/effective-disco/loadtest/results/soak-20260326-073715.md)
+  대비
+  [soak-20260326-114456.md](/home/admin0/effective-disco/loadtest/results/soak-20260326-114456.md)
+- `post.list.browse.rows avgWall = 28.15ms -> 23.97ms`, `14.9% 개선`
+- `post.list.search.rows avgWall = 18.27ms -> 18.80ms`, `2.9% 악화`
+- `notification.store avgWall = 4.42ms -> 2.39ms`, `45.9% 개선`
+- `http p95 = 364.85ms -> 385.38ms`, `5.6% 악화`
+- `http p99 = 499.58ms -> 593.96ms`, `18.9% 악화`
+- `dbPoolTimeouts = 8 -> 179`, `22.4배 악화`
+
+### 해석
+
+- 이번 변경은 `notification.store`와 `post.list.browse.rows` 일부 구간에는 분명히 이득이 있었다.
+- 하지만 strict same-condition `0.8 / 2시간` 기준으로는
+  전체 soak 성능이 개선됐다고 말할 수 없다.
+- 즉 현재 남은 장시간 saturation 원인은 `notification.store`보다
+  browse/search read path 쪽이 더 강하다고 보는 것이 맞다.

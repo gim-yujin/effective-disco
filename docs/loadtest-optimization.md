@@ -3199,3 +3199,77 @@ GRADLE_USER_HOME=/tmp/gradle-home ./gradlew test --no-daemon
 - notification.store는 consistency 모델을 유지한 채
   `COUNT(*) refresh + after-commit unread 재조회`를 제거했기 때문에,
   read-page/read-all 경로의 exact refresh 전략과도 충돌하지 않는다.
+
+## 2026-03-26 clean broad mixed `0.8 / 2시간` 재측정 after browse/search/store 최적화
+
+상태: 완료
+
+### 실행 조건
+
+- clean `effectivedisco_loadtest` DB `DROP/CREATE`
+- fresh `loadtest` 앱
+- `SOAK_FACTOR=0.8`
+- `SOAK_DURATION=2h`
+- `WARMUP_DURATION=2m`
+
+### 결과
+
+- suite:
+  [soak-20260326-114456.md](/home/admin0/effective-disco/loadtest/results/soak-20260326-114456.md)
+- server:
+  [soak-20260326-114456-server.json](/home/admin0/effective-disco/loadtest/results/soak-20260326-114456-server.json)
+- sql:
+  [soak-20260326-114456-sql.tsv](/home/admin0/effective-disco/loadtest/results/soak-20260326-114456-sql.tsv)
+
+숫자:
+
+- `status = FAIL`
+- `p95 = 385.38ms`
+- `p99 = 593.96ms`
+- `unexpected_response_rate = 0.0000`
+- `duplicateKeyConflicts = 0`
+- `dbPoolTimeouts = 179`
+- `unreadNotificationMismatchUsers = 0`
+
+5분 모니터링 요약:
+
+- `1시간 25분`: `dbPoolTimeouts = 0`
+- `1시간 30분`: `dbPoolTimeouts = 4`
+- `1시간 35분`: `dbPoolTimeouts = 20`
+- `1시간 40분`: `dbPoolTimeouts = 48`
+- `1시간 45분`: `dbPoolTimeouts = 144`
+- `1시간 50분`: `dbPoolTimeouts = 179`
+- `최종`: `dbPoolTimeouts = 179`
+
+주요 profile:
+
+- `post.list.browse.rows avgWall = 23.97ms`, `avgSql = 23.41ms`
+- `post.list.search.rows avgWall = 18.80ms`, `avgSql = 18.23ms`
+- `notification.store avgWall = 2.39ms`, `avgSql = 1.53ms`
+- `notification.read-page.summary.transition avgWall = 3.22ms`, `avgSql = 2.08ms`
+
+### strict same-condition 전후 비교
+
+- 비교 기준:
+  [soak-20260326-073715.md](/home/admin0/effective-disco/loadtest/results/soak-20260326-073715.md)
+  대비
+  [soak-20260326-114456.md](/home/admin0/effective-disco/loadtest/results/soak-20260326-114456.md)
+- `post.list.browse.rows avgWall = 28.15ms -> 23.97ms`, `14.9% 개선`
+- `post.list.browse.rows avgSql = 27.58ms -> 23.41ms`, `15.1% 개선`
+- `post.list.search.rows avgWall = 18.27ms -> 18.80ms`, `2.9% 악화`
+- `post.list.search.rows avgSql = 17.75ms -> 18.23ms`, `2.7% 악화`
+- `notification.store avgWall = 4.42ms -> 2.39ms`, `45.9% 개선`
+- `notification.store avgSql = 3.79ms -> 1.53ms`, `59.5% 개선`
+- `notification.read-page.summary.transition avgWall = 2.74ms -> 3.22ms`, `17.7% 악화`
+- `http p95 = 364.85ms -> 385.38ms`, `5.6% 악화`
+- `http p99 = 499.58ms -> 593.96ms`, `18.9% 악화`
+- `dbPoolTimeouts = 8 -> 179`, `22.4배 악화`
+
+### 해석
+
+- 이번 변경은 `notification.store`와 browse latest 계열에는 국소적으로 이득이 있었다.
+- 하지만 broad mixed `0.8 / 2시간`이라는 동일 조건으로 보면
+  전체 결과는 regression 으로 보는 게 맞다.
+- 즉 다음 최적화는 `notification.store` 추가 미세 조정보다
+  `post.list.browse.rows` 내부의 `latest/likes/comments` 분해와
+  ranked browse 경로 최적화에 초점을 두는 것이 합리적이다.
