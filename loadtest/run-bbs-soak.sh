@@ -71,6 +71,45 @@ wait_for_metrics_endpoint() {
   return 1
 }
 
+capture_metrics_snapshot() {
+  local url="$1"
+  local output_file="$2"
+  local attempts="${3:-3}"
+  local tmp_file="${output_file}.tmp"
+  local try
+
+  for ((try = 1; try <= attempts; try++)); do
+    if curl -fsS --max-time 15 "$url" >"$tmp_file"; then
+      mv "$tmp_file" "$output_file"
+      return 0
+    fi
+    sleep 1
+  done
+
+  rm -f "$tmp_file"
+  return 1
+}
+
+run_sql_snapshot() {
+  local output_file="$1"
+  # 문제 해결:
+  # 후처리 단계에서 SQL snapshot 조회가 오래 걸리면 soak runner가 끝난 것처럼 보여도
+  # final artifact가 한참 늦게 생긴다. statement timeout을 명시해 hang을 막고,
+  # 이 단계가 실패해도 원인을 바로 드러내도록 한다.
+  PGOPTIONS="${PGOPTIONS:-} -c statement_timeout=30000" \
+    psql -v ON_ERROR_STOP=1 -v loadtest_prefix="$LOADTEST_PREFIX" -F $'\t' -At -f "$SQL_CHECK_FILE" >"$output_file"
+}
+
+cleanup_loadtest_scope() {
+  local prefix="$1"
+  # 문제 해결:
+  # cleanup endpoint도 후처리 마지막 단계라 여기서 오래 멈추면 전체 suite가 끝난 것처럼 보여도
+  # summary가 생성되지 않는다. 짧은 timeout/retry를 두어 실패를 빠르게 드러낸다.
+  curl -fsS --max-time 30 --retry 2 --retry-delay 1 -X POST "$BASE_URL/internal/load-test/cleanup" \
+    -H 'Content-Type: application/json' \
+    -d "{\"prefix\":\"$prefix\"}" >/dev/null
+}
+
 if ! wait_for_metrics_endpoint "$BASE_URL/internal/load-test/metrics" 30 1; then
   printf 'load-test metrics endpoint is not reachable: %s\n' "$BASE_URL/internal/load-test/metrics" >&2
   exit 1
@@ -196,19 +235,23 @@ sample_metrics_loop "$k6_pid" &
 sampler_pid=$!
 wait "$k6_pid"
 k6_exit_code=$?
+# 문제 해결:
+# 기존 구현은 sampler가 sleep 중일 때 k6가 끝나도 `wait "$sampler_pid"`가 sample interval만큼
+# 추가로 막히면서 final server/sql artifact 생성이 지연되거나, 사용자가 그 전에 wrapper를
+# 중단해 후처리 hang처럼 보였다. k6 종료 직후 sampler를 명시적으로 정리해 finalization으로
+# 즉시 넘어가게 한다.
+kill "$sampler_pid" >/dev/null 2>&1 || true
 wait "$sampler_pid" || true
 set -e
 
-curl -fsS "$BASE_URL/internal/load-test/metrics" >"$SERVER_METRICS_FILE"
+capture_metrics_snapshot "$BASE_URL/internal/load-test/metrics" "$SERVER_METRICS_FILE"
 printf '{"timestamp":"%s","metrics":%s}\n' "$(date -Iseconds)" "$(cat "$SERVER_METRICS_FILE")" >>"$TIMELINE_FILE"
-psql -v ON_ERROR_STOP=1 -v loadtest_prefix="$LOADTEST_PREFIX" -F $'\t' -At -f "$SQL_CHECK_FILE" >"$SQL_SNAPSHOT_FILE"
+run_sql_snapshot "$SQL_SNAPSHOT_FILE"
 
 # 문제 해결:
 # soak는 실행 prefix 범위 데이터를 SQL 스냅샷으로 검증한 직후 정리해야
 # 장시간 테스트를 여러 번 반복해도 개발 DB의 게시물 수가 계속 누적되지 않는다.
-curl -fsS -X POST "$BASE_URL/internal/load-test/cleanup" \
-  -H 'Content-Type: application/json' \
-  -d "{\"prefix\":\"$LOADTEST_PREFIX\"}" >/dev/null
+cleanup_loadtest_scope "$LOADTEST_PREFIX"
 
 IFS=$'\t' read -r scope_user_count scope_post_count scope_notification_count duplicate_post_likes duplicate_bookmarks duplicate_follows duplicate_blocks post_like_mismatch_posts negative_like_count_posts post_comment_mismatch_posts negative_comment_count_posts unread_notification_mismatch_users negative_unread_notification_users <"$SQL_SNAPSHOT_FILE"
 

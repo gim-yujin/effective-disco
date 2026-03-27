@@ -4693,3 +4693,50 @@ GRADLE_USER_HOME=/tmp/gradle-home ./gradlew test --no-daemon
   `어떤 경로가 steady-state에서 끝까지 가장 크게 남는가`를 같이 봐야 한다.
 - 이번 full run에서는 `search keyword`가 끝까지 최댓값이었고,
   그 덕분에 다음 최적화 대상이 다시 명확해졌다.
+
+## 2026-03-27 soak runner 후처리 안정화
+
+### 배경
+
+- 최근 여러 soak에서 main phase 자체는 끝났는데도
+  `run-bbs-soak.sh`가 final `server.json`, `sql.tsv`, summary `.md`
+  생성 전에 오래 멈추는 경우가 반복됐다.
+- 이 상태에선 실제 측정은 끝났는데도 사용자가 wrapper를 수동 중단하게 되고,
+  결과적으로 final artifact가 비어 측정 기록이 불완전해졌다.
+- data flow를 다시 따라가 보니 핵심 지점은
+  `k6 종료 -> sampler wait -> final metrics/sql/cleanup`
+  순서였다.
+- 기존 구현은 `sample_metrics_loop()`가 `SAMPLE_INTERVAL_SECONDS` 동안 sleep 중일 때
+  `k6`가 이미 끝나도 `wait "$sampler_pid"`가 그 sleep이 끝날 때까지 그대로 막혔다.
+
+### 원인
+
+- sampler는 `while kill -0 "$k6_pid"` 루프 내부에서 `sleep "$SAMPLE_INTERVAL_SECONDS"`를 돈다.
+- 따라서 `k6`가 끝난 직후 sampler가 이미 sleep에 들어가 있으면,
+  runner는 finalization으로 넘어가기 전에 sample interval만큼 추가 대기한다.
+- 게다가 final 단계의 `curl metrics`, `psql sql snapshot`, `cleanup` 호출에도
+  별도 timeout이 없어서, 이 단계가 길어지면 전체 suite가 다시 hang처럼 보였다.
+
+### 적용한 변경
+
+- [run-bbs-soak.sh](/home/admin0/effective-disco/loadtest/run-bbs-soak.sh)
+  에 `capture_metrics_snapshot()`, `run_sql_snapshot()`, `cleanup_loadtest_scope()` helper를 추가했다.
+- `k6` 종료 직후에는
+  `kill "$sampler_pid"` 후 `wait "$sampler_pid"`로 sampler를 즉시 정리하도록 바꿨다.
+- final metrics 수집에는 `curl --max-time 15` + retry를 넣었다.
+- SQL snapshot에는 `PGOPTIONS='-c statement_timeout=30000'`를 적용했다.
+- cleanup endpoint 호출에도 `--max-time 30`과 retry를 넣었다.
+
+### 기대 효과
+
+- main phase 종료 후 sample interval만큼 불필요하게 대기하지 않는다.
+- final metrics, SQL snapshot, cleanup이 길어져도 빠르게 실패/성공이 드러난다.
+- 사용자가 wrapper를 수동으로 끊기 전에 final artifact가 생성될 가능성이 높아진다.
+
+### 검증
+
+- `bash -n loadtest/run-bbs-soak.sh` 통과
+- 짧은 soak smoke로 finalization을 바로 검증하려 했지만,
+  현재 sandbox에서는 readiness가 간헐적으로 흔들려 end-to-end smoke는 결정적으로 마무리하지 못했다.
+- 따라서 이 변경의 최종 검증은 다음 clean managed soak 재실행에서
+  `server.json`, `sql.tsv`, `.md`가 자동 생성되는지로 확정하는 것이 맞다.

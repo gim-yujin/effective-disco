@@ -129,6 +129,9 @@ BASE_URL=http://127.0.0.1:18082 \
   soak runner가 완전히 끝난 뒤에만 앱을 종료한다.
   수동 터미널 종료 때문에 `write_posts_and_comments -> POST /api/posts`
   가 `connection refused`로 집계되는 teardown artifact를 줄이기 위한 wrapper다.
+- `run-bbs-soak.sh`는 이제 `k6` 종료 직후 metrics sampler를 즉시 정리하고,
+  final metrics / SQL snapshot / cleanup 단계에 timeout을 건다.
+  목적은 main phase 종료 후 sample interval만큼 더 멈춰 보이는 post-processing hang을 줄이는 것이다.
 
 ## 시나리오
 
