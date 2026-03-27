@@ -4560,3 +4560,62 @@ GRADLE_USER_HOME=/tmp/gradle-home ./gradlew test --no-daemon
 - 즉 이전 broad search 구조 변경처럼
   일부 경로를 줄이려다 전체를 망가뜨린 최적화가 아니라,
   의도한 곳만 줄인 좋은 trade-off에 가깝다.
+
+## 2026-03-27 clean `0.9 / 15분` rerun to confirm board keyword optimization
+
+### 배경
+
+- board-scoped keyword row-path 최적화 직후 clean `0.9 / 15분`에서
+  `post.list.search.keyword.board.rows ≈ 3.86ms`까지 내려가는 좋은 샘플이 한 번 나왔다.
+- 하지만 다음 판단은 "좋은 샘플이 1회 있었는가"가 아니라
+  "같은 clean 조건에서 이 개선이 다시 재현되는가"여야 한다.
+
+### 실행 조건
+
+- clean `effectivedisco_loadtest` DB 재생성
+- `SOAK_FACTOR = 0.9`
+- `SOAK_DURATION = 15m`
+- `WARMUP_DURATION = 2m`
+- `SAMPLE_INTERVAL_SECONDS = 300`
+- `BASE_URL = http://127.0.0.1:18082`
+
+### 결과
+
+- k6 summary:
+  [soak-20260327-164929-k6.json](/home/admin0/effective-disco/loadtest/results/soak-20260327-164929-k6.json)
+- log:
+  [soak-20260327-164929.log](/home/admin0/effective-disco/loadtest/results/soak-20260327-164929.log)
+- 상태: `MAIN_PHASE_PASS_BUT_FINALIZATION_INCOMPLETE`
+- `http p95 ≈ 242.91ms`
+- `http p99 ≈ 309.44ms`
+- `unexpected_response_rate = 0.0000`
+- `dbPoolTimeouts = 0`
+- `duplicateKeyConflicts = 0`
+
+핵심 profile:
+
+- `post.list.search.keyword.board.rows ≈ 4.52ms / sql ≈ 4.18ms`
+- `post.list.search.keyword.rows ≈ 4.52ms / sql ≈ 4.18ms`
+- `post.list.search.rows ≈ 4.52ms / sql ≈ 4.18ms`
+- `post.list.search.tag.rows ≈ 1.52ms / sql ≈ 1.15ms`
+- `post.list.search.sort.rows ≈ 1.73ms / sql ≈ 0.72ms`
+- `post.list.browse.rows ≈ 1.74ms / sql ≈ 0.73ms`
+- `notification.store ≈ 2.24ms / sql ≈ 1.44ms`
+
+### 해석
+
+- main phase 기준 clean `0.9 / 15분`은 다시 깨끗하게 통과했다.
+- 그러나 직전 좋은 샘플에서 보였던
+  `post.list.search.keyword.board.rows ≈ 3.86ms`
+  개선폭은 이번엔 강하게 재현되지 않았다.
+- 즉 이 최적화는 최소한 short-run strict 기준을 해치지 않는 안전한 narrow change이긴 하지만,
+  `board keyword rows`를 안정적으로 한 단계 더 낮췄다고 결론내리긴 아직 이르다.
+- 따라서 다음 우선순위는 다시 `0.9 / 2시간` long-run 측정으로 돌아가,
+  이 수준의 short-run headroom이 실제 장시간 기준선에도 도움이 되는지 확인하는 것이다.
+
+### 교훈
+
+- hot path를 좁게 줄인 최적화라도,
+  단일 좋은 샘플만 보고 개선이 확정됐다고 판단하면 안 된다.
+- short-run 재현성 확인을 한 번 더 넣어야
+  `실제 개선`과 `좋은 측정 노이즈`를 구분할 수 있다.

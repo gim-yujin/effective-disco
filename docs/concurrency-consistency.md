@@ -2624,3 +2624,55 @@ SOAK_FACTOR=0.9 SOAK_DURATION=1h WARMUP_DURATION=2m SAMPLE_INTERVAL_SECONDS=60 \
 
 - 이번 런도 `run-bbs-soak.sh` 후처리 hang 때문에 final `k6.json/server.json/sql.tsv`는 생성되지 않았다.
 - 그래서 판정은 main phase log 와 종료 직전 live metrics snapshot 기준으로만 기록했다.
+
+## 2026-03-27 clean `0.9 / 15분` rerun to confirm board keyword optimization
+
+상태: 완료
+
+### 실행 목적
+
+- 방금 반영한 board-scoped keyword row-path 최적화가
+  실제로 재현성 있게 유지되는지 다시 확인한다.
+- 즉 한 번의 좋은 샘플이 아니라,
+  같은 clean 조건에서 `0.9 / 15분` main phase가 다시 깨끗하게 나오는지 본다.
+
+### 결과
+
+- k6 summary:
+  [soak-20260327-164929-k6.json](/home/admin0/effective-disco/loadtest/results/soak-20260327-164929-k6.json)
+- log:
+  [soak-20260327-164929.log](/home/admin0/effective-disco/loadtest/results/soak-20260327-164929.log)
+- 상태: `MAIN_PHASE_PASS_BUT_FINALIZATION_INCOMPLETE`
+- `http p95 ≈ 242.91ms`
+- `http p99 ≈ 309.44ms`
+- `unexpected_response_rate = 0.0000`
+- `dbPoolTimeouts = 0`
+- `duplicateKeyConflicts = 0`
+- `maxThreadsAwaitingConnection = 194`
+
+### profile
+
+- `post.list.search.keyword.board.rows ≈ 4.52ms / sql ≈ 4.18ms`
+- `post.list.search.keyword.rows ≈ 4.52ms / sql ≈ 4.18ms`
+- `post.list.search.rows ≈ 4.52ms / sql ≈ 4.18ms`
+- `post.list.search.tag.rows ≈ 1.52ms / sql ≈ 1.15ms`
+- `post.list.search.sort.rows ≈ 1.73ms / sql ≈ 0.72ms`
+- `post.list.browse.rows ≈ 1.74ms / sql ≈ 0.73ms`
+- `notification.store ≈ 2.24ms / sql ≈ 1.44ms`
+
+### 해석
+
+- main phase 기준으로는 clean `0.9 / 15분`이 다시 `PASS`였다.
+- 다만 targeted hot path 수치는 직전 샘플의 `≈ 3.86ms` 수준까지는 다시 내려오지 않았고,
+  `≈ 4.52ms`로 거의 이전 split-profiling 수준에 가까웠다.
+- 즉 이번 최적화는 `0.9 / 15분` main phase를 깨뜨리지는 않았지만,
+  board keyword row-path 개선폭이 강하게 재현됐다고 단정하긴 이르다.
+- 현재 해석은:
+  - strict short-run 기준은 안정
+  - 그러나 `search.keyword.board.rows`는 여전히 search 내부 최댓값
+  - 따라서 다음 승부는 short run 이 아니라 `0.9 / 2시간` long-run 재측정이다
+
+### 주의
+
+- 이번 런도 runner 후처리 hang 때문에 final `server.json` / `sql.tsv`는 자동 생성되지 않았다.
+- 그래서 최종 판정은 `k6.json`과 종료 직전 live metrics snapshot 기준이다.
