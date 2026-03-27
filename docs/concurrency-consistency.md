@@ -2969,3 +2969,62 @@ SOAK_FACTOR=0.9 SOAK_DURATION=1h WARMUP_DURATION=2m SAMPLE_INTERVAL_SECONDS=60 \
 
 - representative EXPLAIN용 `exp0328_*` 데이터는 dedicated DB에 남아 있다.
 - 다음 soak 전에 DB 재생성으로 정리해야 한다.
+
+## 2026-03-28 clean `0.95 / 15분` rerun after board keyword EXPLAIN optimization
+
+상태: 완료
+
+### 실행 목적
+
+- `board-scoped keyword search`를 `matched_post_rows(id, created_at)` 기반으로 줄인 뒤,
+  clean `0.95 / 15분`에서 strict failure 신호가 실제로 사라지는지 확인한다.
+- 이번 런은 `search hot path`가 얼마나 줄었는지와,
+  strict failure가 여전히 `search` 때문인지 아닌지를 가르는 목적이었다.
+
+### 실행 조건
+
+- dedicated `effectivedisco_loadtest` DB 재생성
+- `SOAK_FACTOR = 0.95`
+- `SOAK_DURATION = 15m`
+- `WARMUP_DURATION = 2m`
+- `SAMPLE_INTERVAL_SECONDS = 300`
+
+### 결과
+
+- summary:
+  [soak-20260328-033432.md](/home/admin0/effective-disco/loadtest/results/soak-20260328-033432.md)
+- k6 summary:
+  [soak-20260328-033432-k6.json](/home/admin0/effective-disco/loadtest/results/soak-20260328-033432-k6.json)
+- server metrics:
+  [soak-20260328-033432-server.json](/home/admin0/effective-disco/loadtest/results/soak-20260328-033432-server.json)
+- sql snapshot:
+  [soak-20260328-033432-sql.tsv](/home/admin0/effective-disco/loadtest/results/soak-20260328-033432-sql.tsv)
+- 상태: `FAIL`
+- `http p95 = 240.01ms`
+- `http p99 = 302.59ms`
+- `unexpected_response_rate = 0.0001`
+- `dbPoolTimeouts = 132`
+- `duplicateKeyConflicts = 0`
+- `unreadNotificationMismatchUsers = 0`
+- SQL snapshot 전부 `0`
+
+### 종료 직전 profile
+
+- `post.list.search.keyword.board.rows ≈ 2.06ms / sql ≈ 1.74ms`
+- `post.list.search.rows ≈ 2.06ms / sql ≈ 1.74ms`
+- `post.list.browse.rows ≈ 1.73ms / sql ≈ 0.76ms`
+- `notification.store ≈ 2.15ms / sql ≈ 1.38ms`
+- `notification.store.lock-recipient ≈ 1.07ms / sql ≈ 0.85ms`
+- `notification.read-page.lock-recipient ≈ 1.06ms / sql ≈ 0.89ms`
+- `maxThreadsAwaitingConnection = 200`
+
+### 해석
+
+- `board keyword search` 최적화는 실제로 먹혔다.
+  strict failure 직전의 profile에서도 이 경로는 `~2ms` 수준이었다.
+- 그런데도 `dbPoolTimeouts = 132`가 발생했다.
+- 따라서 clean `0.95 / 15분` strict failure의 현재 원인은
+  `board keyword search path 단독`이 아니라
+  `pool saturation + lock contention` 조합으로 보는 편이 맞다.
+- `duplicateKeyConflicts`, unread mismatch, SQL mismatch는 모두 `0`이라
+  정합성 이슈는 아니었다.

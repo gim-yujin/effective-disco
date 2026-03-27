@@ -5073,3 +5073,80 @@ GRADLE_USER_HOME=/tmp/gradle-home ./gradlew test --no-daemon
 
 - EXPLAIN용 representative row `exp0328_*`는 dedicated DB에 직접 넣었다.
 - 따라서 다음 soak 전에 `./loadtest/create-loadtest-db.sh`로 DB를 다시 만드는 것이 맞다.
+
+## 2026-03-28 clean `0.95 / 15분` rerun after board keyword EXPLAIN optimization
+
+상태: 완료
+
+### 배경
+
+- board-scoped keyword search path를 `EXPLAIN (ANALYZE, BUFFERS)` 기반으로 좁게 줄인 뒤,
+  이 변경이 실제 soak에서도 headroom을 올리는지 바로 확인할 필요가 있었다.
+- 목표는 simple하다.
+  - `post.list.search.keyword.board.rows`가 실제로 내려갔는가?
+  - 그 결과 strict `0.95 / 15분`이 통과하는가?
+
+### 실행 조건
+
+- dedicated `effectivedisco_loadtest` DB를 `DROP/CREATE`로 clean 상태로 재생성
+- `SOAK_FACTOR = 0.95`
+- `SOAK_DURATION = 15m`
+- `WARMUP_DURATION = 2m`
+- `SAMPLE_INTERVAL_SECONDS = 300`
+
+### 결과
+
+- summary:
+  [soak-20260328-033432.md](/home/admin0/effective-disco/loadtest/results/soak-20260328-033432.md)
+- k6 summary:
+  [soak-20260328-033432-k6.json](/home/admin0/effective-disco/loadtest/results/soak-20260328-033432-k6.json)
+- server metrics:
+  [soak-20260328-033432-server.json](/home/admin0/effective-disco/loadtest/results/soak-20260328-033432-server.json)
+- timeline:
+  [soak-20260328-033432-metrics.jsonl](/home/admin0/effective-disco/loadtest/results/soak-20260328-033432-metrics.jsonl)
+- sql snapshot:
+  [soak-20260328-033432-sql.tsv](/home/admin0/effective-disco/loadtest/results/soak-20260328-033432-sql.tsv)
+- log:
+  [soak-20260328-033432.log](/home/admin0/effective-disco/loadtest/results/soak-20260328-033432.log)
+- 상태: `FAIL`
+- `http p95 = 240.01ms`
+- `http p99 = 302.59ms`
+- `unexpected_response_rate = 0.0001`
+- `dbPoolTimeouts = 132`
+- `duplicateKeyConflicts = 0`
+- `unreadNotificationMismatchUsers = 0`
+- SQL snapshot 전부 `0`
+
+종료 직전 profile:
+
+- `post.list.search.keyword.board.rows ≈ 2.06ms / sql ≈ 1.74ms`
+- `post.list.search.rows ≈ 2.06ms / sql ≈ 1.74ms`
+- `post.list.browse.rows ≈ 1.73ms / sql ≈ 0.76ms`
+- `notification.store ≈ 2.15ms / sql ≈ 1.38ms`
+- `notification.store.lock-recipient ≈ 1.07ms / sql ≈ 0.85ms`
+- `notification.read-page.lock-recipient ≈ 1.06ms / sql ≈ 0.89ms`
+- `maxThreadsAwaitingConnection = 200`
+
+### 해석
+
+- 이번 변경은 목표 경로 자체에는 확실히 먹혔다.
+  - `post.list.search.keyword.board.rows`는 이전 headroom failure 문맥의 `~20ms`대 장시간 값과 비교하면
+    훨씬 낮은 `~2ms` 수준으로 내려왔다.
+- 하지만 strict `0.95 / 15분`은 여전히 실패했다.
+- 즉 이번 failure는 더 이상
+  `board keyword search row path 하나가 느려서`라고 보기 어렵다.
+- 현재 그림은 다음 조합에 가깝다.
+  - `search`는 충분히 줄었지만
+  - 짧은 recipient lock 경합과 write churn이 같이 붙으면서
+  - pool `28`개를 빠르게 포화시키고
+  - 그 결과 `dbPoolTimeouts=132`가 먼저 strict fail을 만든다
+
+### 교훈
+
+- `EXPLAIN` 기반 좁은 최적화는 맞았다.
+  병목을 정확히 찌른 덕분에 `board keyword` 경로 자체는 유의미하게 줄었다.
+- 그러나 `한 경로를 크게 줄였다고 strict suite 전체가 바로 통과하는 것은 아니다`.
+  지금 단계에서는 `search path`보다 `lock/pool contention` 비중이 더 커졌다는 뜻이다.
+- 즉 다음 최적화는 search를 다시 넓게 뒤집는 게 아니라,
+  이제 상대적으로 더 남은 `notification/user lock convoy`와
+  초기/중간 구간 pool saturation 쪽으로 초점을 옮겨야 한다.
