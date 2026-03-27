@@ -2421,3 +2421,45 @@ SOAK_FACTOR=0.9 SOAK_DURATION=1h WARMUP_DURATION=2m SAMPLE_INTERVAL_SECONDS=60 \
   `짧은 recipient lock 경쟁 + steady-state search read pressure + pool 28 포화`
   의 조합에 가깝다.
 - steady-state read path 중 가장 큰 값은 여전히 `post.list.search.rows` 였다.
+
+## 2026-03-27 clean broad mixed `0.9 / 2시간` managed partial rerun after burst instrumentation
+
+상태: 완료
+
+### 실행 목적
+
+- `notification/user lock` substep 계측을 붙인 상태에서
+  clean `0.9 / 2시간` managed soak를 다시 보되,
+  우선 `초기 15분`에 `dbPoolTimeouts`가 재현되는지 확인한다.
+- 이번 partial rerun의 목적은 long-run 판정이 아니라
+  `초기 burst` 재현 여부 확인이다.
+
+### 결과
+
+- manual summary:
+  [soak-20260327-105907.md](/home/admin0/effective-disco/loadtest/results/soak-20260327-105907.md)
+- timeline:
+  [soak-20260327-105907-metrics.jsonl](/home/admin0/effective-disco/loadtest/results/soak-20260327-105907-metrics.jsonl)
+- log:
+  [soak-20260327-105907.log](/home/admin0/effective-disco/loadtest/results/soak-20260327-105907.log)
+- 상태: `INTERRUPTED_AFTER_15M_FOR_BURST_ANALYSIS`
+- `dbPoolTimeouts = 0`
+- `duplicateKeyConflicts = 0`
+- `maxThreadsAwaitingConnection = 194`
+
+### 30초 샘플링 요약
+
+- `30초`: `dbPoolTimeouts = 0`, `search.rows ≈ 2.33ms`, `store.lock ≈ 1.35ms`
+- `5분`: `dbPoolTimeouts = 0`, `search.rows ≈ 3.14ms`, `store.lock ≈ 1.12ms`
+- `10분`: `dbPoolTimeouts = 0`, `search.rows ≈ 3.98ms`, `store.lock ≈ 1.11ms`
+- `15분`: `dbPoolTimeouts = 0`, `search.rows ≈ 4.68ms`, `store.lock ≈ 1.12ms`
+
+### 해석
+
+- `0.9 / 2시간`의 최근 strict fail 에서 보였던
+  `초기 30초 timeout 1건`은 이번 clean managed rerun 에서 `15분`까지 재현되지 않았다.
+- 즉 현재 시점에서는 `0.9 / 2시간`를
+  `재현성 있는 초기 burst failure`로 고정해서 해석하는 것은 맞지 않다.
+- 남아 있는 지표상 주도 경로는 여전히 `post.list.search.rows`이고,
+  notification lock substep 은 burst 참여자이지만
+  이번 partial rerun에서는 timeout을 만들지 않았다.

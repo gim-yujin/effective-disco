@@ -4250,3 +4250,67 @@ GRADLE_USER_HOME=/tmp/gradle-home ./gradlew test --no-daemon --tests "com.effect
   - `search rows`는 steady-state headroom 소비자
   - 따라서 다음 최적화는 둘 중 하나만 보는 것이 아니라
     burst 와 steady-state 를 분리해서 다뤄야 한다.
+
+## 2026-03-27 clean `0.9 / 2시간` managed partial rerun after burst instrumentation
+
+### 배경
+
+- 직전 clean managed rerun
+  [soak-20260327-085407.md](/home/admin0/effective-disco/loadtest/results/soak-20260327-085407.md)
+  은 `30초` 시점 `dbPoolTimeouts = 1` 후 plateau 였다.
+- 그 뒤 [NotificationService.java](/home/admin0/effective-disco/src/main/java/com/effectivedisco/service/NotificationService.java)
+  에 notification lock substep 계측을 추가했고,
+  다음 질문은 단순했다.
+  - `0.9 / 2시간`의 초기 burst가 정말 재현 가능한가?
+
+### 실행 조건
+
+- clean `effectivedisco_loadtest` DB 재생성
+- `managed soak`
+- `SOAK_FACTOR = 0.9`
+- `SOAK_DURATION = 2h`
+- `WARMUP_DURATION = 2m`
+- `SAMPLE_INTERVAL_SECONDS = 30`
+- 초기 burst 확인이 목적이라 `15분`에서 중단
+
+### 결과
+
+- manual summary:
+  [soak-20260327-105907.md](/home/admin0/effective-disco/loadtest/results/soak-20260327-105907.md)
+- timeline:
+  [soak-20260327-105907-metrics.jsonl](/home/admin0/effective-disco/loadtest/results/soak-20260327-105907-metrics.jsonl)
+- log:
+  [soak-20260327-105907.log](/home/admin0/effective-disco/loadtest/results/soak-20260327-105907.log)
+
+핵심:
+
+- `dbPoolTimeouts = 0`
+- `duplicateKeyConflicts = 0`
+- `maxThreadsAwaitingConnection = 194`
+
+30초 샘플:
+
+- `30초`: `search.rows ≈ 2.33ms`, `browse.rows ≈ 2.04ms`, `store.lock ≈ 1.35ms`
+- `5분`: `search.rows ≈ 3.14ms`, `browse.rows ≈ 1.82ms`, `store.lock ≈ 1.12ms`
+- `10분`: `search.rows ≈ 3.98ms`, `browse.rows ≈ 1.79ms`, `store.lock ≈ 1.11ms`
+- `15분`: `search.rows ≈ 4.68ms`, `browse.rows ≈ 1.78ms`, `store.lock ≈ 1.12ms`
+
+### 해석
+
+- 이번 partial rerun에서는 `초기 30초 timeout 1건`이 전혀 재현되지 않았다.
+- 따라서 현재 clean `0.9 / 2시간` gap을
+  `초기 burst 재현 이슈`로 계속 해석하는 것은 맞지 않다.
+- notification lock substep 은 여전히 존재하지만,
+  적어도 이번 clean rerun에서는 `timeout trigger`로 동작하지 않았다.
+- 지금 남는 steady-state 관심사는 여전히 `post.list.search.rows`다.
+
+### 교훈
+
+- `한 번 발생한 초기 burst`를 곧바로
+  `재현성 있는 병목`으로 고정하면 안 된다.
+- 동일 clean 조건에서 managed rerun 으로 다시 확인한 뒤에야
+  `noise`와 `real bottleneck`을 나눌 수 있다.
+- 현재 단계에서 더 타당한 운영 결론은 이렇다.
+  - `0.85 / 2시간`은 확정 baseline
+  - `0.9 / 2시간`은 여전히 미확정이지만,
+    더 이상 `초기 burst 재현`이 핵심 쟁점은 아니다.
