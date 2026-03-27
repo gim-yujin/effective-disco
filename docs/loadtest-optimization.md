@@ -4976,3 +4976,100 @@ GRADLE_USER_HOME=/tmp/gradle-home ./gradlew test --no-daemon
 - 이번 런은 cleanup curl 이 timeout/409 로 끝났지만,
   `[soak-20260327-232958.md](/home/admin0/effective-disco/loadtest/results/soak-20260327-232958.md)` 가 자동 생성됐다.
 - 따라서 cleanup non-blocking finalization 변경은 실제 long soak 에서도 목적대로 동작했다.
+
+## 2026-03-28 board-scoped keyword search EXPLAIN 기반 병목 확정 및 좁은 최적화
+
+상태: 완료
+
+### 배경
+
+- clean `0.95 / 2시간` full managed soak 기준 남는 지배 경로는
+  `post.list.search.keyword.board.rows`였다.
+- 하지만 이 경로는 이미 한 차례 좁게 줄인 적이 있었고,
+  다음 단계에서는 감으로 다시 뒤집지 않고
+  `EXPLAIN (ANALYZE, BUFFERS)`로 실제 비싼 노드를 먼저 확정해야 했다.
+- 목표는 search 전체가 아니라
+  [PostRepositoryImpl.java](/home/admin0/effective-disco/src/main/java/com/effectivedisco/repository/PostRepositoryImpl.java)
+  의 `board-scoped keyword search` path 하나만 줄이는 것이었다.
+
+### representative 데이터와 query shape 확인
+
+- dedicated DB `effectivedisco_loadtest`에 대표 데이터셋을 따로 넣었다.
+  - users: `300`
+  - posts: `45,000`
+  - board별 공개 게시물: `free/dev/qna` 각각 `15,000`
+  - `free` board에서 FTS `load` match row: `12,000`
+- 현재 board keyword SQL shape는 대략 이 흐름이었다.
+  - `matched_post_ids`
+  - `ordered_post_window`
+  - final `posts + users` row materialization
+
+### EXPLAIN 결과
+
+기존 shape:
+
+- `matched_post_ids`에서 `12,000` candidate가 만들어진 뒤
+  `ordered_post_window`가 다시 `posts p ON p.id = m.id`로 재조인했다.
+- 대표 EXPLAIN 기준:
+  - execution time `≈ 31.67ms`
+  - shared buffer hit `≈ 37,067`
+- 실제 비싼 노드는 단일 slow query 하나가 아니라
+  `matched_post_ids -> posts 재조인 -> created_at 정렬` 단계였다.
+- final row materialization은 page window `21`건만 처리해서 작았다.
+
+비교한 좁은 대안 shape:
+
+- branch가 `id`만이 아니라 `id, created_at`를 바로 내보내고
+  `ordered_post_window`가 그 candidate row를 그대로 정렬/제한
+- 동일 representative 데이터 기준:
+  - execution time `≈ 12.99ms`
+  - shared buffer hit `≈ 1,067`
+
+### 적용한 변경
+
+- [PostRepositoryImpl.java](/home/admin0/effective-disco/src/main/java/com/effectivedisco/repository/PostRepositoryImpl.java)
+  에 board-scoped keyword path 전용 row branch를 추가했다.
+  - `POSTGRES_FTS_POST_ROW_BRANCH`
+  - `POSTGRES_USERNAME_POST_ROW_BRANCH`
+- `createPostgresBoardKeywordContentSql()`
+  - `matched_post_ids`를 `matched_post_rows(id, created_at)`로 변경
+  - `ordered_post_window`에서 candidate 전체에 대한 `posts` 재조인을 제거
+- `createPostgresBoardKeywordSliceSql()`
+  - 같은 방식으로 `cursor` path도 `matched_post_rows` 기반으로 정리
+- global keyword search, count path, tag/sort path, service/controller 계약은 건드리지 않았다.
+
+### 해석
+
+- 이번 병목의 핵심은 `FTS 자체가 너무 느리다`가 아니었다.
+- 실제 비용은
+  `FTS/username match -> candidate 1만건대 생성 -> created_at 정렬을 위해 posts PK 재조회`
+  에 있었다.
+- 즉 board keyword path에서 `created_at`를 candidate 단계로 끌어올리는 것만으로
+  중간 `posts` 재조인을 없앨 수 있었고,
+  이게 가장 큰 비용 절감 포인트였다.
+- 이 변경은 data flow를 `search 전체`가 아니라
+  `board keyword ordered window` 하나에만 국한했기 때문에
+  module dependency 측면에서도 부작용 범위가 작다.
+
+### 검증
+
+- targeted:
+  - `PostListOptimizationIntegrationTest`
+  - `PostControllerTest`
+- full:
+
+```bash
+GRADLE_USER_HOME=/tmp/gradle-home ./gradlew test --no-daemon
+```
+
+결과:
+
+- targeted 테스트 통과
+- 전체 테스트 통과
+- 아직 soak 재측정은 하지 않았다.
+  다음 비교는 clean `0.95 / 15분` -> clean `0.95 / 2시간` 순서로 하는 것이 맞다.
+
+### 주의
+
+- EXPLAIN용 representative row `exp0328_*`는 dedicated DB에 직접 넣었다.
+- 따라서 다음 soak 전에 `./loadtest/create-loadtest-db.sh`로 DB를 다시 만드는 것이 맞다.

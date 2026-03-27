@@ -40,6 +40,22 @@ public class PostRepositoryImpl implements PostRepositoryCustom {
               %s
               AND lower(a.username) LIKE ('%%' || lower(:keyword) || '%%')
             """;
+    private static final String POSTGRES_FTS_POST_ROW_BRANCH = """
+            SELECT p.id, p.created_at
+            FROM posts p
+            WHERE p.draft = false
+              %s
+              AND to_tsvector('simple', coalesce(p.title, '') || ' ' || coalesce(p.content, ''))
+                    @@ plainto_tsquery('simple', :keyword)
+            """;
+    private static final String POSTGRES_USERNAME_POST_ROW_BRANCH = """
+            SELECT p.id, p.created_at
+            FROM users a
+            JOIN posts p ON p.user_id = a.id
+            WHERE p.draft = false
+              %s
+              AND lower(a.username) LIKE ('%%' || lower(:keyword) || '%%')
+            """;
 
     private static final String POSTGRES_GLOBAL_KEYWORD_SQL = createPostgresKeywordContentSql(false);
     private static final String POSTGRES_GLOBAL_KEYWORD_COUNT_SQL = createPostgresKeywordCountSql(false);
@@ -125,25 +141,24 @@ public class PostRepositoryImpl implements PostRepositoryCustom {
     }
 
     private static String createPostgresBoardKeywordContentSql() {
-        String idUnion = """
-                WITH matched_post_ids AS (
+        String rowUnion = """
+                WITH matched_post_rows AS (
                     %s
                     UNION
                     %s
                 ),
                 ordered_post_window AS (
-                    SELECT p.id, p.created_at
-                    FROM matched_post_ids m
-                    JOIN posts p ON p.id = m.id
-                    ORDER BY p.created_at DESC, p.id DESC
+                    SELECT m.id, m.created_at
+                    FROM matched_post_rows m
+                    ORDER BY m.created_at DESC, m.id DESC
                     OFFSET :offset
                     LIMIT :limit
                 )
                 """.formatted(
-                POSTGRES_FTS_POST_ID_BRANCH.formatted("AND p.board_id = :boardId"),
-                POSTGRES_USERNAME_POST_ID_BRANCH.formatted("AND p.board_id = :boardId")
+                POSTGRES_FTS_POST_ROW_BRANCH.formatted("AND p.board_id = :boardId"),
+                POSTGRES_USERNAME_POST_ROW_BRANCH.formatted("AND p.board_id = :boardId")
         );
-        return idUnion + """
+        return rowUnion + """
                 SELECT
                     p.id,
                     p.title,
@@ -228,28 +243,31 @@ public class PostRepositoryImpl implements PostRepositoryCustom {
     }
 
     private static String createPostgresBoardKeywordSliceSql() {
-        String idUnion = """
-                WITH matched_post_ids AS (
+        String rowUnion = """
+                WITH matched_post_rows AS (
                     %s
                     UNION
                     %s
                 ),
                 ordered_post_window AS (
-                    SELECT p.id, p.created_at
-                    FROM matched_post_ids m
-                    JOIN posts p ON p.id = m.id
+                    SELECT m.id, m.created_at
+                    FROM matched_post_rows m
                     WHERE (
-                        p.created_at < :cursorCreatedAt
-                        OR (p.created_at = :cursorCreatedAt AND p.id < :cursorId)
+                        m.created_at < :cursorCreatedAt
+                        OR (m.created_at = :cursorCreatedAt AND m.id < :cursorId)
                     )
-                    ORDER BY p.created_at DESC, p.id DESC
+                    ORDER BY m.created_at DESC, m.id DESC
                     LIMIT :limitPlusOne
                 )
                 """.formatted(
-                POSTGRES_FTS_POST_ID_BRANCH.formatted("AND p.board_id = :boardId"),
-                POSTGRES_USERNAME_POST_ID_BRANCH.formatted("AND p.board_id = :boardId")
+                // 문제 해결:
+                // board-scoped keyword search의 병목은 `matched_post_ids -> posts 재조인 -> created_at 정렬` 단계였다.
+                // FTS/username branch에서 `id, created_at`를 바로 들고 오면 ordered window가 candidate 1만건대에 대해
+                // posts PK를 다시 치지 않아도 되고, final row materialization은 page window의 20건에만 남는다.
+                POSTGRES_FTS_POST_ROW_BRANCH.formatted("AND p.board_id = :boardId"),
+                POSTGRES_USERNAME_POST_ROW_BRANCH.formatted("AND p.board_id = :boardId")
         );
-        return idUnion + """
+        return rowUnion + """
                 SELECT
                     p.id,
                     p.title,

@@ -2906,3 +2906,66 @@ SOAK_FACTOR=0.9 SOAK_DURATION=1h WARMUP_DURATION=2m SAMPLE_INTERVAL_SECONDS=60 \
 - 이번 런은 마지막 cleanup curl 이 timeout/409 로 끝났지만,
   새 runner 구조 덕분에 `.md` summary 가 자동 생성됐다.
 - 즉 cleanup 실패와 결과 기록은 이제 분리해서 해석할 수 있다.
+
+## 2026-03-28 board-scoped keyword search EXPLAIN rerun
+
+상태: 완료
+
+### 실행 목적
+
+- clean `0.95 / 2시간`에서 남는 headroom gap이
+  `post.list.search.keyword.board.rows` 하나로 충분히 좁혀졌는지 확인한다.
+- 코드 변경 전에 `EXPLAIN (ANALYZE, BUFFERS)`로
+  `matched_post_ids`, `ordered_post_window`, final row materialization 중
+  어디가 실제 병목인지 먼저 확정한다.
+
+### representative 데이터
+
+- dedicated `effectivedisco_loadtest` DB에 별도 representative 데이터셋을 넣었다.
+  - users: `300`
+  - posts: `45,000`
+  - board별 공개 게시물: `15,000`씩
+  - `free` board에서 keyword `load` FTS match row: `12,000`
+
+### EXPLAIN 결과
+
+기존 board keyword shape:
+
+- execution time `≈ 31.67ms`
+- shared buffer hit `≈ 37,067`
+- 비싼 노드:
+  - `matched_post_ids` 다음
+  - `JOIN posts p ON p.id = m.id`
+  - `ORDER BY p.created_at DESC, p.id DESC`
+
+비교 대안 shape:
+
+- branch가 `id, created_at`를 바로 내보내고
+  `ordered_post_window`가 candidate row를 바로 정렬/제한
+- execution time `≈ 12.99ms`
+- shared buffer hit `≈ 1,067`
+
+### 해석
+
+- board keyword path의 병목은
+  `final row materialization`이 아니라
+  `candidate 12,000건에 대한 posts 재조인 + created_at 정렬`이었다.
+- 즉 `notification`, `browse`, `pool size`를 건드릴 이유는 없고,
+  `board-scoped keyword search`만 좁게 줄이는 판단이 맞았다.
+
+### 적용한 변경
+
+- [PostRepositoryImpl.java](/home/admin0/effective-disco/src/main/java/com/effectivedisco/repository/PostRepositoryImpl.java)
+  에서 board keyword path만 `matched_post_rows(id, created_at)` 기반으로 변경했다.
+- global keyword path, count path, tag/sort path, controller/service 계약은 유지했다.
+
+### 검증
+
+- `PostListOptimizationIntegrationTest`, `PostControllerTest` 통과
+- 전체 `./gradlew test --no-daemon` 통과
+- soak 재측정은 아직 미실행
+
+### 주의
+
+- representative EXPLAIN용 `exp0328_*` 데이터는 dedicated DB에 남아 있다.
+- 다음 soak 전에 DB 재생성으로 정리해야 한다.
