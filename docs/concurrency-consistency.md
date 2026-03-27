@@ -2306,3 +2306,49 @@ SOAK_FACTOR=0.9 SOAK_DURATION=1h WARMUP_DURATION=2m SAMPLE_INTERVAL_SECONDS=60 \
 - 이 런에서도 `duplicateKeyConflicts`, `unreadNotificationMismatchUsers`, `Request Failed` 는 모두 `0`이었다.
 - 다만 soak runner 후처리 단계는 여전히 불안정해서,
   final SQL snapshot 과 정상 server summary 는 생성되지 않았다.
+
+## 2026-03-27 clean broad mixed `0.9 / 2시간` managed rerun with 30-second sampling
+
+상태: 완료
+
+### 실행 목적
+
+- `0.9 / 2시간` strict failure 가
+  실제로 재현되는지 다시 확인한다.
+- 이번에는 managed soak 경로와 `30초` 샘플링으로
+  초기 burst 구간을 더 촘촘히 관측한다.
+
+### 결과
+
+- manual summary:
+  [soak-20260327-085407.md](/home/admin0/effective-disco/loadtest/results/soak-20260327-085407.md)
+- k6 summary:
+  [soak-20260327-085407-k6.json](/home/admin0/effective-disco/loadtest/results/soak-20260327-085407-k6.json)
+- metrics timeline:
+  [soak-20260327-085407-metrics.jsonl](/home/admin0/effective-disco/loadtest/results/soak-20260327-085407-metrics.jsonl)
+- log:
+  [soak-20260327-085407.log](/home/admin0/effective-disco/loadtest/results/soak-20260327-085407.log)
+- 상태: `FAIL (partial, manual summary)`
+- `http p95 = 236.74ms`
+- `http p99 = 300.33ms`
+- `unexpected_response_rate = 0.0000`
+- `dbPoolTimeouts = 1`
+- `duplicateKeyConflicts = 0`
+- `unreadNotificationMismatchUsers = 0`
+
+### 30초 샘플링 요약
+
+- `30초`: `dbPoolTimeouts = 1`, `awaiting ≈ 181`, `post.list.search.rows avgWall ≈ 2.04ms`
+- `1분`: `dbPoolTimeouts = 1`, `awaiting ≈ 187`, `post.list.search.rows avgWall ≈ 2.57ms`
+- `5분`: `dbPoolTimeouts = 1`, `awaiting ≈ 190`, `post.list.search.rows avgWall ≈ 3.25ms`
+- `10분`: `dbPoolTimeouts = 1`, `awaiting ≈ 177`, `post.list.search.rows avgWall ≈ 3.84ms`
+- `11분 27초`: `dbPoolTimeouts = 1`, `awaiting ≈ 186`, `post.list.search.rows avgWall ≈ 3.92ms`
+
+### 해석
+
+- clean `0.9 / 2시간` strict fail 은 다시 재현됐다.
+- 다만 양상은 `장시간 누적 saturation`이 아니라
+  `30초 시점 timeout 1건 + 이후 plateau`다.
+- 즉 현재 `0.9 / 2시간`의 남은 gap 은
+  steady-state 후반 붕괴보다 `초기 burst 1건`에 더 가깝다.
+- `duplicateKeyConflicts`, `unreadNotificationMismatchUsers`, `unexpected_response_rate` 는 모두 `0`이었다.

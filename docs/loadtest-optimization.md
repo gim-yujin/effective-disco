@@ -4092,3 +4092,54 @@ GRADLE_USER_HOME=/tmp/gradle-home ./gradlew test --no-daemon
 - 동시에 runner 후처리 안정성도 별도 문제다.
   이번 런은 main phase 는 정상 종료했지만,
   후처리 hang 때문에 final SQL snapshot 과 server summary 는 수동으로 보완했다.
+
+## 2026-03-27 clean `0.9 / 2시간` managed rerun with `30초` sampling
+
+상태: 실측 완료
+
+### 결과
+
+- manual summary:
+  [soak-20260327-085407.md](/home/admin0/effective-disco/loadtest/results/soak-20260327-085407.md)
+- k6 summary:
+  [soak-20260327-085407-k6.json](/home/admin0/effective-disco/loadtest/results/soak-20260327-085407-k6.json)
+- metrics timeline:
+  [soak-20260327-085407-metrics.jsonl](/home/admin0/effective-disco/loadtest/results/soak-20260327-085407-metrics.jsonl)
+- log:
+  [soak-20260327-085407.log](/home/admin0/effective-disco/loadtest/results/soak-20260327-085407.log)
+
+숫자:
+
+- `status = FAIL (partial, manual summary)`
+- `http p95 = 236.74ms`
+- `http p99 = 300.33ms`
+- `unexpected_response_rate = 0.0000`
+- `dbPoolTimeouts = 1`
+- `duplicateKeyConflicts = 0`
+- `unreadNotificationMismatchUsers = 0`
+
+30초 구간 관측:
+
+- `08:54:37`: `dbPoolTimeouts = 1`, `search.rows ≈ 2.04ms`
+- `08:55:07`: `dbPoolTimeouts = 1`, `search.rows ≈ 2.57ms`
+- `08:55:37`: `dbPoolTimeouts = 1`, `search.rows ≈ 3.25ms`
+- `09:04:44`: `dbPoolTimeouts = 1`, `search.rows ≈ 3.84ms`
+- `09:05:15`: `dbPoolTimeouts = 1`, `search.rows ≈ 3.92ms`
+
+### 해석
+
+- `0.9 / 2시간` strict failure 는 현재 코드에서도 다시 재현됐다.
+- 하지만 이번 재현은 `380건`, `73건`, `64건` 같은 누적형이 아니라
+  `30초 시점 1건 발생 후 더 늘지 않는 plateau` 형태다.
+- 따라서 지금 남은 문제는
+  `browse`나 `notification`의 장시간 drift 보다
+  `초기 connection contention burst`에 더 가깝다.
+- steady-state path 중에서는 여전히 `post.list.search.rows`가 가장 큰 read path다.
+
+### 운영상 교훈
+
+- `0.9 / 2시간`은 현재 strict 기준에서 아직 `PASS`라고 부를 수 없다.
+- 다만 실패 강도는 과거보다 크게 낮아졌고,
+  현재 운영형 baseline을 `0.85 / 2시간`으로 유지하는 근거가 더 선명해졌다.
+- 다음 최적화는 broad `read path` 전체가 아니라
+  `초기 burst`와 `search.rows`를 분리해서 다뤄야 한다.
