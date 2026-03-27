@@ -2463,3 +2463,60 @@ SOAK_FACTOR=0.9 SOAK_DURATION=1h WARMUP_DURATION=2m SAMPLE_INTERVAL_SECONDS=60 \
 - 남아 있는 지표상 주도 경로는 여전히 `post.list.search.rows`이고,
   notification lock substep 은 burst 참여자이지만
   이번 partial rerun에서는 timeout을 만들지 않았다.
+
+## 2026-03-27 clean broad mixed `0.9 / 2시간` full managed rerun
+
+상태: 완료
+
+### 실행 목적
+
+- partial rerun 과 burst-only 분석을 끝낸 뒤,
+  clean `0.9 / 2시간` managed soak main phase 를 끝까지 다시 돌려
+  strict long-run 판정을 다시 확정한다.
+- 이번 런의 관심사는
+  `notification lock`보다 `search rows steady-state drift`가
+  실제 full run 에서도 더 큰지 확인하는 것이다.
+
+### 결과
+
+- manual summary:
+  [soak-20260327-112452.md](/home/admin0/effective-disco/loadtest/results/soak-20260327-112452.md)
+- k6 summary:
+  [soak-20260327-112452-k6.json](/home/admin0/effective-disco/loadtest/results/soak-20260327-112452-k6.json)
+- server metrics:
+  [soak-20260327-112452-server.json](/home/admin0/effective-disco/loadtest/results/soak-20260327-112452-server.json)
+- timeline:
+  [soak-20260327-112452-metrics.jsonl](/home/admin0/effective-disco/loadtest/results/soak-20260327-112452-metrics.jsonl)
+- sql snapshot:
+  [soak-20260327-112452-sql.tsv](/home/admin0/effective-disco/loadtest/results/soak-20260327-112452-sql.tsv)
+- 상태: `FAIL`
+- `http p95 = 273.52ms`
+- `http p99 = 351.66ms`
+- `dbPoolTimeouts = 137`
+- `duplicateKeyConflicts = 0`
+- SQL snapshot 전부 `0`
+- `maxThreadsAwaitingConnection = 200`
+
+### 10분 간격 추세
+
+- `30초`: `dbPoolTimeouts = 31`, `search.rows ≈ 2.05ms`, `store.lock ≈ 1.24ms`
+- `10분`: `dbPoolTimeouts = 31`, `search.rows ≈ 3.83ms`
+- `20분`: `dbPoolTimeouts = 31`, `search.rows ≈ 5.26ms`
+- `30분`: `dbPoolTimeouts = 31`, `search.rows ≈ 6.68ms`
+- `40분`: `dbPoolTimeouts = 31`, `search.rows ≈ 8.15ms`
+- `50분`: `dbPoolTimeouts = 31`, `search.rows ≈ 9.64ms`
+- `60분`: `dbPoolTimeouts = 137`, `search.rows ≈ 11.14ms`
+- `80분`: `dbPoolTimeouts = 137`, `search.rows ≈ 14.46ms`
+- `100분`: `dbPoolTimeouts = 137`, `search.rows ≈ 17.89ms`
+- `120분`: `dbPoolTimeouts = 137`, `search.rows ≈ 20.95ms`
+
+### 해석
+
+- 이번 full run 은 `초기 31건 -> 장시간 plateau -> 50분대 137건으로 점프 -> 다시 plateau` 패턴이었다.
+- `notification.store.lock-recipient avgWall ≈ 1.14ms`,
+  `notification.read-page.lock-recipient avgWall ≈ 1.19ms` 로
+  notification lock substep 은 존재하지만 main hot path 는 아니었다.
+- 최종적으로 가장 크게 남는 경로는
+  `post.list.search.rows avgWall ≈ 20.95ms / avgSql ≈ 20.40ms` 였다.
+- 따라서 현재 clean `0.9 / 2시간` strict gap 은
+  `notification lock 주도`보다 `search rows steady-state drift` 쪽으로 보는 해석이 더 맞다.

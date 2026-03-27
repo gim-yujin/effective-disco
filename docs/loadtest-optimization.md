@@ -4314,3 +4314,85 @@ GRADLE_USER_HOME=/tmp/gradle-home ./gradlew test --no-daemon --tests "com.effect
   - `0.85 / 2시간`은 확정 baseline
   - `0.9 / 2시간`은 여전히 미확정이지만,
     더 이상 `초기 burst 재현`이 핵심 쟁점은 아니다.
+
+## 2026-03-27 clean `0.9 / 2시간` full managed rerun
+
+### 배경
+
+- 앞선 managed partial rerun
+  [soak-20260327-105907.md](/home/admin0/effective-disco/loadtest/results/soak-20260327-105907.md)
+  에서는 `15분`까지 `dbPoolTimeouts = 0` 이었다.
+- 그래서 다음 질문은 다시 단순해졌다.
+  - full `2시간` main phase 를 끝까지 돌리면
+    strict `0.9 / 2시간` gap 이 실제로 남는가?
+  - 남는다면 `notification lock`이냐, `search rows drift`냐?
+
+### 실행 조건
+
+- clean `effectivedisco_loadtest` DB 재생성
+- managed soak
+- `SOAK_FACTOR = 0.9`
+- `SOAK_DURATION = 2h`
+- `WARMUP_DURATION = 2m`
+- `SAMPLE_INTERVAL_SECONDS = 30`
+- wrapper 는 결과 파일 생성 후 종료 정리 단계에서 멈춰 수동 중단
+
+### 결과
+
+- manual summary:
+  [soak-20260327-112452.md](/home/admin0/effective-disco/loadtest/results/soak-20260327-112452.md)
+- k6 summary:
+  [soak-20260327-112452-k6.json](/home/admin0/effective-disco/loadtest/results/soak-20260327-112452-k6.json)
+- server metrics:
+  [soak-20260327-112452-server.json](/home/admin0/effective-disco/loadtest/results/soak-20260327-112452-server.json)
+- timeline:
+  [soak-20260327-112452-metrics.jsonl](/home/admin0/effective-disco/loadtest/results/soak-20260327-112452-metrics.jsonl)
+- sql snapshot:
+  [soak-20260327-112452-sql.tsv](/home/admin0/effective-disco/loadtest/results/soak-20260327-112452-sql.tsv)
+- 상태: `FAIL`
+- `http p95 = 273.52ms`
+- `http p99 = 351.66ms`
+- `dbPoolTimeouts = 137`
+- `duplicateKeyConflicts = 0`
+- SQL snapshot 전부 `0`
+
+### 10분 간격 관찰
+
+- `30초`: `dbPoolTimeouts = 31`, `search.rows ≈ 2.05ms`, `store.lock ≈ 1.24ms`
+- `10분`: `dbPoolTimeouts = 31`, `search.rows ≈ 3.83ms`
+- `20분`: `dbPoolTimeouts = 31`, `search.rows ≈ 5.26ms`
+- `30분`: `dbPoolTimeouts = 31`, `search.rows ≈ 6.68ms`
+- `40분`: `dbPoolTimeouts = 31`, `search.rows ≈ 8.15ms`
+- `50분`: `dbPoolTimeouts = 31`, `search.rows ≈ 9.64ms`
+- `60분`: `dbPoolTimeouts = 137`, `search.rows ≈ 11.14ms`
+- `80분`: `dbPoolTimeouts = 137`, `search.rows ≈ 14.46ms`
+- `100분`: `dbPoolTimeouts = 137`, `search.rows ≈ 17.89ms`
+- `120분`: `dbPoolTimeouts = 137`, `search.rows ≈ 20.95ms`
+
+최종 profile:
+
+- `post.list.search.rows avgWall ≈ 20.95ms / avgSql ≈ 20.40ms`
+- `post.list.browse.rows avgWall ≈ 1.86ms / avgSql ≈ 0.79ms`
+- `notification.store avgWall ≈ 2.35ms / avgSql ≈ 1.51ms`
+- `notification.store.lock-recipient avgWall ≈ 1.14ms`
+- `notification.read-page.lock-recipient avgWall ≈ 1.19ms`
+
+### 해석
+
+- 이번 full run 에서는 `notification lock`보다 `search rows drift`가 더 지배적이었다.
+- `notification.store.lock-recipient`와 `notification.read-page.lock-recipient`는
+  burst 참여자이지만, 최종 평균과 장기 상승 폭 모두 `search.rows`보다 작았다.
+- 따라서 현재 `0.9 / 2시간` strict fail 의 중심 해석은
+  `search steady-state headroom 부족`이다.
+- 이 시점의 운영형 결론은 그대로다.
+  - `0.85 / 2시간`은 신뢰 가능한 stable baseline
+  - `0.9 / 2시간`은 아직 strict 기준 `FAIL`
+
+### 교훈
+
+- burst 분석만으로 long-run 병목을 확정하면 안 된다.
+- `초기 burst가 noise인지`를 확인한 뒤에는,
+  다시 full run 으로 돌아가 steady-state hot path 를 봐야 한다.
+- 이번 full managed rerun 은
+  `notification lock`을 의심하던 가설을 약화시키고,
+  `post.list.search.rows`를 다음 최적화 1순위로 확정하는 근거가 됐다.
