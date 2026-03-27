@@ -2569,3 +2569,58 @@ SOAK_FACTOR=0.9 SOAK_DURATION=1h WARMUP_DURATION=2m SAMPLE_INTERVAL_SECONDS=60 \
 - 주의:
   이번 런은 `run-bbs-soak.sh` 후처리 hang 때문에 final `k6.json/server.json/sql.tsv`가 생성되지 않았다.
   그래서 판정은 main phase log 와 종료 직전 `/internal/load-test/metrics` 기준으로만 해석한다.
+
+## 2026-03-27 clean `0.9 / 15분` rerun after board keyword row-path optimization
+
+상태: 완료
+
+### 실행 목적
+
+- [PostRepositoryImpl.java](/home/admin0/effective-disco/src/main/java/com/effectivedisco/repository/PostRepositoryImpl.java)의
+  board-scoped PostgreSQL keyword search row path만 좁게 최적화했다.
+- 목표는 `search` 전체를 다시 흔들지 않고,
+  직전 세분화 계측에서 가장 컸던 `post.list.search.keyword.board.rows`만 줄이는 것이었다.
+- 즉 `matched id` 전체에 먼저 `users` join을 붙이지 않고,
+  board keyword path에서만 현재 page/slice window를 먼저 자른 뒤
+  작은 row batch에만 author join을 적용하도록 data flow를 바꿨다.
+
+### 결과
+
+- manual summary:
+  [soak-20260327-161354.md](/home/admin0/effective-disco/loadtest/results/soak-20260327-161354.md)
+- log:
+  [soak-20260327-161354.log](/home/admin0/effective-disco/loadtest/results/soak-20260327-161354.log)
+- timeline:
+  [soak-20260327-161354-metrics.jsonl](/home/admin0/effective-disco/loadtest/results/soak-20260327-161354-metrics.jsonl)
+- 상태: `MAIN_PHASE_CLEAN_BUT_FINALIZATION_INCOMPLETE`
+- `http p95 = 242.57ms`
+- `http p99 = 308.47ms`
+- `unexpected_response_rate = 0.0000`
+- `dbPoolTimeouts = 0`
+- `duplicateKeyConflicts = 0`
+- `maxThreadsAwaitingConnection = 196`
+
+### profile
+
+- `post.list.search.keyword.board.rows ≈ 3.86ms / sql ≈ 3.53ms`
+- `post.list.search.keyword.rows ≈ 3.86ms / sql ≈ 3.53ms`
+- `post.list.search.rows ≈ 3.87ms / sql ≈ 3.53ms`
+- `post.list.search.tag.rows ≈ 1.46ms / sql ≈ 1.09ms`
+- `post.list.search.sort.rows ≈ 1.80ms / sql ≈ 0.79ms`
+- `post.list.browse.rows ≈ 1.80ms / sql ≈ 0.80ms`
+- `notification.store ≈ 2.23ms / sql ≈ 1.43ms`
+
+### 해석
+
+- 타깃 경로였던 `post.list.search.keyword.board.rows`는
+  직전 `≈ 4.59ms / sql ≈ 4.09ms`에서
+  이번 `≈ 3.86ms / sql ≈ 3.53ms`로 내려갔다.
+- 즉 average wall 기준 약 `15.9%`, average sql 기준 약 `13.7%` 개선이다.
+- `tag`, `sort`, `browse`, `notification.store`는 큰 부작용 없이 비슷한 범위에 머물렀다.
+- 따라서 이번 변경은 `search 전체`를 다시 건드린 실험이 아니라,
+  실제 hot path 하나를 좁게 줄인 효율적인 최적화로 본다.
+
+### 주의
+
+- 이번 런도 `run-bbs-soak.sh` 후처리 hang 때문에 final `k6.json/server.json/sql.tsv`는 생성되지 않았다.
+- 그래서 판정은 main phase log 와 종료 직전 live metrics snapshot 기준으로만 기록했다.

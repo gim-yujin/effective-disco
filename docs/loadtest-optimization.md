@@ -4461,3 +4461,102 @@ GRADLE_USER_HOME=/tmp/gradle-home ./gradlew test --no-daemon --tests "com.effect
 - 그래도 세분화 계측의 목적은 충분히 달성됐다.
   - `keyword`가 제일 큼
   - `tag/sort`는 1순위가 아님
+
+## 2026-03-27 board-scoped keyword search row path 최적화
+
+### 배경
+
+- 직전 split profiling 결과에서
+  `post.list.search.keyword.board.rows ≈ 4.59ms / sql ≈ 4.09ms`가
+  `search` 내부 최댓값이었다.
+- 반면 `tag`와 `sort`는 각각 `1ms`대였다.
+- 즉 다음 최적화는 `search` 전체를 다시 뒤집는 것이 아니라,
+  [PostRepositoryImpl.java](/home/admin0/effective-disco/src/main/java/com/effectivedisco/repository/PostRepositoryImpl.java)
+  의 board-scoped keyword row path만 좁게 줄이는 것이 맞았다.
+
+### 원인
+
+- 기존 board keyword path는 `matched_post_ids`를 만든 뒤
+  결과 row를 materialize 할 때 `users` join을 전체 matched id 집합에 먼저 붙였다.
+- board 검색은 이미 `boardId`, `boardName`, `boardSlug`를 알고 있는데도,
+  현재 page/slice window보다 큰 matched set에 대해 projection join 비용을 먼저 지불했다.
+- 이 구조는 broad mixed steady-state에서 커넥션 점유 시간을 늘린다.
+
+### 적용한 변경
+
+- `POSTGRES_BOARD_KEYWORD_SQL`을
+  일반 keyword content SQL 재사용 대신
+  board 전용 `createPostgresBoardKeywordContentSql()`로 분리했다.
+- `POSTGRES_BOARD_KEYWORD_SLICE_SQL`도
+  board 전용 `createPostgresBoardKeywordSliceSql()`로 분리했다.
+- 두 SQL 모두
+  `matched_post_ids -> ordered_post_window -> small row batch join`
+  흐름으로 바꿨다.
+- 즉 board keyword path에서는:
+  - 먼저 `posts`만으로 현재 page/slice의 `id` window를 자르고
+  - 그 작은 결과에만 `users` join을 적용하고
+  - `boardName/boardSlug`는 parameter로 주입한다.
+- 이 변경은 board-scoped PostgreSQL keyword path에만 적용했다.
+  global keyword path, count path, tag/sort path, 서비스/컨트롤러 계약은 그대로 유지했다.
+
+### 검증
+
+회귀 테스트:
+
+```bash
+GRADLE_USER_HOME=/tmp/gradle-home ./gradlew test --no-daemon \
+  --tests "com.effectivedisco.service.PostListOptimizationIntegrationTest" \
+  --tests "com.effectivedisco.controller.PostControllerTest"
+```
+
+전체 테스트:
+
+```bash
+GRADLE_USER_HOME=/tmp/gradle-home ./gradlew test --no-daemon
+```
+
+둘 다 통과했다.
+
+### clean `0.9 / 15분` 재측정
+
+- manual summary:
+  [soak-20260327-161354.md](/home/admin0/effective-disco/loadtest/results/soak-20260327-161354.md)
+- log:
+  [soak-20260327-161354.log](/home/admin0/effective-disco/loadtest/results/soak-20260327-161354.log)
+- timeline:
+  [soak-20260327-161354-metrics.jsonl](/home/admin0/effective-disco/loadtest/results/soak-20260327-161354-metrics.jsonl)
+- 상태: `MAIN_PHASE_CLEAN_BUT_FINALIZATION_INCOMPLETE`
+- `http p95 = 242.57ms`
+- `http p99 = 308.47ms`
+- `unexpected_response_rate = 0.0000`
+- `dbPoolTimeouts = 0`
+- `duplicateKeyConflicts = 0`
+
+핵심 profile:
+
+- `post.list.search.keyword.board.rows ≈ 3.86ms / sql ≈ 3.53ms`
+- `post.list.search.keyword.rows ≈ 3.86ms / sql ≈ 3.53ms`
+- `post.list.search.rows ≈ 3.87ms / sql ≈ 3.53ms`
+- `post.list.search.tag.rows ≈ 1.46ms / sql ≈ 1.09ms`
+- `post.list.search.sort.rows ≈ 1.80ms / sql ≈ 0.79ms`
+- `post.list.browse.rows ≈ 1.80ms / sql ≈ 0.80ms`
+- `notification.store ≈ 2.23ms / sql ≈ 1.43ms`
+
+### 전후 비교
+
+직전 split profiling soak 대비:
+
+- `post.list.search.keyword.board.rows avgWall`: `4.59ms -> 3.86ms`, `15.9% 개선`
+- `post.list.search.keyword.board.rows avgSql`: `4.09ms -> 3.53ms`, `13.7% 개선`
+- `post.list.search.rows avgWall`: `4.60ms -> 3.87ms`, `15.9% 개선`
+- `post.list.search.rows avgSql`: `4.09ms -> 3.53ms`, `13.7% 개선`
+
+### 해석
+
+- 이번 변경은 `search 전체`를 넓게 다시 건드린 것이 아니라,
+  실제 hot path 하나만 줄인 narrow optimization이다.
+- `tag`, `sort`, `browse`, `notification.store`에 큰 회귀를 만들지 않으면서
+  목표 경로인 board keyword search를 줄였다.
+- 즉 이전 broad search 구조 변경처럼
+  일부 경로를 줄이려다 전체를 망가뜨린 최적화가 아니라,
+  의도한 곳만 줄인 좋은 trade-off에 가깝다.

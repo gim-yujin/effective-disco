@@ -44,9 +44,9 @@ public class PostRepositoryImpl implements PostRepositoryCustom {
     private static final String POSTGRES_GLOBAL_KEYWORD_SQL = createPostgresKeywordContentSql(false);
     private static final String POSTGRES_GLOBAL_KEYWORD_COUNT_SQL = createPostgresKeywordCountSql(false);
     private static final String POSTGRES_GLOBAL_KEYWORD_SLICE_SQL = createPostgresKeywordSliceSql(false);
-    private static final String POSTGRES_BOARD_KEYWORD_SQL = createPostgresKeywordContentSql(true);
+    private static final String POSTGRES_BOARD_KEYWORD_SQL = createPostgresBoardKeywordContentSql();
     private static final String POSTGRES_BOARD_KEYWORD_COUNT_SQL = createPostgresKeywordCountSql(true);
-    private static final String POSTGRES_BOARD_KEYWORD_SLICE_SQL = createPostgresKeywordSliceSql(true);
+    private static final String POSTGRES_BOARD_KEYWORD_SLICE_SQL = createPostgresBoardKeywordSliceSql();
     private static final String FALLBACK_GLOBAL_KEYWORD_SQL = createFallbackKeywordContentSql(false);
     private static final String FALLBACK_GLOBAL_KEYWORD_SLICE_SQL = createFallbackKeywordSliceSql(false);
 
@@ -124,6 +124,48 @@ public class PostRepositoryImpl implements PostRepositoryCustom {
                 """.formatted(boardSelect, boardJoin);
     }
 
+    private static String createPostgresBoardKeywordContentSql() {
+        String idUnion = """
+                WITH matched_post_ids AS (
+                    %s
+                    UNION
+                    %s
+                ),
+                ordered_post_window AS (
+                    SELECT p.id, p.created_at
+                    FROM matched_post_ids m
+                    JOIN posts p ON p.id = m.id
+                    ORDER BY p.created_at DESC, p.id DESC
+                    OFFSET :offset
+                    LIMIT :limit
+                )
+                """.formatted(
+                POSTGRES_FTS_POST_ID_BRANCH.formatted("AND p.board_id = :boardId"),
+                POSTGRES_USERNAME_POST_ID_BRANCH.formatted("AND p.board_id = :boardId")
+        );
+        return idUnion + """
+                SELECT
+                    p.id,
+                    p.title,
+                    '' AS content,
+                    p.created_at,
+                    p.updated_at,
+                    p.comment_count,
+                    p.like_count,
+                    p.view_count,
+                    p.pinned,
+                    p.draft,
+                    p.image_url,
+                    a.username,
+                    :boardName AS board_name,
+                    :boardSlug AS board_slug
+                FROM ordered_post_window w
+                JOIN posts p ON p.id = w.id
+                JOIN users a ON a.id = p.user_id
+                ORDER BY w.created_at DESC, w.id DESC
+                """;
+    }
+
     private static String createPostgresKeywordCountSql(boolean boardSearch) {
         String boardPredicate = boardSearch ? "AND p.board_id = :boardId" : "";
         String idUnion = """
@@ -183,6 +225,51 @@ public class PostRepositoryImpl implements PostRepositoryCustom {
                 )
                 ORDER BY p.created_at DESC, p.id DESC
                 """.formatted(boardSelect, boardJoin);
+    }
+
+    private static String createPostgresBoardKeywordSliceSql() {
+        String idUnion = """
+                WITH matched_post_ids AS (
+                    %s
+                    UNION
+                    %s
+                ),
+                ordered_post_window AS (
+                    SELECT p.id, p.created_at
+                    FROM matched_post_ids m
+                    JOIN posts p ON p.id = m.id
+                    WHERE (
+                        p.created_at < :cursorCreatedAt
+                        OR (p.created_at = :cursorCreatedAt AND p.id < :cursorId)
+                    )
+                    ORDER BY p.created_at DESC, p.id DESC
+                    LIMIT :limitPlusOne
+                )
+                """.formatted(
+                POSTGRES_FTS_POST_ID_BRANCH.formatted("AND p.board_id = :boardId"),
+                POSTGRES_USERNAME_POST_ID_BRANCH.formatted("AND p.board_id = :boardId")
+        );
+        return idUnion + """
+                SELECT
+                    p.id,
+                    p.title,
+                    '' AS content,
+                    p.created_at,
+                    p.updated_at,
+                    p.comment_count,
+                    p.like_count,
+                    p.view_count,
+                    p.pinned,
+                    p.draft,
+                    p.image_url,
+                    a.username,
+                    :boardName AS board_name,
+                    :boardSlug AS board_slug
+                FROM ordered_post_window w
+                JOIN posts p ON p.id = w.id
+                JOIN users a ON a.id = p.user_id
+                ORDER BY w.created_at DESC, w.id DESC
+                """;
     }
 
     private static String createFallbackKeywordSliceSql(boolean boardSearch) {
@@ -292,7 +379,6 @@ public class PostRepositoryImpl implements PostRepositoryCustom {
                                                                   Pageable pageable,
                                                                   Board board) {
         String keyword = rawKeyword == null ? "" : rawKeyword.trim();
-        Long boardId = board != null ? board.getId() : null;
         SearchSqlSet sqlSet = selectSqlSet(board != null, isPostgresDatabase());
 
         Query contentQuery = entityManager.createNativeQuery(sqlSet.contentSql());
@@ -306,7 +392,15 @@ public class PostRepositoryImpl implements PostRepositoryCustom {
         // 핵심은 "FTS 조건 OR username LIKE" 를 한 WHERE 절에 섞지 않는 것이다.
         // branch 를 UNION 으로 분리해야 PostgreSQL 이 posts FTS index 와 users trigram index 를
         // 각각 독립적으로 고려할 수 있고, H2 테스트는 기존 substring fallback 으로 유지한다.
-        if (pageable.isPaged()) {
+        if (board != null && isPostgresDatabase()) {
+            // 문제 해결:
+            // board-scoped keyword search는 결과 row 수가 작아도 기존 쿼리가 users join을 전체 matched id 집합에 먼저 붙였다.
+            // board path에서만 `ordered_post_window` CTE로 현재 page id window를 먼저 자른 뒤 작은 row batch에만 author join을 적용한다.
+            int offset = pageable.isPaged() ? (int) pageable.getOffset() : 0;
+            int limit = pageable.isPaged() ? pageable.getPageSize() : Integer.MAX_VALUE;
+            setParameterIfPresent(contentQuery, "offset", offset);
+            setParameterIfPresent(contentQuery, "limit", limit);
+        } else if (pageable.isPaged()) {
             contentQuery.setFirstResult((int) pageable.getOffset());
             contentQuery.setMaxResults(pageable.getPageSize());
         }
@@ -334,7 +428,15 @@ public class PostRepositoryImpl implements PostRepositoryCustom {
         contentQuery.setParameter("cursorCreatedAt", Timestamp.valueOf(cursorCreatedAt));
         contentQuery.setParameter("cursorId", cursorId);
         int batchSize = pageable.isPaged() ? pageable.getPageSize() : 20;
-        contentQuery.setMaxResults(batchSize + 1);
+        if (board != null && isPostgresDatabase()) {
+            // 문제 해결:
+            // board keyword slice도 전체 matched row에 author join을 붙인 뒤 outer maxResults로 잘라내면
+            // broad mixed steady-state에서 connection 점유 시간이 늘어난다.
+            // board path는 inner window에서 `limit+1` id만 먼저 자르고, projection join은 그 작은 결과에만 적용한다.
+            setParameterIfPresent(contentQuery, "limitPlusOne", batchSize + 1);
+        } else {
+            contentQuery.setMaxResults(batchSize + 1);
+        }
 
         @SuppressWarnings("unchecked")
         List<Object[]> rows = contentQuery.getResultList();
