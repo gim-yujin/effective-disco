@@ -4143,3 +4143,110 @@ GRADLE_USER_HOME=/tmp/gradle-home ./gradlew test --no-daemon
   현재 운영형 baseline을 `0.85 / 2시간`으로 유지하는 근거가 더 선명해졌다.
 - 다음 최적화는 broad `read path` 전체가 아니라
   `초기 burst`와 `search.rows`를 분리해서 다뤄야 한다.
+
+## 2026-03-27 notification/user lock burst substep profiling
+
+### 배경
+
+- clean `0.9 / 2시간` managed rerun
+  [soak-20260327-085407.md](/home/admin0/effective-disco/loadtest/results/soak-20260327-085407.md)
+  에서 strict fail 은 `dbPoolTimeouts = 1` 한 건이
+  `30초` 시점에 바로 발생한 뒤 plateau 하는 형태였다.
+- 이 시점의 해석 후보는 둘이었다.
+  - `notification` 경로의 recipient lock convoy
+  - `post.list.search.rows` 같은 steady-state read pressure
+- 기존 profile 은 `notification.store`, `notification.read-page.summary.transition`
+  수준까지만 있어서, 실제로 잠금 획득이 두꺼운지 직접 보이지 않았다.
+
+### 구현
+
+- [NotificationService.java](/home/admin0/effective-disco/src/main/java/com/effectivedisco/service/NotificationService.java)
+  에 아래 substep profile 을 추가했다.
+  - `notification.store.lock-recipient`
+  - `notification.store.insert`
+  - `notification.store.counter.increment`
+  - `notification.read-page.lock-recipient`
+  - `notification.read-page.page-state`
+  - `notification.read-page.mark-ids`
+  - `notification.read-page.counter.refresh`
+  - `notification.read-all.lock-recipient`
+  - `notification.read-all.find-cutoff`
+  - `notification.read-all.mark-cutoff`
+  - `notification.read-all.counter.refresh`
+- 목적은 `notification` 경로를 behavior 변경 없이
+  `lock -> row transition -> counter sync` 단계로 분해하는 것이다.
+
+### 검증
+
+- targeted test:
+  - `NotificationServiceTest`
+  - `NotificationAfterCommitIntegrationTest`
+- command:
+```bash
+GRADLE_USER_HOME=/tmp/gradle-home ./gradlew test --no-daemon --tests "com.effectivedisco.service.NotificationServiceTest" --tests "com.effectivedisco.service.NotificationAfterCommitIntegrationTest"
+```
+- 결과: 통과
+
+### 측정 결과
+
+- summary:
+  [soak-20260327-100853.md](/home/admin0/effective-disco/loadtest/results/soak-20260327-100853.md)
+- server metrics:
+  [soak-20260327-100853-server.json](/home/admin0/effective-disco/loadtest/results/soak-20260327-100853-server.json)
+- timeline:
+  [soak-20260327-100853-metrics.jsonl](/home/admin0/effective-disco/loadtest/results/soak-20260327-100853-metrics.jsonl)
+- 상태: `PASS`
+- `http p95 = 225.38ms`
+- `http p99 = 287.17ms`
+- `unexpected_response_rate = 0.0000`
+- `dbPoolTimeouts = 0`
+- `maxThreadsAwaitingConnection = 198`
+
+핵심 substep:
+
+- `notification.store.lock-recipient`
+  - `avgWall ≈ 1.018ms`
+  - `avgSql ≈ 0.813ms`
+  - `maxWall ≈ 29.711ms`
+- `notification.store.insert`
+  - `avgWall ≈ 0.523ms`
+- `notification.store.counter.increment`
+  - `avgWall ≈ 0.411ms`
+- `notification.read-page.lock-recipient`
+  - `avgWall ≈ 1.011ms`
+  - `avgSql ≈ 0.854ms`
+  - `maxWall ≈ 14.975ms`
+- `notification.read-page.page-state`
+  - `avgWall ≈ 0.445ms`
+- `notification.read-page.mark-ids`
+  - `avgWall ≈ 0.786ms`
+- `notification.read-page.counter.refresh`
+  - `avgWall ≈ 0.625ms`
+- 비교용
+  - `post.list.search.rows avgWall ≈ 2.871ms`
+  - `post.list.browse.rows avgWall ≈ 1.691ms`
+
+### 해석
+
+- `notification/user lock`은 실제 burst 참여자다.
+- 다만 `lock-recipient` 평균이 `1ms`대이므로
+  현재 문제를 `단일 느린 lock query`로 설명하기는 어렵다.
+- 대신 `maxWall 15~30ms` 스파이크와 높은 `awaiting` 값이 같이 보였으므로,
+  현재 그림은 `짧은 recipient lock convoy`가 반복해서 겹치는 쪽에 더 가깝다.
+- 동시에 steady-state hot path는 여전히 `post.list.search.rows`다.
+- 즉 남은 strict gap 은
+  `notification lock만의 문제`도,
+  `search query 하나만의 문제`도 아니고,
+  `짧은 lock 경쟁 + search read pressure + pool headroom 부족`
+  의 조합으로 읽는 것이 가장 맞다.
+
+### 교훈
+
+- broad mixed burst 를 추적할 때는 endpoint 단위 profile 만으로는 부족하다.
+- `notification.store`처럼 하나의 이름 아래 여러 DB step 이 숨어 있으면
+  lock 획득 단계와 실제 insert/update 단계를 분리해서 봐야 한다.
+- 이번 계측으로 다음 우선순위가 더 선명해졌다.
+  - `notification`은 lock convoy 참여자
+  - `search rows`는 steady-state headroom 소비자
+  - 따라서 다음 최적화는 둘 중 하나만 보는 것이 아니라
+    burst 와 steady-state 를 분리해서 다뤄야 한다.

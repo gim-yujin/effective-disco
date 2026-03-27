@@ -2352,3 +2352,72 @@ SOAK_FACTOR=0.9 SOAK_DURATION=1h WARMUP_DURATION=2m SAMPLE_INTERVAL_SECONDS=60 \
 - 즉 현재 `0.9 / 2시간`의 남은 gap 은
   steady-state 후반 붕괴보다 `초기 burst 1건`에 더 가깝다.
 - `duplicateKeyConflicts`, `unreadNotificationMismatchUsers`, `unexpected_response_rate` 는 모두 `0`이었다.
+
+## 2026-03-27 notification/user lock burst substep profiling
+
+상태: 완료
+
+### 실행 목적
+
+- 초기 burst 구간에서 `notification` 경로가 실제로 얼마나 두꺼운지
+  `recipient lock`, `row insert/update`, `counter refresh` 단위로 분해해서 본다.
+- `dbPoolTimeouts`의 주원인이
+  단일 느린 lock query 인지,
+  아니면 여러 짧은 lock/쓰기 step 이 겹치는 convoy 인지 좁힌다.
+
+### 결과
+
+- summary:
+  [soak-20260327-100853.md](/home/admin0/effective-disco/loadtest/results/soak-20260327-100853.md)
+- server metrics:
+  [soak-20260327-100853-server.json](/home/admin0/effective-disco/loadtest/results/soak-20260327-100853-server.json)
+- timeline:
+  [soak-20260327-100853-metrics.jsonl](/home/admin0/effective-disco/loadtest/results/soak-20260327-100853-metrics.jsonl)
+- sql snapshot:
+  [soak-20260327-100853-sql.tsv](/home/admin0/effective-disco/loadtest/results/soak-20260327-100853-sql.tsv)
+- 상태: `PASS`
+- `http p95 = 225.38ms`
+- `http p99 = 287.17ms`
+- `unexpected_response_rate = 0.0000`
+- `dbPoolTimeouts = 0`
+- `duplicateKeyConflicts = 0`
+- `unreadNotificationMismatchUsers = 0`
+- `maxThreadsAwaitingConnection = 198`
+
+### 세부 profile
+
+- `notification.store.lock-recipient`
+  - `count = 51,451`
+  - `avgWall ≈ 1.018ms`
+  - `avgSql ≈ 0.813ms`
+  - `maxWall ≈ 29.711ms`
+- `notification.store.insert`
+  - `avgWall ≈ 0.523ms`
+- `notification.store.counter.increment`
+  - `avgWall ≈ 0.411ms`
+- `notification.read-page.lock-recipient`
+  - `count = 13,097`
+  - `avgWall ≈ 1.011ms`
+  - `avgSql ≈ 0.854ms`
+  - `maxWall ≈ 14.975ms`
+- `notification.read-page.page-state`
+  - `avgWall ≈ 0.445ms`
+- `notification.read-page.mark-ids`
+  - `avgWall ≈ 0.786ms`
+- `notification.read-page.counter.refresh`
+  - `avgWall ≈ 0.625ms`
+- 비교용 read path
+  - `post.list.search.rows avgWall ≈ 2.871ms`
+  - `post.list.browse.rows avgWall ≈ 1.691ms`
+
+### 해석
+
+- `notification/user lock` 경로는 실제 burst 참여자다.
+- 하지만 평균 기준으로는 `lock-recipient`가 `1ms`대라서
+  이것만으로 `dbPoolTimeouts`를 설명할 정도의 단일 slow query 는 아니다.
+- 대신 `maxWall`가 `15~30ms`까지 튀는 순간이 있고,
+  동시에 `maxThreadsAwaitingConnection = 198`까지 간다.
+- 즉 현재 그림은
+  `짧은 recipient lock 경쟁 + steady-state search read pressure + pool 28 포화`
+  의 조합에 가깝다.
+- steady-state read path 중 가장 큰 값은 여전히 `post.list.search.rows` 였다.
