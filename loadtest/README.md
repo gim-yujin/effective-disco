@@ -257,6 +257,12 @@ BASE_URL=http://127.0.0.1:18082 \
 - `loadtest/results/soak-*.md`: 장시간 soak 최종 요약
 - `loadtest/results/soak-*-metrics.jsonl`: soak 중 주기적 서버 메트릭 타임라인
 
+`run-bbs-soak.sh` finalization 관련:
+
+- final metrics / SQL snapshot 확보 후 cleanup endpoint 는 best-effort 로 호출된다.
+- cleanup 이 timeout 나더라도 `.md` summary 생성은 계속 진행된다.
+- summary table 에는 `cleanupStatus`, `cleanupNote` 가 추가되어 cleanup 성공/실패를 같이 기록한다.
+
 ## 핵심 지표
 
 - `http_req_duration`, 각 시나리오별 `p(95)`, `p(99)`

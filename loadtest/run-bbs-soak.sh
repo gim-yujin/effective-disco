@@ -7,6 +7,7 @@ SOAK_FACTOR="${SOAK_FACTOR:-1.25}"
 SOAK_DURATION="${SOAK_DURATION:-30m}"
 WARMUP_DURATION="${WARMUP_DURATION:-2m}"
 SAMPLE_INTERVAL_SECONDS="${SAMPLE_INTERVAL_SECONDS:-60}"
+CLEANUP_CURL_MAX_TIME="${CLEANUP_CURL_MAX_TIME:-120}"
 SUITE_TIMESTAMP="$(date +%Y%m%d-%H%M%S)"
 SQL_CHECK_FILE="loadtest/sql/consistency-checks.sql"
 LOADTEST_PREFIX="${LOADTEST_PREFIX:-soak$(date +%m%d%H%M%S)}"
@@ -104,8 +105,9 @@ cleanup_loadtest_scope() {
   local prefix="$1"
   # 문제 해결:
   # cleanup endpoint도 후처리 마지막 단계라 여기서 오래 멈추면 전체 suite가 끝난 것처럼 보여도
-  # summary가 생성되지 않는다. 짧은 timeout/retry를 두어 실패를 빠르게 드러낸다.
-  curl -fsS --max-time 30 --retry 2 --retry-delay 1 -X POST "$BASE_URL/internal/load-test/cleanup" \
+  # summary가 생성되지 않는다. cleanup은 측정 결과 자체보다 후속 환경 위생을 위한 단계이므로,
+  # timeout이 나더라도 summary를 먼저 남길 수 있게 best-effort로 다룬다.
+  curl -fsS --max-time "$CLEANUP_CURL_MAX_TIME" --retry 2 --retry-delay 1 -X POST "$BASE_URL/internal/load-test/cleanup" \
     -H 'Content-Type: application/json' \
     -d "{\"prefix\":\"$prefix\"}" >/dev/null
 }
@@ -251,7 +253,13 @@ run_sql_snapshot "$SQL_SNAPSHOT_FILE"
 # 문제 해결:
 # soak는 실행 prefix 범위 데이터를 SQL 스냅샷으로 검증한 직후 정리해야
 # 장시간 테스트를 여러 번 반복해도 개발 DB의 게시물 수가 계속 누적되지 않는다.
-cleanup_loadtest_scope "$LOADTEST_PREFIX"
+cleanup_status="ok"
+cleanup_note="completed"
+if ! cleanup_loadtest_scope "$LOADTEST_PREFIX"; then
+  cleanup_status="failed"
+  cleanup_note="cleanup endpoint timed out or returned non-2xx; summary generated from captured artifacts"
+  printf 'warning: cleanup failed for prefix %s; keeping summary generation\n' "$LOADTEST_PREFIX" >&2
+fi
 
 IFS=$'\t' read -r scope_user_count scope_post_count scope_notification_count duplicate_post_likes duplicate_bookmarks duplicate_follows duplicate_blocks post_like_mismatch_posts negative_like_count_posts post_comment_mismatch_posts negative_comment_count_posts unread_notification_mismatch_users negative_unread_notification_users <"$SQL_SNAPSHOT_FILE"
 
@@ -296,6 +304,8 @@ printf '| unreadNotificationMismatchUsers | `%s` |\n' "$unread_notification_mism
 printf '| scopeUserCount | `%s` |\n' "$scope_user_count" >>"$SUMMARY_REPORT_FILE"
 printf '| scopePostCount | `%s` |\n' "$scope_post_count" >>"$SUMMARY_REPORT_FILE"
 printf '| scopeNotificationCount | `%s` |\n' "$scope_notification_count" >>"$SUMMARY_REPORT_FILE"
+printf '| cleanupStatus | `%s` |\n' "$cleanup_status" >>"$SUMMARY_REPORT_FILE"
+printf '| cleanupNote | `%s` |\n' "$cleanup_note" >>"$SUMMARY_REPORT_FILE"
 
 printf '\n## Artifacts\n\n' >>"$SUMMARY_REPORT_FILE"
 printf -- '- log: `%s`\n' "$LOG_FILE" >>"$SUMMARY_REPORT_FILE"

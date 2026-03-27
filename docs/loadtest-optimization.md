@@ -4741,6 +4741,44 @@ GRADLE_USER_HOME=/tmp/gradle-home ./gradlew test --no-daemon
 - 따라서 이 변경의 최종 검증은 다음 clean managed soak 재실행에서
   `server.json`, `sql.tsv`, `.md`가 자동 생성되는지로 확정하는 것이 맞다.
 
+## 2026-03-27 soak runner cleanup/summary curl timeout 추가 완화
+
+### 배경
+
+- runner finalization 안정화 후에도 마지막 단계에서 간헐적으로 `.md` summary 만 빠지는 경우가 남았다.
+- core artifact (`k6.json`, `server.json`, `sql.tsv`, `timeline`) 는 이미 생성됐는데,
+  마지막 `/internal/load-test/cleanup` curl timeout 하나 때문에 summary 생성이 끝까지 가지 못하는 경우가 있었다.
+
+### 원인
+
+- [run-bbs-soak.sh](/home/admin0/effective-disco/loadtest/run-bbs-soak.sh) 는
+  final metrics 와 SQL snapshot 을 남긴 뒤 cleanup endpoint 를 호출했다.
+- 그런데 cleanup 호출이 timeout 되면 `set -e` 때문에 script 전체가 거기서 멈추고,
+  실제 측정 결과가 이미 다 있는데도 마지막 `.md` summary 가 생성되지 못했다.
+- 즉 cleanup 은 본질적으로 `후속 환경 위생` 단계인데,
+  기존 data flow 에서는 `측정 결과 기록`보다 더 강한 blocker 로 취급되고 있었다.
+
+### 적용한 변경
+
+- cleanup timeout 을 `CLEANUP_CURL_MAX_TIME` env 로 분리하고 기본값을 `120s`로 늘렸다.
+- cleanup 호출은 이제 best-effort 로 다룬다.
+  - timeout 또는 non-2xx 가 나더라도 summary 생성은 계속 진행한다.
+- summary table 에 `cleanupStatus`, `cleanupNote` 를 추가해
+  cleanup 성공/실패 여부를 artifact 안에서 바로 확인할 수 있게 했다.
+
+### 기대 효과
+
+- final metrics / SQL snapshot 이 확보된 뒤에는
+  cleanup timeout 이 더 이상 `.md` summary 생성을 막지 않는다.
+- 즉 이후 managed soak 는
+  `측정 결과 기록`과 `후속 cleanup` 을 분리해서 해석할 수 있다.
+
+### 검증
+
+- `bash -n loadtest/run-bbs-soak.sh` 통과
+- 다음 managed soak 에서
+  `.md` summary 가 자동 생성되는지와 `cleanupStatus` 기록이 실제로 남는지 확인하면 된다.
+
 ## 2026-03-27 soak runner finalization smoke verification
 
 ### 배경
