@@ -541,14 +541,18 @@ public class PostService {
         // broad mixed 최소 재현 조합에서는 browse feed 와 search 가 같이 돌 때만 pool timeout 이 커졌다.
         // browse 전용 slice 를 분리 profile 로 남기면 "feed rows" 가 먼저 비싸지는지,
         // search rows 가 먼저 비싸지는지를 같은 부하에서 분리해서 볼 수 있다.
-        return loadTestStepProfiler.profile(
-                "post.list.browse.rows",
-                false,
+        String[] profileNames = switch (sortKey) {
+            case "likes" -> new String[]{"post.list.browse.rows", "post.list.search.sort.rows", "post.list.search.sort.likes.rows"};
+            case "comments" -> new String[]{"post.list.browse.rows", "post.list.search.sort.rows", "post.list.search.sort.comments.rows"};
+            default -> new String[]{"post.list.browse.rows"};
+        };
+        return profileSlicePath(
                 () -> switch (sortKey) {
                     case "likes" -> loadRankedBrowseSlice(board, limit, cursorCreatedAt, cursorSortValue, cursorId, true);
                     case "comments" -> loadRankedBrowseSlice(board, limit, cursorCreatedAt, cursorSortValue, cursorId, false);
                     default -> loadLatestBrowseSlice(board, limit, cursorCreatedAt, cursorId);
-                }
+                },
+                profileNames
         );
     }
 
@@ -635,19 +639,26 @@ public class PostService {
                                                               LocalDateTime cursorCreatedAt,
                                                               Long cursorId) {
         // 문제 해결:
-        // API search hot path 는 기존 Page 에서 count(*) 를 같이 치며 `post.list` 하나로만 묶여 있었다.
-        // search rows 를 별도 slice profile 로 분리하면 search query 자체가 비싼지,
-        // browse feed 와 겹칠 때만 비싸지는지를 숫자로 구분할 수 있다.
+        // 검색 경로를 `search.rows` 하나로만 두면 keyword/tag/sort 중 어느 경로가 실제 hot path 인지 알 수 없다.
+        // 우선 query shape 는 그대로 둔 채 keyword/tag/sort 와 board/global 만 nested profile 로 나눠
+        // 다음 최적화가 어느 분기를 겨냥해야 하는지 부작용 없이 좁힌다.
+        // FTS branch 와 username branch 는 현재 UNION 한 번으로 실행되므로,
+        // 시간을 branch 별로 더 나누려면 추가 SQL 이 필요해 hot path 자체를 왜곡할 가능성이 있다.
         LocalDateTime effectiveCursorCreatedAt = cursorCreatedAt != null
                 ? cursorCreatedAt
                 : LocalDateTime.of(9999, 12, 31, 23, 59, 59, 999_999_999);
         Long effectiveCursorId = cursorId != null ? cursorId : Long.MAX_VALUE;
-        return loadTestStepProfiler.profile(
-                "post.list.search.rows",
-                false,
+        return profileSlicePath(
                 () -> board == null
-                        ? postRepository.searchPublicPostListRowsSlice(keyword, limit, effectiveCursorCreatedAt, effectiveCursorId)
-                        : postRepository.searchPublicPostListRowsInBoardSlice(board, keyword, limit, effectiveCursorCreatedAt, effectiveCursorId)
+                        ? postRepository.searchPublicPostListRowsSlice(
+                        keyword, limit, effectiveCursorCreatedAt, effectiveCursorId
+                )
+                        : postRepository.searchPublicPostListRowsInBoardSlice(
+                        board, keyword, limit, effectiveCursorCreatedAt, effectiveCursorId
+                ),
+                "post.list.search.rows",
+                "post.list.search.keyword.rows",
+                board == null ? "post.list.search.keyword.global.rows" : "post.list.search.keyword.board.rows"
         );
     }
 
@@ -659,9 +670,7 @@ public class PostService {
         // 문제 해결:
         // tag filter 도 browse/search 와 같은 목록 hot path 인데, 별도 profile 이 없으면
         // broad mixed 에서 keyword search 와 tag search 중 무엇이 먼저 느려지는지 구분할 수 없다.
-        return loadTestStepProfiler.profile(
-                "post.list.tag.rows",
-                false,
+        return profileSlicePath(
                 () -> {
                     if (cursorCreatedAt == null || cursorId == null) {
                         return board == null
@@ -671,8 +680,30 @@ public class PostService {
                     return board == null
                             ? postRepository.findScrollPostListRowsByTagNameAndCreatedAtBefore(tag, cursorCreatedAt, cursorId, limit)
                             : postRepository.findScrollPostListRowsByBoardAndTagNameAndCreatedAtBefore(board, tag, cursorCreatedAt, cursorId, limit);
-                }
+                },
+                "post.list.tag.rows",
+                "post.list.search.tag.rows",
+                board == null ? "post.list.search.tag.global.rows" : "post.list.search.tag.board.rows"
         );
+    }
+
+    private Slice<PostRepository.PostListRow> profileSlicePath(LoadTestStepProfiler.ThrowingSupplier<Slice<PostRepository.PostListRow>> supplier,
+                                                               String... profileNames) {
+        LoadTestStepProfiler.ThrowingSupplier<Slice<PostRepository.PostListRow>> profiledSupplier = supplier;
+        for (int i = profileNames.length - 1; i >= 0; i--) {
+            String profileName = profileNames[i];
+            LoadTestStepProfiler.ThrowingSupplier<Slice<PostRepository.PostListRow>> current = profiledSupplier;
+            profiledSupplier = () -> loadTestStepProfiler.profileChecked(profileName, false, current);
+        }
+        try {
+            return profiledSupplier.get();
+        } catch (RuntimeException runtimeException) {
+            throw runtimeException;
+        } catch (Error error) {
+            throw error;
+        } catch (Throwable throwable) {
+            throw new IllegalStateException("Unexpected checked exception during search path profiling", throwable);
+        }
     }
 
     private boolean requiresRankedCursor(String sortKey) {
