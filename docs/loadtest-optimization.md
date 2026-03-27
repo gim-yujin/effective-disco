@@ -4740,3 +4740,115 @@ GRADLE_USER_HOME=/tmp/gradle-home ./gradlew test --no-daemon
   현재 sandbox에서는 readiness가 간헐적으로 흔들려 end-to-end smoke는 결정적으로 마무리하지 못했다.
 - 따라서 이 변경의 최종 검증은 다음 clean managed soak 재실행에서
   `server.json`, `sql.tsv`, `.md`가 자동 생성되는지로 확정하는 것이 맞다.
+
+## 2026-03-27 soak runner finalization smoke verification
+
+### 배경
+
+- runner 후처리 안정화 변경 후,
+  실제로 `summary/server/sql/timeline`이 자동 생성되는지 먼저 확인할 필요가 있었다.
+- 이 단계의 목적은 성능 개선이 아니라
+  이후 long soak 판정 체계를 다시 신뢰 가능한 상태로 되돌리는 것이었다.
+
+### 결과
+
+- summary:
+  [soak-20260327-195048.md](/home/admin0/effective-disco/loadtest/results/soak-20260327-195048.md)
+- k6 summary:
+  [soak-20260327-195048-k6.json](/home/admin0/effective-disco/loadtest/results/soak-20260327-195048-k6.json)
+- server metrics:
+  [soak-20260327-195048-server.json](/home/admin0/effective-disco/loadtest/results/soak-20260327-195048-server.json)
+- timeline:
+  [soak-20260327-195048-metrics.jsonl](/home/admin0/effective-disco/loadtest/results/soak-20260327-195048-metrics.jsonl)
+- sql snapshot:
+  [soak-20260327-195048-sql.tsv](/home/admin0/effective-disco/loadtest/results/soak-20260327-195048-sql.tsv)
+- 상태: `PASS`
+- `http p95 = 257.68ms`
+- `http p99 = 386.78ms`
+- `unexpected_response_rate = 0.0000`
+- `dbPoolTimeouts = 0`
+- `duplicateKeyConflicts = 0`
+- `unreadNotificationMismatchUsers = 0`
+
+### 해석
+
+- smoke 기준으로는 runner finalization이 다시 정상 동작했다.
+- 즉 앞서 보이던 smoke-level artifact 누락은
+  runner 로직 자체보다 sandbox readiness 흔들림의 영향이 더 컸다.
+- 이후 long managed soak는 다시
+  자동 생성 artifact 기준으로 해석해도 되는 상태가 됐다.
+
+## 2026-03-27 clean `0.9 / 2시간` full managed rerun with core artifacts
+
+### 배경
+
+- runner finalization smoke 검증이 통과한 뒤,
+  clean `0.9 / 2시간`을 다시 full managed soak로 수행했다.
+- 이 단계의 목적은
+  `0.9 / 2시간`을 운영형 baseline으로 실제로 올릴 수 있는지,
+  그리고 core artifact 기준으로도 그 결론이 유지되는지 확인하는 것이었다.
+
+### 실행 조건
+
+- clean `effectivedisco_loadtest` DB 재생성
+- managed soak
+- `SOAK_FACTOR = 0.9`
+- `SOAK_DURATION = 2h`
+- `WARMUP_DURATION = 2m`
+- `SAMPLE_INTERVAL_SECONDS = 600`
+
+### 결과
+
+- manual summary:
+  [soak-20260327-195440.md](/home/admin0/effective-disco/loadtest/results/soak-20260327-195440.md)
+- k6 summary:
+  [soak-20260327-195440-k6.json](/home/admin0/effective-disco/loadtest/results/soak-20260327-195440-k6.json)
+- server metrics:
+  [soak-20260327-195440-server.json](/home/admin0/effective-disco/loadtest/results/soak-20260327-195440-server.json)
+- timeline:
+  [soak-20260327-195440-metrics.jsonl](/home/admin0/effective-disco/loadtest/results/soak-20260327-195440-metrics.jsonl)
+- sql snapshot:
+  [soak-20260327-195440-sql.tsv](/home/admin0/effective-disco/loadtest/results/soak-20260327-195440-sql.tsv)
+- log:
+  [soak-20260327-195440.log](/home/admin0/effective-disco/loadtest/results/soak-20260327-195440.log)
+- 상태: `PASS`
+- `http p95 = 262.40ms`
+- `http p99 = 334.75ms`
+- `unexpected_response_rate = 0.0000`
+- `dbPoolTimeouts = 0`
+- `duplicateKeyConflicts = 0`
+- SQL snapshot 전부 `0`
+- `maxThreadsAwaitingConnection = 196`
+
+종료 직전 profile:
+
+- `post.list.search.keyword.board.rows ≈ 20.54ms / sql ≈ 20.20ms`
+- `post.list.search.rows ≈ 20.55ms / sql ≈ 20.21ms`
+- `post.list.browse.rows ≈ 1.82ms / sql ≈ 0.76ms`
+- `notification.store ≈ 2.31ms / sql ≈ 1.46ms`
+
+### 해석
+
+- 이번 full rerun으로 `0.9 / 2시간`은 실제 `PASS` 결과를 가진 long-run baseline 후보가 아니라,
+  그대로 운영형 baseline으로 승격 가능한 값이 됐다.
+- `browse`, `notification`, duplicate-key, unread mismatch는
+  더 이상 장시간 strict 판정의 blocker가 아니었다.
+- 가장 크게 남는 steady-state path는 여전히 `post.list.search.keyword.board.rows`였지만,
+  현재 수준에서는 strict failure를 만들지 않았다.
+- 즉 다음 단계는 baseline 확보가 아니라,
+  이 기준선 위에서 얼마나 더 headroom을 밀 수 있는지 확인하는 것이다.
+
+### 교훈
+
+- runner finalization이 안정화되면,
+  이전의 `main phase는 좋아 보였지만 artifact가 불완전한 런`과
+  `실제로 baseline으로 승격 가능한 런`을 명확히 구분할 수 있다.
+- 이번 결과는 `search keyword`가 여전히 최댓값이라는 사실과,
+  그 경로가 현재 baseline을 막지 않는다는 사실을 동시에 보여준다.
+- 즉 이제 최적화 논의의 중심은 `기준선 확보`가 아니라 `headroom 확보`로 옮겨간다.
+
+### 주의
+
+- 이번 long managed run에서는 `k6.json`, `server.json`, `sql.tsv`, `timeline`, `log`까지는 모두 생성됐다.
+- 다만 마지막 curl 기반 summary 단계가 한 번 timeout 나서,
+  `.md`는 수동 요약 파일로 보완했다.

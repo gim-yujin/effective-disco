@@ -2732,3 +2732,109 @@ SOAK_FACTOR=0.9 SOAK_DURATION=1h WARMUP_DURATION=2m SAMPLE_INTERVAL_SECONDS=60 \
 
 - wrapper 후처리 hang 때문에 final `server.json` / `sql.tsv` / 자동 summary는 생성되지 않았다.
 - 따라서 이번 기록은 `k6 log`와 종료 직전 live metrics snapshot 기준이다.
+
+## 2026-03-27 soak runner finalization smoke verification
+
+상태: 완료
+
+### 실행 목적
+
+- [run-bbs-soak.sh](/home/admin0/effective-disco/loadtest/run-bbs-soak.sh) finalization 안정화 이후,
+  smoke 런에서 자동 artifact 가 끝까지 생성되는지 확인한다.
+- 목표는 성능 기준선 재측정보다 먼저
+  runner 자체의 `summary/server/sql/timeline` 생성 경로가 신뢰 가능한지 검증하는 것이다.
+
+### 결과
+
+- summary:
+  [soak-20260327-195048.md](/home/admin0/effective-disco/loadtest/results/soak-20260327-195048.md)
+- k6 summary:
+  [soak-20260327-195048-k6.json](/home/admin0/effective-disco/loadtest/results/soak-20260327-195048-k6.json)
+- server metrics:
+  [soak-20260327-195048-server.json](/home/admin0/effective-disco/loadtest/results/soak-20260327-195048-server.json)
+- timeline:
+  [soak-20260327-195048-metrics.jsonl](/home/admin0/effective-disco/loadtest/results/soak-20260327-195048-metrics.jsonl)
+- sql snapshot:
+  [soak-20260327-195048-sql.tsv](/home/admin0/effective-disco/loadtest/results/soak-20260327-195048-sql.tsv)
+- log:
+  [soak-20260327-195048.log](/home/admin0/effective-disco/loadtest/results/soak-20260327-195048.log)
+- 상태: `PASS`
+- `http p95 = 257.68ms`
+- `http p99 = 386.78ms`
+- `unexpected_response_rate = 0.0000`
+- `dbPoolTimeouts = 0`
+- `duplicateKeyConflicts = 0`
+- `unreadNotificationMismatchUsers = 0`
+
+### 해석
+
+- smoke 기준으로는 runner finalization 이 정상 동작했다.
+- 이전 smoke 실패처럼 보이던 현상은
+  runner 로직 자체보다 sandbox 안의 readiness 접근 실패에 더 가까웠다.
+- 따라서 이후 long soak 판정은
+  다시 자동 artifact 생성 경로를 신뢰하는 쪽으로 되돌릴 수 있다.
+
+## 2026-03-27 full clean managed `0.9 / 2시간` soak rerun with core artifacts
+
+상태: 완료
+
+### 실행 목적
+
+- runner finalization smoke 가 통과한 뒤,
+  clean `0.9 / 2시간` managed soak 를 다시 full run 으로 수행해
+  운영형 baseline 을 `0.85`에서 `0.9`로 상향할 수 있는지 확인한다.
+- 이번 런은 `k6 main phase + drain` 을 끝까지 수행했고,
+  핵심 artifact 인 `k6/server/sql/timeline/log`까지 확보하는 것을 목표로 했다.
+
+### 결과
+
+- manual summary:
+  [soak-20260327-195440.md](/home/admin0/effective-disco/loadtest/results/soak-20260327-195440.md)
+- k6 summary:
+  [soak-20260327-195440-k6.json](/home/admin0/effective-disco/loadtest/results/soak-20260327-195440-k6.json)
+- server metrics:
+  [soak-20260327-195440-server.json](/home/admin0/effective-disco/loadtest/results/soak-20260327-195440-server.json)
+- timeline:
+  [soak-20260327-195440-metrics.jsonl](/home/admin0/effective-disco/loadtest/results/soak-20260327-195440-metrics.jsonl)
+- sql snapshot:
+  [soak-20260327-195440-sql.tsv](/home/admin0/effective-disco/loadtest/results/soak-20260327-195440-sql.tsv)
+- log:
+  [soak-20260327-195440.log](/home/admin0/effective-disco/loadtest/results/soak-20260327-195440.log)
+- 상태: `PASS`
+- `http p95 = 262.40ms`
+- `http p99 = 334.75ms`
+- `unexpected_response_rate = 0.0000`
+- `dbPoolTimeouts = 0`
+- `duplicateKeyConflicts = 0`
+- SQL snapshot 전부 `0`
+- `maxThreadsAwaitingConnection = 196`
+
+### 10분 간격 상태
+
+- `10분`: `dbPoolTimeouts = 0`, `search.rows ≈ 2.25ms`
+- `30분`: `dbPoolTimeouts = 0`, `search.rows ≈ 2.26ms`
+- `60분`: `dbPoolTimeouts = 0`, `search.rows ≈ 2.28ms`
+- `90분`: `dbPoolTimeouts = 0`, `search.rows ≈ 2.31ms`
+- `120분`: `dbPoolTimeouts = 0`, `search.rows ≈ 2.33ms`
+
+### 종료 직전 profile
+
+- `post.list.search.keyword.board.rows ≈ 20.54ms / sql ≈ 20.20ms`
+- `post.list.search.rows ≈ 20.55ms / sql ≈ 20.21ms`
+- `post.list.browse.rows ≈ 1.82ms / sql ≈ 0.76ms`
+- `notification.store ≈ 2.31ms / sql ≈ 1.46ms`
+
+### 해석
+
+- 이번 full rerun 에서는 clean `0.9 / 2시간` 동안 `dbPoolTimeouts`가 끝까지 `0`이었다.
+- `duplicateKeyConflicts`, unread mismatch, SQL mismatch 도 모두 `0`이었다.
+- 즉 현재 운영형 baseline 은 `0.85 / 2시간`에서 `0.9 / 2시간`으로 올릴 수 있다.
+- 장시간 steady-state 에서 가장 크게 남는 경로는 여전히
+  `post.list.search.keyword.board.rows`였지만,
+  이번에는 그 드리프트가 strict failure 로 이어지지 않았다.
+
+### 주의
+
+- 이번 long managed run 에서는 `k6.json`, `server.json`, `sql.tsv`, `timeline`, `log`는 모두 생성됐다.
+- 다만 마지막 curl 기반 summary 단계가 한 번 timeout 나서,
+  `[soak-20260327-195440.md](/home/admin0/effective-disco/loadtest/results/soak-20260327-195440.md)` 는 수동 요약 파일이다.
