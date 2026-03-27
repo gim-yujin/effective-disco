@@ -3028,3 +3028,52 @@ SOAK_FACTOR=0.9 SOAK_DURATION=1h WARMUP_DURATION=2m SAMPLE_INTERVAL_SECONDS=60 \
   `pool saturation + lock contention` 조합으로 보는 편이 맞다.
 - `duplicateKeyConflicts`, unread mismatch, SQL mismatch는 모두 `0`이라
   정합성 이슈는 아니었다.
+
+## 2026-03-28 현재 결론과 중지 결정
+
+상태: 운영형 baseline 확정, 성능 최적화 일시중지
+
+### 현재 기준선
+
+- 운영형 baseline:
+  - clean managed `0.9 / 2시간 = PASS`
+  - 대표 artifact:
+    [soak-20260327-195440.md](/home/admin0/effective-disco/loadtest/results/soak-20260327-195440.md)
+- headroom ceiling:
+  - clean managed `0.95 / 2시간 = FAIL`
+  - 대표 artifact:
+    [soak-20260327-232958.md](/home/admin0/effective-disco/loadtest/results/soak-20260327-232958.md)
+
+### 정합성과 운영 해석
+
+- 현재까지 broad mixed soak에서 확인한 핵심 정합성 불변식은 유지됐다.
+  - `duplicateKeyConflicts = 0`
+  - `unreadNotificationMismatchUsers = 0`
+  - SQL snapshot mismatch 전부 `0`
+- 즉 현재 남은 차이는 `정합성 실패`가 아니라
+  `0.95+` 구간에서의 strict headroom 차이로 보는 것이 맞다.
+
+### 현재 read-heavy 관점 평가
+
+- 최신 결과 기준 `browse/search`는 운영형 관점에서 이미 충분히 낮다.
+- narrow optimization 이후 strict failure 직전 profile에서도
+  - `post.list.search.keyword.board.rows ≈ 2.06ms`
+  - `post.list.search.rows ≈ 2.06ms`
+  - `post.list.browse.rows ≈ 1.73ms`
+  수준이었다.
+- 따라서 현 시점에서 `읽기 성능 부족`을 이유로 최적화를 더 밀어붙일 필요는 작다.
+
+### 남은 이슈의 성격
+
+- `0.95`를 막는 것은 더 이상 `browse/search 단일 query shape`가 아니다.
+- 최신 결과 기준 남는 문제는
+  `pool saturation + notification/user lock contention + write churn` 조합에 더 가깝다.
+- 즉 성능 최적화를 다시 재개한다면 다음 시작점은
+  `notification.read-page/store` recipient lock 경로와
+  `0.95+` mixed soak headroom 분석이어야 한다.
+
+### 결정
+
+- 현재 프로젝트는
+  `clean 0.9 / 2시간 = PASS`를 운영형 baseline으로 채택한다.
+- 성능 최적화는 여기서 일시중지한다.

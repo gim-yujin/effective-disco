@@ -5150,3 +5150,53 @@ GRADLE_USER_HOME=/tmp/gradle-home ./gradlew test --no-daemon
 - 즉 다음 최적화는 search를 다시 넓게 뒤집는 게 아니라,
   이제 상대적으로 더 남은 `notification/user lock convoy`와
   초기/중간 구간 pool saturation 쪽으로 초점을 옮겨야 한다.
+
+## 2026-03-28 현재 결론과 중지 결정
+
+상태: 운영형 baseline 확정, 성능 최적화 일시중지
+
+### 현재 기준선
+
+- 운영형 baseline:
+  - clean managed `0.9 / 2시간 = PASS`
+  - 대표 artifact:
+    [soak-20260327-195440.md](/home/admin0/effective-disco/loadtest/results/soak-20260327-195440.md)
+- headroom ceiling:
+  - clean managed `0.95 / 2시간 = FAIL`
+  - 대표 artifact:
+    [soak-20260327-232958.md](/home/admin0/effective-disco/loadtest/results/soak-20260327-232958.md)
+
+### 읽기 성능 관점의 판단
+
+- 현 시점에서 `browse/search`는 이미 충분히 강하다.
+- 최신 narrow optimization 이후 strict failure 직전 profile에서도
+  - `post.list.search.keyword.board.rows ≈ 2.06ms`
+  - `post.list.search.rows ≈ 2.06ms`
+  - `post.list.browse.rows ≈ 1.73ms`
+  수준이었다.
+- 즉 현재 read-heavy 관점에서는 `browse/search가 느려서 운영이 어렵다`고 보기 어렵다.
+
+### 남은 이슈의 성격
+
+- `0.95`를 막는 것은 더 이상 `browse/search 단일 query shape`가 아니다.
+- 최신 결과 기준 남는 문제는
+  `pool saturation + notification/user lock contention + write churn` 조합에 더 가깝다.
+- 다시 말해, 추가 성능 작업을 계속하더라도
+  다음 타깃은 `search`보다 `mixed write/lock convoy` 쪽이 된다.
+
+### 결정
+
+- 현재 프로젝트는
+  `clean 0.9 / 2시간 = PASS`를 운영형 baseline으로 채택한다.
+- 성능 최적화는 여기서 일시중지한다.
+- 이유:
+  - 읽기 경로 목표는 이미 달성했다.
+  - 남은 개선은 headroom 확장 성격이며,
+    추가 변경 대비 회귀 위험과 측정 비용이 더 커졌다.
+
+### 재개 조건
+
+- 성능 최적화를 다시 재개한다면 시작점은 다음이다.
+  - `notification.read-page/store` recipient lock 경로
+  - pool saturation이 실제로 재현되는 `0.95+` mixed soak
+- 반대로 `browse/search`는 현 시점에서 추가 최적화 우선순위가 아니다.
