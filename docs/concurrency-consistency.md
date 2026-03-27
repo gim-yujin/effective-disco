@@ -2676,3 +2676,59 @@ SOAK_FACTOR=0.9 SOAK_DURATION=1h WARMUP_DURATION=2m SAMPLE_INTERVAL_SECONDS=60 \
 
 - 이번 런도 runner 후처리 hang 때문에 final `server.json` / `sql.tsv`는 자동 생성되지 않았다.
 - 그래서 최종 판정은 `k6.json`과 종료 직전 live metrics snapshot 기준이다.
+
+## 2026-03-27 full clean managed `0.9 / 2시간` soak rerun
+
+상태: 완료
+
+### 실행 목적
+
+- 최신 코드 기준으로 clean `0.9 / 2시간` managed soak를 끝까지 다시 돌려,
+  현재 운영형 baseline을 `0.85`에서 `0.9`로 올릴 수 있는지 확인한다.
+- 이번 런은 중간에 끊지 않고 `2시간` main phase와 write drain 구간까지 모두 수행했다.
+
+### 결과
+
+- manual summary:
+  [soak-20260327-172723.md](/home/admin0/effective-disco/loadtest/results/soak-20260327-172723.md)
+- log:
+  [soak-20260327-172723.log](/home/admin0/effective-disco/loadtest/results/soak-20260327-172723.log)
+- timeline:
+  [soak-20260327-172723-metrics.jsonl](/home/admin0/effective-disco/loadtest/results/soak-20260327-172723-metrics.jsonl)
+- 상태: `MAIN_PHASE_PASS_BUT_FINALIZATION_INCOMPLETE`
+- `http p95 = 263.59ms`
+- `http p99 = 338.11ms`
+- `unexpected_response_rate = 0.0000`
+- `dbPoolTimeouts = 0`
+- `duplicateKeyConflicts = 0`
+- `maxThreadsAwaitingConnection = 198`
+
+### 10분 간격 상태
+
+- `10분`: `dbPoolTimeouts = 0`, `search.rows ≈ 2.25ms`
+- `30분`: `dbPoolTimeouts = 0`, `search.rows ≈ 2.26ms`
+- `60분`: `dbPoolTimeouts = 0`, `search.rows ≈ 2.28ms`
+- `90분`: `dbPoolTimeouts = 0`, `search.rows ≈ 2.31ms`
+- `120분`: `dbPoolTimeouts = 0`, `search.rows ≈ 2.33ms`
+
+### 종료 직전 profile
+
+- `post.list.search.keyword.board.rows ≈ 20.47ms / sql ≈ 20.12ms`
+- `post.list.search.rows ≈ 20.47ms / sql ≈ 20.12ms`
+- `post.list.browse.rows ≈ 1.85ms / sql ≈ 0.78ms`
+- `notification.store ≈ 2.33ms / sql ≈ 1.49ms`
+- `notification.store.lock-recipient ≈ 1.13ms / sql ≈ 0.90ms`
+- `notification.read-page.lock-recipient ≈ 1.16ms / sql ≈ 0.98ms`
+
+### 해석
+
+- 이번 full managed rerun에서는 `0.9 / 2시간` main phase 동안 `dbPoolTimeouts`가 한 번도 발생하지 않았다.
+- `browse`와 `notification`은 장시간에도 안정적이었고,
+  가장 크게 남는 경로는 여전히 `post.list.search.keyword.board.rows`였다.
+- 즉 현재 `0.9 / 2시간` gap은 더 이상 `browse`, `notification`, `duplicate-key` 성격이 아니라
+  `search keyword steady-state headroom`으로 좁혀진다.
+
+### 주의
+
+- wrapper 후처리 hang 때문에 final `server.json` / `sql.tsv` / 자동 summary는 생성되지 않았다.
+- 따라서 이번 기록은 `k6 log`와 종료 직전 live metrics snapshot 기준이다.

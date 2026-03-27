@@ -4619,3 +4619,77 @@ GRADLE_USER_HOME=/tmp/gradle-home ./gradlew test --no-daemon
   단일 좋은 샘플만 보고 개선이 확정됐다고 판단하면 안 된다.
 - short-run 재현성 확인을 한 번 더 넣어야
   `실제 개선`과 `좋은 측정 노이즈`를 구분할 수 있다.
+
+## 2026-03-27 full clean managed `0.9 / 2시간` rerun
+
+### 배경
+
+- short-run `0.9 / 15분`은 다시 깨끗하게 통과했다.
+- 이제 남은 질문은 단 하나였다.
+  - 이 상태로 clean `0.9 / 2시간`이 실제로 버티는가?
+- 그래서 이번에는 `run-bbs-managed-soak.sh`로 앱 lifecycle까지 wrapper가 관리하는 조건에서
+  full `2시간`을 끝까지 다시 돌렸다.
+
+### 실행 조건
+
+- clean `effectivedisco_loadtest` DB 재생성
+- `SOAK_FACTOR = 0.9`
+- `SOAK_DURATION = 2h`
+- `WARMUP_DURATION = 2m`
+- `SAMPLE_INTERVAL_SECONDS = 600`
+- `BASE_URL = http://127.0.0.1:18082`
+- 실행 방식: `run-bbs-managed-soak.sh`
+
+### 결과
+
+- manual summary:
+  [soak-20260327-172723.md](/home/admin0/effective-disco/loadtest/results/soak-20260327-172723.md)
+- log:
+  [soak-20260327-172723.log](/home/admin0/effective-disco/loadtest/results/soak-20260327-172723.log)
+- timeline:
+  [soak-20260327-172723-metrics.jsonl](/home/admin0/effective-disco/loadtest/results/soak-20260327-172723-metrics.jsonl)
+- 상태: `MAIN_PHASE_PASS_BUT_FINALIZATION_INCOMPLETE`
+- `http p95 = 263.59ms`
+- `http p99 = 338.11ms`
+- `unexpected_response_rate = 0.0000`
+- `dbPoolTimeouts = 0`
+- `duplicateKeyConflicts = 0`
+
+10분 간격 상태:
+
+- `10분`: `dbPoolTimeouts = 0`, `search.rows ≈ 2.25ms`
+- `30분`: `dbPoolTimeouts = 0`, `search.rows ≈ 2.26ms`
+- `60분`: `dbPoolTimeouts = 0`, `search.rows ≈ 2.28ms`
+- `90분`: `dbPoolTimeouts = 0`, `search.rows ≈ 2.31ms`
+- `120분`: `dbPoolTimeouts = 0`, `search.rows ≈ 2.33ms`
+
+종료 직전 live metrics:
+
+- `post.list.search.keyword.board.rows ≈ 20.47ms / sql ≈ 20.12ms`
+- `post.list.search.rows ≈ 20.47ms / sql ≈ 20.12ms`
+- `post.list.browse.rows ≈ 1.85ms / sql ≈ 0.78ms`
+- `notification.store ≈ 2.33ms / sql ≈ 1.49ms`
+- `notification.store.lock-recipient ≈ 1.13ms / sql ≈ 0.90ms`
+- `notification.read-page.lock-recipient ≈ 1.16ms / sql ≈ 0.98ms`
+
+### 해석
+
+- 이번 full rerun에서 `0.9 / 2시간` main phase는 timeout 없이 끝까지 버텼다.
+- `browse`와 `notification`은 장시간에도 더 이상 주병목으로 보이지 않았다.
+- steady-state에서 가장 크게 남는 건 여전히 `post.list.search.keyword.board.rows`였다.
+- 즉 이번 단계의 결론은:
+  - `0.9 / 2시간` headroom은 실제로 크게 회복됐다
+  - 남은 read hot path는 `board-scoped keyword search`
+  - 다음 최적화도 `search keyword`를 벗어나 넓게 퍼지면 안 된다
+
+### 주의
+
+- wrapper 후처리 hang 때문에 final `server.json` / `sql.tsv` / 자동 summary는 생성되지 않았다.
+- 따라서 이번 판정은 `k6 log`와 종료 직전 live metrics snapshot 기준이다.
+
+### 교훈
+
+- 장시간 soak는 단순히 `dbPoolTimeouts` 유무만 보는 것이 아니라
+  `어떤 경로가 steady-state에서 끝까지 가장 크게 남는가`를 같이 봐야 한다.
+- 이번 full run에서는 `search keyword`가 끝까지 최댓값이었고,
+  그 덕분에 다음 최적화 대상이 다시 명확해졌다.
