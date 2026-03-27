@@ -2520,3 +2520,52 @@ SOAK_FACTOR=0.9 SOAK_DURATION=1h WARMUP_DURATION=2m SAMPLE_INTERVAL_SECONDS=60 \
   `post.list.search.rows avgWall ≈ 20.95ms / avgSql ≈ 20.40ms` 였다.
 - 따라서 현재 clean `0.9 / 2시간` strict gap 은
   `notification lock 주도`보다 `search rows steady-state drift` 쪽으로 보는 해석이 더 맞다.
+
+## 2026-03-27 clean `0.9 / 15분` rerun with split search path profiling
+
+상태: 완료
+
+### 실행 목적
+
+- 방금 추가한 `keyword/tag/sort` 세분화 계측을 실제 clean soak 에서 읽는다.
+- `post.list.search.rows` 안에서 어느 분기가 실제 hot path 인지 확정한다.
+- 다음 최적화가 `keyword`, `tag`, `sort` 중 어디를 겨냥해야 하는지 좁힌다.
+
+### 결과
+
+- manual summary:
+  [soak-20260327-152955.md](/home/admin0/effective-disco/loadtest/results/soak-20260327-152955.md)
+- log:
+  [soak-20260327-152955.log](/home/admin0/effective-disco/loadtest/results/soak-20260327-152955.log)
+- timeline:
+  [soak-20260327-152955-metrics.jsonl](/home/admin0/effective-disco/loadtest/results/soak-20260327-152955-metrics.jsonl)
+- 상태: `MAIN_PHASE_CLEAN_BUT_FINALIZATION_INCOMPLETE`
+- `http p95 = 242.57ms`
+- `http p99 = 308.47ms`
+- `unexpected_response_rate = 0.0000`
+- `dbPoolTimeouts = 0`
+- `duplicateKeyConflicts = 0`
+- `maxThreadsAwaitingConnection = 199`
+
+### 세분화 profile
+
+- `post.list.search.keyword.rows ≈ 4.59ms / sql ≈ 4.09ms`
+- `post.list.search.keyword.board.rows ≈ 4.59ms / sql ≈ 4.09ms`
+- `post.list.search.tag.rows ≈ 1.54ms / sql ≈ 1.18ms`
+- `post.list.search.sort.rows ≈ 1.83ms / sql ≈ 0.80ms`
+- `post.list.search.sort.likes.rows ≈ 1.82ms`
+- `post.list.search.sort.comments.rows ≈ 1.84ms`
+- `post.list.search.rows ≈ 4.60ms / sql ≈ 4.09ms`
+- `post.list.browse.rows ≈ 1.83ms / sql ≈ 0.81ms`
+- `notification.store ≈ 2.28ms / sql ≈ 1.48ms`
+
+### 해석
+
+- 세분화 후 `search` 안에서 실제로 가장 큰 경로는 `keyword`, 그중에서도 현재 loadtest 시나리오에서는 `board-scoped keyword search`다.
+- `tag`와 `sort` 경로는 모두 `1ms`대라서 다음 최적화 1순위가 아니다.
+- 따라서 현재 `search` hot path 최적화의 초점은
+  [PostRepositoryImpl.java](/home/admin0/effective-disco/src/main/java/com/effectivedisco/repository/PostRepositoryImpl.java)
+  의 `board keyword search` 경로로 좁혀졌다.
+- 주의:
+  이번 런은 `run-bbs-soak.sh` 후처리 hang 때문에 final `k6.json/server.json/sql.tsv`가 생성되지 않았다.
+  그래서 판정은 main phase log 와 종료 직전 `/internal/load-test/metrics` 기준으로만 해석한다.

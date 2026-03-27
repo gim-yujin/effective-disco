@@ -4396,3 +4396,68 @@ GRADLE_USER_HOME=/tmp/gradle-home ./gradlew test --no-daemon --tests "com.effect
 - 이번 full managed rerun 은
   `notification lock`을 의심하던 가설을 약화시키고,
   `post.list.search.rows`를 다음 최적화 1순위로 확정하는 근거가 됐다.
+
+## 2026-03-27 clean `0.9 / 15분` rerun after split search path profiling
+
+### 배경
+
+- [PostService.java](/home/admin0/effective-disco/src/main/java/com/effectivedisco/service/PostService.java)에
+  `post.list.search.keyword.*`, `post.list.search.tag.*`, `post.list.search.sort.*`
+  세분화 계측을 추가했다.
+- 목적은 간단했다.
+  - `search.rows`를 그대로 두되
+  - 실제 hot path 가 `keyword`, `tag`, `sort` 중 어디인지 먼저 확정한다.
+
+### 실행 조건
+
+- clean `effectivedisco_loadtest` DB 재생성
+- `SOAK_FACTOR = 0.9`
+- `SOAK_DURATION = 15m`
+- `WARMUP_DURATION = 2m`
+- `SAMPLE_INTERVAL_SECONDS = 300`
+- `BASE_URL = http://127.0.0.1:18082`
+
+### 결과
+
+- manual summary:
+  [soak-20260327-152955.md](/home/admin0/effective-disco/loadtest/results/soak-20260327-152955.md)
+- log:
+  [soak-20260327-152955.log](/home/admin0/effective-disco/loadtest/results/soak-20260327-152955.log)
+- timeline:
+  [soak-20260327-152955-metrics.jsonl](/home/admin0/effective-disco/loadtest/results/soak-20260327-152955-metrics.jsonl)
+- 상태: `MAIN_PHASE_CLEAN_BUT_FINALIZATION_INCOMPLETE`
+- `http p95 = 242.57ms`
+- `http p99 = 308.47ms`
+- `unexpected_response_rate = 0.0000`
+- `dbPoolTimeouts = 0`
+- `duplicateKeyConflicts = 0`
+
+세분화 profile:
+
+- `post.list.search.keyword.rows ≈ 4.59ms / sql ≈ 4.09ms`
+- `post.list.search.keyword.board.rows ≈ 4.59ms / sql ≈ 4.09ms`
+- `post.list.search.tag.rows ≈ 1.54ms / sql ≈ 1.18ms`
+- `post.list.search.sort.rows ≈ 1.83ms / sql ≈ 0.80ms`
+- `post.list.search.sort.likes.rows ≈ 1.82ms`
+- `post.list.search.sort.comments.rows ≈ 1.84ms`
+- `post.list.browse.rows ≈ 1.83ms / sql ≈ 0.81ms`
+- `notification.store ≈ 2.28ms / sql ≈ 1.48ms`
+
+### 해석
+
+- `search` 내부에서 가장 큰 분기는 `keyword`였다.
+- 특히 현재 loadtest 시나리오에선 `board-scoped keyword search`가 그대로 최댓값이었다.
+- `tag`와 `sort`는 상대적으로 작았으므로,
+  다음 최적화의 주타깃을 `keyword search row path`로 좁히는 것이 맞다.
+- 즉 `search`를 막연히 다시 뒤집는 것이 아니라,
+  [PostRepositoryImpl.java](/home/admin0/effective-disco/src/main/java/com/effectivedisco/repository/PostRepositoryImpl.java)
+  의 `board keyword search`를 직접 줄이는 쪽이 가장 효율적이다.
+
+### 주의
+
+- 이번 런은 `run-bbs-soak.sh`가 again 후처리에서 멈춰
+  final `k6.json`, `server.json`, `sql.tsv`는 생성되지 않았다.
+- 따라서 이 섹션의 판정은 main phase `log`와 종료 직전 live metrics snapshot 기준이다.
+- 그래도 세분화 계측의 목적은 충분히 달성됐다.
+  - `keyword`가 제일 큼
+  - `tag/sort`는 1순위가 아님
