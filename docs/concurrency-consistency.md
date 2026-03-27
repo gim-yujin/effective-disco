@@ -2838,3 +2838,71 @@ SOAK_FACTOR=0.9 SOAK_DURATION=1h WARMUP_DURATION=2m SAMPLE_INTERVAL_SECONDS=60 \
 - 이번 long managed run 에서는 `k6.json`, `server.json`, `sql.tsv`, `timeline`, `log`는 모두 생성됐다.
 - 다만 마지막 curl 기반 summary 단계가 한 번 timeout 나서,
   `[soak-20260327-195440.md](/home/admin0/effective-disco/loadtest/results/soak-20260327-195440.md)` 는 수동 요약 파일이다.
+
+## 2026-03-27 full clean managed `0.95 / 2시간` soak
+
+상태: 완료
+
+### 실행 목적
+
+- 새 운영형 baseline 으로 본 clean `0.9 / 2시간` 위에서
+  headroom 이 얼마나 남는지 확인하기 위해 `0.95 / 2시간`을 full managed soak 로 실행한다.
+- 이번 런은 `10분` 간격 상태 추적을 유지하면서,
+  strict failure 신호가 생겨도 요청대로 `2시간` 전체 main phase 를 끝까지 수행했다.
+
+### 결과
+
+- summary:
+  [soak-20260327-232958.md](/home/admin0/effective-disco/loadtest/results/soak-20260327-232958.md)
+- k6 summary:
+  [soak-20260327-232958-k6.json](/home/admin0/effective-disco/loadtest/results/soak-20260327-232958-k6.json)
+- server metrics:
+  [soak-20260327-232958-server.json](/home/admin0/effective-disco/loadtest/results/soak-20260327-232958-server.json)
+- timeline:
+  [soak-20260327-232958-metrics.jsonl](/home/admin0/effective-disco/loadtest/results/soak-20260327-232958-metrics.jsonl)
+- sql snapshot:
+  [soak-20260327-232958-sql.tsv](/home/admin0/effective-disco/loadtest/results/soak-20260327-232958-sql.tsv)
+- log:
+  [soak-20260327-232958.log](/home/admin0/effective-disco/loadtest/results/soak-20260327-232958.log)
+- 상태: `FAIL`
+- `http p95 = 274.74ms`
+- `http p99 = 347.57ms`
+- `unexpected_response_rate = 0.0000`
+- `dbPoolTimeouts = 69`
+- `duplicateKeyConflicts = 0`
+- `unreadNotificationMismatchUsers = 0`
+- SQL snapshot 전부 `0`
+- `cleanupStatus = failed`
+
+### 10분 간격 상태
+
+- `10분`: `dbPoolTimeouts = 0`, `search.rows ≈ 3.72ms`
+- `30분`: `dbPoolTimeouts = 0`, `search.rows ≈ 6.87ms`
+- `50분`: `dbPoolTimeouts = 0`, `search.rows ≈ 10.05ms`
+- `70분`: `dbPoolTimeouts = 0`, `search.rows ≈ 13.28ms`
+- `90분`: `dbPoolTimeouts = 0`, `search.rows ≈ 16.71ms`
+- `100분`: `dbPoolTimeouts = 69`, `search.rows ≈ 18.50ms`
+- `110분`: `dbPoolTimeouts = 69`, `search.rows ≈ 20.26ms`
+- `종료`: `dbPoolTimeouts = 69`
+
+### 종료 직전 profile
+
+- `post.list.search.keyword.board.rows ≈ 20.25ms / sql ≈ 19.91ms`
+- `post.list.search.rows ≈ 20.26ms / sql ≈ 19.91ms`
+- `post.list.browse.rows ≈ 1.81ms / sql ≈ 0.77ms`
+- `notification.store ≈ 2.29ms / sql ≈ 1.46ms`
+
+### 해석
+
+- clean `0.95 / 2시간`은 현재 strict 기준 stable factor 가 아니다.
+- 실패 원인은 여전히 `dbPoolTimeouts`이며,
+  이번에는 `100분` 시점에 `69`건이 발생한 뒤 plateau 했다.
+- `duplicateKeyConflicts`, unread mismatch, SQL mismatch 는 모두 `0`이라
+  남는 병목은 정합성이 아니라 headroom 부족이다.
+- steady-state 최댓값은 계속 `post.list.search.keyword.board.rows`였다.
+
+### 주의
+
+- 이번 런은 마지막 cleanup curl 이 timeout/409 로 끝났지만,
+  새 runner 구조 덕분에 `.md` summary 가 자동 생성됐다.
+- 즉 cleanup 실패와 결과 기록은 이제 분리해서 해석할 수 있다.

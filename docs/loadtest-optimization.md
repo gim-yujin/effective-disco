@@ -4890,3 +4890,89 @@ GRADLE_USER_HOME=/tmp/gradle-home ./gradlew test --no-daemon
 - 이번 long managed run에서는 `k6.json`, `server.json`, `sql.tsv`, `timeline`, `log`까지는 모두 생성됐다.
 - 다만 마지막 curl 기반 summary 단계가 한 번 timeout 나서,
   `.md`는 수동 요약 파일로 보완했다.
+
+## 2026-03-27 clean `0.95 / 2시간` full managed soak
+
+### 배경
+
+- clean `0.9 / 2시간`이 운영형 baseline 으로 올라간 뒤,
+  다음 질문은 단순해졌다.
+  - `0.95 / 2시간`도 버티는가?
+  - 아니라면 남는 headroom gap 은 어디서 터지는가?
+- 동시에 이번 런은
+  방금 바꾼 cleanup non-blocking finalization 이 실제 long soak 에서도
+  `.md` summary 자동 생성까지 끝내는지 검증하는 자리이기도 했다.
+
+### 실행 조건
+
+- clean `effectivedisco_loadtest` DB 재생성
+- managed soak
+- `SOAK_FACTOR = 0.95`
+- `SOAK_DURATION = 2h`
+- `WARMUP_DURATION = 2m`
+- `SAMPLE_INTERVAL_SECONDS = 600`
+
+### 결과
+
+- summary:
+  [soak-20260327-232958.md](/home/admin0/effective-disco/loadtest/results/soak-20260327-232958.md)
+- k6 summary:
+  [soak-20260327-232958-k6.json](/home/admin0/effective-disco/loadtest/results/soak-20260327-232958-k6.json)
+- server metrics:
+  [soak-20260327-232958-server.json](/home/admin0/effective-disco/loadtest/results/soak-20260327-232958-server.json)
+- timeline:
+  [soak-20260327-232958-metrics.jsonl](/home/admin0/effective-disco/loadtest/results/soak-20260327-232958-metrics.jsonl)
+- sql snapshot:
+  [soak-20260327-232958-sql.tsv](/home/admin0/effective-disco/loadtest/results/soak-20260327-232958-sql.tsv)
+- log:
+  [soak-20260327-232958.log](/home/admin0/effective-disco/loadtest/results/soak-20260327-232958.log)
+- 상태: `FAIL`
+- `http p95 = 274.74ms`
+- `http p99 = 347.57ms`
+- `unexpected_response_rate = 0.0000`
+- `dbPoolTimeouts = 69`
+- `duplicateKeyConflicts = 0`
+- SQL snapshot 전부 `0`
+- `cleanupStatus = failed`
+
+### 10분 간격 관찰
+
+- `10분`: `dbPoolTimeouts = 0`, `search.rows ≈ 3.72ms`
+- `30분`: `dbPoolTimeouts = 0`, `search.rows ≈ 6.87ms`
+- `50분`: `dbPoolTimeouts = 0`, `search.rows ≈ 10.05ms`
+- `70분`: `dbPoolTimeouts = 0`, `search.rows ≈ 13.28ms`
+- `90분`: `dbPoolTimeouts = 0`, `search.rows ≈ 16.71ms`
+- `100분`: `dbPoolTimeouts = 69`, `search.rows ≈ 18.50ms`
+- `110분`: `dbPoolTimeouts = 69`, `search.rows ≈ 20.26ms`
+- `종료`: `dbPoolTimeouts = 69`
+
+최종 profile:
+
+- `post.list.search.keyword.board.rows ≈ 20.25ms / sql ≈ 19.91ms`
+- `post.list.search.rows ≈ 20.26ms / sql ≈ 19.91ms`
+- `post.list.browse.rows ≈ 1.81ms / sql ≈ 0.77ms`
+- `notification.store ≈ 2.29ms / sql ≈ 1.46ms`
+
+### 해석
+
+- `0.95 / 2시간`은 현재 strict 기준 stable factor 가 아니다.
+- 실패는 `notification`, `browse`, duplicate-key, unread drift 가 아니라
+  다시 `search keyword steady-state headroom` 쪽에서 발생했다.
+- timeout 은 초반 burst 형태가 아니라,
+  `search.rows`가 `18ms+` 구간으로 들어간 뒤 `100분` 시점에 한 번 묶여서 생기고 plateau 했다.
+- 따라서 현재 headroom ceiling 은 `0.9`와 `0.95` 사이로 보는 것이 맞다.
+
+### 교훈
+
+- baseline 을 올린 뒤엔 무턱대고 다음 배수를 보는 것이 아니라,
+  `어느 시점부터 steady-state 경로가 timeout 묶음으로 바뀌는지`를 같이 봐야 한다.
+- 이번 런은 `0.9`까지는 허용되는 `search keyword` 드리프트가,
+  `0.95`에선 더 이상 허용되지 않는다는 걸 보여준다.
+- 즉 다음 최적화는 다시 넓게 퍼지는 게 아니라,
+  `board-scoped keyword search`에 집중하는 것이 맞다.
+
+### 추가 검증
+
+- 이번 런은 cleanup curl 이 timeout/409 로 끝났지만,
+  `[soak-20260327-232958.md](/home/admin0/effective-disco/loadtest/results/soak-20260327-232958.md)` 가 자동 생성됐다.
+- 따라서 cleanup non-blocking finalization 변경은 실제 long soak 에서도 목적대로 동작했다.
