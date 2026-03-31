@@ -8,8 +8,6 @@ import com.effectivedisco.domain.Tag;
 import com.effectivedisco.domain.User;
 import com.effectivedisco.dto.request.PostRequest;
 import com.effectivedisco.dto.response.LikeResponse;
-import com.effectivedisco.dto.response.PostScrollCursor;
-import com.effectivedisco.dto.response.PostScrollResponse;
 import com.effectivedisco.dto.response.PostResponse;
 import com.effectivedisco.loadtest.LoadTestStepProfiler;
 import com.effectivedisco.repository.BoardRepository;
@@ -20,28 +18,25 @@ import com.effectivedisco.repository.UserRepository;
 import jakarta.persistence.EntityManager;
 import lombok.RequiredArgsConstructor;
 import org.springframework.cache.annotation.CacheEvict;
-import org.springframework.cache.annotation.Cacheable;
-import org.springframework.data.domain.Page;
-import org.springframework.data.domain.PageImpl;
-import org.springframework.data.domain.PageRequest;
-import org.springframework.data.domain.Pageable;
-import org.springframework.data.domain.Slice;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.core.userdetails.UsernameNotFoundException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashSet;
-import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import java.time.LocalDateTime;
 import java.util.stream.Collectors;
 
+/**
+ * 게시물 쓰기 전용 서비스.
+ *
+ * 생성·수정·삭제·좋아요·고정 등 상태를 변경하는 명령만 담당한다.
+ * 읽기 전용 조회 로직은 {@link PostReadService}로 분리했다.
+ */
 @Service
 @RequiredArgsConstructor
 public class PostService {
@@ -56,214 +51,7 @@ public class PostService {
     private final LoadTestStepProfiler loadTestStepProfiler;
     private final EntityManager       entityManager;
 
-    /**
-     * 게시물 목록 조회.
-     *
-     * 우선순위: 게시판 필터 > 태그 필터 > 키워드 검색 > 전체 목록.
-     * 게시판이 지정된 경우 해당 게시판 내에서만 키워드·태그 검색을 수행한다.
-     *
-     * @param boardSlug null이면 전체 게시판 검색
-     * @param keyword   null이면 키워드 검색 미적용
-     * @param tag       null이면 태그 필터 미적용
-     * @param sort      정렬 기준: "latest"(최신순, 기본), "likes"(좋아요순), "comments"(댓글순)
-     */
-    @Transactional(readOnly = true)
-    public Page<PostResponse> getPosts(int page, int size,
-                                       String keyword, String tag,
-                                       String boardSlug, String sort) {
-        PageRequest pageable = PageRequest.of(page, size);
-
-        // 게시판 슬러그가 있으면 해당 Board 엔티티를 로드
-        Board board = null;
-        if (boardSlug != null && !boardSlug.isBlank()) {
-            board = boardRepository.findBySlug(boardSlug)
-                    .orElseThrow(() -> new IllegalArgumentException("존재하지 않는 게시판: " + boardSlug));
-        }
-
-        // 정렬 기준 정규화 — 지원하지 않는 값은 최신순으로 폴백
-        String sortKey = (sort != null) ? sort.trim().toLowerCase() : "latest";
-
-        Page<PostRepository.PostListRow> posts;
-
-        if (board != null && tag != null && !tag.isBlank()) {
-            // 게시판 내 태그 필터 (태그 필터는 항상 최신순, 초안 제외)
-            posts = postRepository.findPublicPostListRowsByBoardAndTagName(board, tag, pageable);
-        } else if (board != null && keyword != null && !keyword.isBlank()) {
-            // 게시판 내 키워드 검색 (검색은 항상 최신순, 초안 제외)
-            posts = postRepository.searchPublicPostListRowsInBoard(board, keyword, pageable);
-        } else if (board != null) {
-            // 게시판 전체 목록 — 정렬 기준 적용 (초안 제외)
-            posts = switch (sortKey) {
-                case "likes"    -> postRepository.findPostListRowsByBoardOrderByLikeCountDesc(board, pageable);
-                case "comments" -> postRepository.findPostListRowsByBoardOrderByCommentCountDesc(board, pageable);
-                default         -> postRepository.findPublicPostListRowsByBoardOrderByCreatedAtDesc(board, pageable);
-            };
-        } else if (tag != null && !tag.isBlank()) {
-            // 전체 게시판 태그 필터 (태그 필터는 항상 최신순, 초안 제외)
-            posts = postRepository.findPublicPostListRowsByTagName(tag, pageable);
-        } else if (keyword != null && !keyword.isBlank()) {
-            // 전체 게시판 키워드 검색 (검색은 항상 최신순, 초안 제외)
-            posts = postRepository.searchPublicPostListRows(keyword, pageable);
-        } else {
-            // 전체 목록 — 정렬 기준 적용 (초안 제외)
-            posts = switch (sortKey) {
-                case "likes"    -> postRepository.findAllPostListRowsOrderByLikeCountDesc(pageable);
-                case "comments" -> postRepository.findAllPostListRowsOrderByCommentCountDesc(pageable);
-                default         -> postRepository.findPublicPostListRowsOrderByCreatedAtDesc(pageable);
-            };
-        }
-
-        return toPostResponseProjectionPage(posts);
-    }
-
-    @Transactional(readOnly = true)
-    public PostScrollResponse getBoardScrollPosts(int size,
-                                                  String boardSlug,
-                                                  String sort,
-                                                  LocalDateTime cursorCreatedAt,
-                                                  Long cursorId,
-                                                  Set<String> blockedUsernames) {
-        String sortKey = (sort != null) ? sort.trim().toLowerCase() : "latest";
-        if (!"latest".equals(sortKey)) {
-            throw new IllegalArgumentException("무한 스크롤은 최신순 게시판 목록만 지원합니다.");
-        }
-        if (boardSlug == null || boardSlug.isBlank()) {
-            throw new IllegalArgumentException("무한 스크롤에는 boardSlug가 필요합니다.");
-        }
-
-        Board board = boardRepository.findBySlug(boardSlug)
-                .orElseThrow(() -> new IllegalArgumentException("존재하지 않는 게시판: " + boardSlug));
-
-        // 문제 해결:
-        // 무한 스크롤은 page 번호와 total count 대신 seek cursor 만 유지해야 중복/누락과 count(*) 압박을 줄일 수 있다.
-        // 또한 size를 제한해 클라이언트가 과도한 batch를 요청하며 pool을 오래 점유하는 경로도 막는다.
-        int pageSize = Math.max(1, Math.min(size, 50));
-        Pageable limit = PageRequest.of(0, pageSize);
-        Slice<PostRepository.PostListRow> slice = loadBoardScrollSlice(
-                board,
-                limit,
-                cursorCreatedAt,
-                cursorId,
-                blockedUsernames == null ? Set.of() : blockedUsernames
-        );
-
-        List<PostResponse> content = toPostResponseProjectionList(slice.getContent());
-        PostScrollCursor nextCursor = resolveNextScrollCursor(slice, sortKey);
-        return new PostScrollResponse(content, slice.hasNext(), nextCursor.createdAt(), nextCursor.sortValue(), nextCursor.id());
-    }
-
-    @Transactional(readOnly = true)
-    public PostScrollResponse getPostSlice(int size,
-                                           String keyword,
-                                           String tag,
-                                           String boardSlug,
-                                           String sort,
-                                           LocalDateTime cursorCreatedAt,
-                                           Long cursorSortValue,
-                                           Long cursorId) {
-        String sortKey = (sort != null) ? sort.trim().toLowerCase() : "latest";
-        if ((cursorCreatedAt == null) != (cursorId == null)) {
-            throw new IllegalArgumentException("cursorCreatedAt 과 cursorId 는 함께 전달해야 합니다.");
-        }
-        if (requiresRankedCursor(sortKey) && cursorId != null && cursorSortValue == null) {
-            throw new IllegalArgumentException("좋아요순/댓글순 cursor 요청에는 cursorSortValue 가 필요합니다.");
-        }
-        if ((keyword != null && !keyword.isBlank()) || (tag != null && !tag.isBlank())) {
-            if (!"latest".equals(sortKey)) {
-                throw new IllegalArgumentException("키워드/태그 검색 slice 는 latest 정렬만 지원합니다.");
-            }
-        }
-
-        Board board = null;
-        if (boardSlug != null && !boardSlug.isBlank()) {
-            board = boardRepository.findBySlug(boardSlug)
-                    .orElseThrow(() -> new IllegalArgumentException("존재하지 않는 게시판: " + boardSlug));
-        }
-        if (board == null
-                && (keyword == null || keyword.isBlank())
-                && (tag == null || tag.isBlank())) {
-            throw new IllegalArgumentException("slice API 는 boardSlug 또는 keyword/tag 가 필요합니다.");
-        }
-
-        int pageSize = Math.max(1, Math.min(size, 50));
-        Pageable limit = PageRequest.of(0, pageSize);
-        Slice<PostRepository.PostListRow> slice = loadApiSlice(
-                board,
-                limit,
-                keyword,
-                tag,
-                sortKey,
-                cursorCreatedAt,
-                cursorSortValue,
-                cursorId
-        );
-
-        List<PostResponse> content = toPostResponseProjectionList(slice.getContent());
-        PostScrollCursor nextCursor = resolveNextScrollCursor(slice, sortKey);
-        return new PostScrollResponse(content, slice.hasNext(), nextCursor.createdAt(), nextCursor.sortValue(), nextCursor.id());
-    }
-
-    /**
-     * 정렬 기준 없이 게시물 목록을 조회한다 (하위 호환용 — 최신순 기본값 적용).
-     * REST API 컨트롤러 등 sort 파라미터를 명시하지 않는 기존 호출에서 사용한다.
-     */
-    @Transactional(readOnly = true)
-    public Page<PostResponse> getPosts(int page, int size,
-                                       String keyword, String tag, String boardSlug) {
-        return getPosts(page, size, keyword, tag, boardSlug, "latest");
-    }
-
-    /** 단일 게시물 조회 */
-    public PostResponse getPost(Long id) {
-        return new PostResponse(findPost(id));
-    }
-
-    /**
-     * 특정 사용자가 작성한 게시물을 최신순으로 페이징 반환.
-     * 프로필 페이지의 "작성한 게시물" 섹션에 사용한다.
-     */
-    /**
-     * 특정 사용자의 공개 게시물을 최신순으로 페이징 반환 (초안 제외).
-     * 프로필 페이지의 "작성한 게시물" 섹션에 사용한다.
-     */
-    @Transactional(readOnly = true)
-    public Page<PostResponse> getPostsByAuthor(String username, int page, int size) {
-        User user = findUser(username);
-        Page<Post> posts = postRepository.findByAuthorAndDraftFalseOrderByCreatedAtDesc(
-                user, PageRequest.of(page, size)
-        );
-        return toPostResponseEntityPage(posts);
-    }
-
-    /**
-     * 현재 사용자의 초안(미공개) 게시물을 최신순으로 페이징 반환.
-     * 초안은 작성자 본인만 접근할 수 있다.
-     *
-     * @param username 현재 로그인 사용자명
-     * @param page 페이지 번호 (0부터)
-     * @param size 페이지 크기
-     */
-    @Transactional(readOnly = true)
-    public Page<PostResponse> getDrafts(String username, int page, int size) {
-        User user = findUser(username);
-        Page<Post> posts = postRepository.findByAuthorAndDraftTrueOrderByCreatedAtDesc(
-                user, PageRequest.of(page, size)
-        );
-        return toPostResponseEntityPage(posts);
-    }
-
-    /** 전체 태그 이름 목록 (태그 필터 바 렌더링용) */
-    public List<String> getAllTagNames() {
-        return tagRepository.findAllByOrderByNameAsc().stream()
-                .map(Tag::getName)
-                .collect(Collectors.toList());
-    }
-
-    /** 인기 태그 이름 목록 (사용 빈도 내림차순, 최대 15개) */
-    @Cacheable("popularTags")
-    public List<String> getPopularTagNames(int limit) {
-        return postRepository.findPopularTagNames(PageRequest.of(0, limit));
-    }
+    /* ── 게시물 CRUD ──────────────────────────────────────── */
 
     /**
      * 게시물 생성.
@@ -386,6 +174,8 @@ public class PostService {
         postRepository.delete(findPost(id));
     }
 
+    /* ── 고정 / 발행 / 조회수 ─────────────────────────────── */
+
     /**
      * 관리자 전용 고정 핀 토글.
      * 이미 고정된 게시물이면 해제하고, 아니면 고정한다.
@@ -400,349 +190,6 @@ public class PostService {
             post.pin();
             return true;
         }
-    }
-
-    /** 특정 게시판의 고정 공개 게시물 목록 (관리자 고정, 최신순, 초안 제외) */
-    @Transactional(readOnly = true)
-    public List<PostResponse> getPinnedPosts(String boardSlug) {
-        if (boardSlug == null || boardSlug.isBlank()) return List.of();
-        Board board = boardRepository.findBySlug(boardSlug).orElse(null);
-        if (board == null) return List.of();
-        return toPostResponseList(postRepository.findByBoardAndPinnedTrueAndDraftFalseOrderByCreatedAtDesc(board));
-    }
-
-    private Page<PostResponse> toPostResponseEntityPage(Page<Post> posts) {
-        preloadListRelations(posts.getContent());
-        return posts.map(PostResponse::new);
-    }
-
-    private List<PostResponse> toPostResponseList(List<Post> posts) {
-        preloadListRelations(posts);
-        return posts.stream()
-                .map(PostResponse::new)
-                .toList();
-    }
-
-    private Page<PostResponse> toPostResponseProjectionPage(Page<PostRepository.PostListRow> posts) {
-        List<PostResponse> content = toPostResponseProjectionList(posts.getContent());
-        return new PageImpl<>(content, posts.getPageable(), posts.getTotalElements());
-    }
-
-    private List<PostResponse> toPostResponseProjectionList(List<PostRepository.PostListRow> posts) {
-        if (posts.isEmpty()) {
-            return List.of();
-        }
-
-        List<Long> postIds = posts.stream()
-                .map(PostRepository.PostListRow::getId)
-                .toList();
-
-        // 문제 해결:
-        // 목록/검색은 projection 으로 본문 select 를 얇게 만들었지만, 태그/이미지 컬렉션은 여전히 필요하다.
-        // collection join 을 본문 쿼리에 합치면 페이지네이션과 count 해석이 깨지므로 현재 페이지 ID만 기준으로
-        // 태그/이미지 row 를 한 번씩 더 읽어 "얇은 본문 + 상수 개수 보조 쿼리" 구조로 유지한다.
-        Map<Long, List<String>> tagsByPostId = new LinkedHashMap<>();
-        for (PostRepository.PostTagRow tagRow : postRepository.findTagRowsByPostIdIn(postIds)) {
-            tagsByPostId.computeIfAbsent(tagRow.getPostId(), ignored -> new ArrayList<>())
-                    .add(tagRow.getTagName());
-        }
-
-        Map<Long, List<String>> imagesByPostId = new LinkedHashMap<>();
-        for (PostRepository.PostImageRow imageRow : postRepository.findImageRowsByPostIdIn(postIds)) {
-            imagesByPostId.computeIfAbsent(imageRow.getPostId(), ignored -> new ArrayList<>())
-                    .add(imageRow.getImageUrl());
-        }
-
-        return posts.stream()
-                .map(post -> new PostResponse(
-                        post.getId(),
-                        post.getTitle(),
-                        post.getContent(),
-                        post.getAuthorUsername(),
-                        post.getCreatedAt(),
-                        post.getUpdatedAt(),
-                        post.getCommentCount(),
-                        post.getLikeCount(),
-                        post.getViewCount(),
-                        tagsByPostId.getOrDefault(post.getId(), List.of()),
-                        post.getBoardName(),
-                        post.getBoardSlug(),
-                        post.isPinned(),
-                        post.isDraft(),
-                        resolveImageUrls(post, imagesByPostId)
-                ))
-                .toList();
-    }
-
-    private List<String> resolveImageUrls(PostRepository.PostListRow post,
-                                          Map<Long, List<String>> imagesByPostId) {
-        List<String> imageUrls = imagesByPostId.get(post.getId());
-        if (imageUrls != null && !imageUrls.isEmpty()) {
-            return imageUrls;
-        }
-        if (post.getLegacyImageUrl() != null) {
-            return List.of(post.getLegacyImageUrl());
-        }
-        return List.of();
-    }
-
-    private Slice<PostRepository.PostListRow> loadBoardScrollSlice(Board board,
-                                                                   Pageable limit,
-                                                                   LocalDateTime cursorCreatedAt,
-                                                                   Long cursorId,
-                                                                   Set<String> blockedUsernames) {
-        List<String> blocked = blockedUsernames.stream()
-                .filter(username -> username != null && !username.isBlank())
-                .sorted()
-                .toList();
-
-        if (cursorCreatedAt == null || cursorId == null) {
-            return blocked.isEmpty()
-                    ? postRepository.findScrollPostListRowsByBoardOrderByCreatedAtDesc(board, limit)
-                    : postRepository.findScrollPostListRowsByBoardOrderByCreatedAtDescAndAuthorUsernameNotIn(
-                            board, blocked, limit
-                    );
-        }
-
-        return blocked.isEmpty()
-                ? postRepository.findScrollPostListRowsByBoardAndCreatedAtBefore(board, cursorCreatedAt, cursorId, limit)
-                : postRepository.findScrollPostListRowsByBoardAndCreatedAtBeforeAndAuthorUsernameNotIn(
-                        board, cursorCreatedAt, cursorId, blocked, limit
-                );
-    }
-
-    private Slice<PostRepository.PostListRow> loadApiSlice(Board board,
-                                                           Pageable limit,
-                                                           String keyword,
-                                                           String tag,
-                                                           String sortKey,
-                                                           LocalDateTime cursorCreatedAt,
-                                                           Long cursorSortValue,
-                                                           Long cursorId) {
-        if (tag != null && !tag.isBlank()) {
-            return loadTagSlice(board, tag, limit, cursorCreatedAt, cursorId);
-        }
-        if (keyword != null && !keyword.isBlank()) {
-            return loadSearchSlice(board, keyword, limit, cursorCreatedAt, cursorId);
-        }
-        if (board == null) {
-            throw new IllegalArgumentException("게시판 browse slice 에는 boardSlug 가 필요합니다.");
-        }
-        return loadBrowseSlice(board, limit, sortKey, cursorCreatedAt, cursorSortValue, cursorId);
-    }
-
-    private Slice<PostRepository.PostListRow> loadBrowseSlice(Board board,
-                                                              Pageable limit,
-                                                              String sortKey,
-                                                              LocalDateTime cursorCreatedAt,
-                                                              Long cursorSortValue,
-                                                              Long cursorId) {
-        // 문제 해결:
-        // broad mixed 최소 재현 조합에서는 browse feed 와 search 가 같이 돌 때만 pool timeout 이 커졌다.
-        // browse 전용 slice 를 분리 profile 로 남기면 "feed rows" 가 먼저 비싸지는지,
-        // search rows 가 먼저 비싸지는지를 같은 부하에서 분리해서 볼 수 있다.
-        String[] profileNames = switch (sortKey) {
-            case "likes" -> new String[]{"post.list.browse.rows", "post.list.search.sort.rows", "post.list.search.sort.likes.rows"};
-            case "comments" -> new String[]{"post.list.browse.rows", "post.list.search.sort.rows", "post.list.search.sort.comments.rows"};
-            default -> new String[]{"post.list.browse.rows"};
-        };
-        return profileSlicePath(
-                () -> switch (sortKey) {
-                    case "likes" -> loadRankedBrowseSlice(board, limit, cursorCreatedAt, cursorSortValue, cursorId, true);
-                    case "comments" -> loadRankedBrowseSlice(board, limit, cursorCreatedAt, cursorSortValue, cursorId, false);
-                    default -> loadLatestBrowseSlice(board, limit, cursorCreatedAt, cursorId);
-                },
-                profileNames
-        );
-    }
-
-    private Slice<PostRepository.PostListRow> loadLatestBrowseSlice(Board board,
-                                                                    Pageable limit,
-                                                                    LocalDateTime cursorCreatedAt,
-                                                                    Long cursorId) {
-        int batchSize = limit.isPaged() ? limit.getPageSize() : 20;
-        Pageable idWindow = PageRequest.of(0, batchSize + 1);
-
-        List<Long> postIds = (cursorCreatedAt == null || cursorId == null)
-                ? postRepository.findScrollPostIdsByBoardOrderByCreatedAtDesc(board, idWindow)
-                : postRepository.findScrollPostIdsByBoardAndCreatedAtBefore(board, cursorCreatedAt, cursorId, idWindow);
-
-        boolean hasNext = postIds.size() > batchSize;
-        if (hasNext) {
-            postIds = postIds.subList(0, batchSize);
-        }
-        return toBoardScopedSlice(board, limit, postIds, hasNext);
-    }
-
-    private Slice<PostRepository.PostListRow> loadRankedBrowseSlice(Board board,
-                                                                    Pageable limit,
-                                                                    LocalDateTime cursorCreatedAt,
-                                                                    Long cursorSortValue,
-                                                                    Long cursorId,
-                                                                    boolean likesSort) {
-        int batchSize = limit.isPaged() ? limit.getPageSize() : 20;
-        Pageable idWindow = PageRequest.of(0, batchSize + 1);
-
-        List<Long> postIds;
-        if (cursorCreatedAt == null || cursorId == null || cursorSortValue == null) {
-            postIds = likesSort
-                    ? postRepository.findScrollPostIdsByBoardOrderByLikeCountDesc(board, idWindow)
-                    : postRepository.findScrollPostIdsByBoardOrderByCommentCountDesc(board, idWindow);
-        } else {
-            postIds = likesSort
-                    ? postRepository.findScrollPostIdsByBoardAndLikeCountAfter(
-                    board, cursorSortValue, cursorCreatedAt, cursorId, idWindow
-            )
-                    : postRepository.findScrollPostIdsByBoardAndCommentCountAfter(
-                    board, cursorSortValue, cursorCreatedAt, cursorId, idWindow
-            );
-        }
-
-        boolean hasNext = postIds.size() > batchSize;
-        if (hasNext) {
-            postIds = postIds.subList(0, batchSize);
-        }
-
-        // 문제 해결:
-        // ranked browse(likes/comments)는 latest와 달리 아직 "정렬 + author projection"을 한 방 쿼리로 처리하고 있었다.
-        // 이 경로를 latest와 같은 `id-first -> small row batch` 구조로 맞추면
-        // 긴 soak에서 like/comment 정렬 browse가 joins와 정렬을 동시에 붙잡아 pool을 오래 점유하는 문제를 줄일 수 있다.
-        return toBoardScopedSlice(board, limit, postIds, hasNext);
-    }
-
-    private Slice<PostRepository.PostListRow> toBoardScopedSlice(Board board,
-                                                                 Pageable limit,
-                                                                 List<Long> postIds,
-                                                                 boolean hasNext) {
-        if (postIds.isEmpty()) {
-            return new org.springframework.data.domain.SliceImpl<>(List.of(), limit, false);
-        }
-
-        // 문제 해결:
-        // board-scoped browse 최신/좋아요/댓글 정렬은 모두 "작은 id 집합 + author projection"으로 동일하게 수렴해야 한다.
-        // 이렇게 해야 latest만 빠르고 ranked browse가 다시 느려지는 비대칭을 만들지 않는다.
-        Map<Long, PostRepository.BoardScopedPostListRow> rowsById = postRepository.findBoardScopedPostListRowsByIdIn(postIds).stream()
-                .collect(Collectors.toMap(PostRepository.BoardScopedPostListRow::getId, row -> row));
-
-        List<PostRepository.PostListRow> orderedRows = postIds.stream()
-                .map(rowsById::get)
-                .filter(java.util.Objects::nonNull)
-                .map(row -> withBoardContext(row, board))
-                .toList();
-
-        return new org.springframework.data.domain.SliceImpl<>(orderedRows, limit, hasNext);
-    }
-
-    private Slice<PostRepository.PostListRow> loadSearchSlice(Board board,
-                                                              String keyword,
-                                                              Pageable limit,
-                                                              LocalDateTime cursorCreatedAt,
-                                                              Long cursorId) {
-        // 문제 해결:
-        // 검색 경로를 `search.rows` 하나로만 두면 keyword/tag/sort 중 어느 경로가 실제 hot path 인지 알 수 없다.
-        // 우선 query shape 는 그대로 둔 채 keyword/tag/sort 와 board/global 만 nested profile 로 나눠
-        // 다음 최적화가 어느 분기를 겨냥해야 하는지 부작용 없이 좁힌다.
-        // FTS branch 와 username branch 는 현재 UNION 한 번으로 실행되므로,
-        // 시간을 branch 별로 더 나누려면 추가 SQL 이 필요해 hot path 자체를 왜곡할 가능성이 있다.
-        LocalDateTime effectiveCursorCreatedAt = cursorCreatedAt != null
-                ? cursorCreatedAt
-                : LocalDateTime.of(9999, 12, 31, 23, 59, 59, 999_999_999);
-        Long effectiveCursorId = cursorId != null ? cursorId : Long.MAX_VALUE;
-        return profileSlicePath(
-                () -> board == null
-                        ? postRepository.searchPublicPostListRowsSlice(
-                        keyword, limit, effectiveCursorCreatedAt, effectiveCursorId
-                )
-                        : postRepository.searchPublicPostListRowsInBoardSlice(
-                        board, keyword, limit, effectiveCursorCreatedAt, effectiveCursorId
-                ),
-                "post.list.search.rows",
-                "post.list.search.keyword.rows",
-                board == null ? "post.list.search.keyword.global.rows" : "post.list.search.keyword.board.rows"
-        );
-    }
-
-    private Slice<PostRepository.PostListRow> loadTagSlice(Board board,
-                                                           String tag,
-                                                           Pageable limit,
-                                                           LocalDateTime cursorCreatedAt,
-                                                           Long cursorId) {
-        // 문제 해결:
-        // tag filter 도 browse/search 와 같은 목록 hot path 인데, 별도 profile 이 없으면
-        // broad mixed 에서 keyword search 와 tag search 중 무엇이 먼저 느려지는지 구분할 수 없다.
-        return profileSlicePath(
-                () -> {
-                    if (cursorCreatedAt == null || cursorId == null) {
-                        return board == null
-                                ? postRepository.findScrollPostListRowsByTagName(tag, limit)
-                                : postRepository.findScrollPostListRowsByBoardAndTagName(board, tag, limit);
-                    }
-                    return board == null
-                            ? postRepository.findScrollPostListRowsByTagNameAndCreatedAtBefore(tag, cursorCreatedAt, cursorId, limit)
-                            : postRepository.findScrollPostListRowsByBoardAndTagNameAndCreatedAtBefore(board, tag, cursorCreatedAt, cursorId, limit);
-                },
-                "post.list.tag.rows",
-                "post.list.search.tag.rows",
-                board == null ? "post.list.search.tag.global.rows" : "post.list.search.tag.board.rows"
-        );
-    }
-
-    private Slice<PostRepository.PostListRow> profileSlicePath(LoadTestStepProfiler.ThrowingSupplier<Slice<PostRepository.PostListRow>> supplier,
-                                                               String... profileNames) {
-        LoadTestStepProfiler.ThrowingSupplier<Slice<PostRepository.PostListRow>> profiledSupplier = supplier;
-        for (int i = profileNames.length - 1; i >= 0; i--) {
-            String profileName = profileNames[i];
-            LoadTestStepProfiler.ThrowingSupplier<Slice<PostRepository.PostListRow>> current = profiledSupplier;
-            profiledSupplier = () -> loadTestStepProfiler.profileChecked(profileName, false, current);
-        }
-        try {
-            return profiledSupplier.get();
-        } catch (RuntimeException runtimeException) {
-            throw runtimeException;
-        } catch (Error error) {
-            throw error;
-        } catch (Throwable throwable) {
-            throw new IllegalStateException("Unexpected checked exception during search path profiling", throwable);
-        }
-    }
-
-    private boolean requiresRankedCursor(String sortKey) {
-        return "likes".equals(sortKey) || "comments".equals(sortKey);
-    }
-
-    private PostScrollCursor resolveNextScrollCursor(Slice<PostRepository.PostListRow> slice, String sortKey) {
-        if (slice.isEmpty()) {
-            return new PostScrollCursor(null, null, null);
-        }
-        PostRepository.PostListRow last = slice.getContent().get(slice.getNumberOfElements() - 1);
-        Long sortValue = switch (sortKey) {
-            case "likes" -> last.getLikeCount();
-            case "comments" -> (long) last.getCommentCount();
-            default -> null;
-        };
-        return new PostScrollCursor(last.getCreatedAt(), sortValue, last.getId());
-    }
-
-    private PostRepository.PostListRow withBoardContext(PostRepository.BoardScopedPostListRow row, Board board) {
-        return new BoardScopedPostListRowView(row, board.getName(), board.getSlug());
-    }
-
-    private void preloadListRelations(List<Post> posts) {
-        if (posts.isEmpty()) {
-            return;
-        }
-
-        List<Long> postIds = posts.stream()
-                .map(Post::getId)
-                .toList();
-
-        // 문제 해결:
-        // PostResponse 목록 변환은 author/board/tags/images를 모두 접근한다.
-        // 페이지 본문 쿼리만 실행하면 각 게시물마다 LAZY 컬렉션 select가 추가로 발생해
-        // post.list 에서 N+1이 터진다. 현재 페이지 ID만 모아 tags/images를 한 번씩 preload 하면
-        // DTO 매핑 시점의 SQL 수를 "게시물 수 비례"가 아니라 "페이지당 상수"로 묶을 수 있다.
-        postRepository.findAllWithTagsByIdIn(postIds);
-        postRepository.findAllWithImagesByIdIn(postIds);
     }
 
     /**
@@ -771,80 +218,7 @@ public class PostService {
         postRepository.incrementViewCount(id);
     }
 
-    private record BoardScopedPostListRowView(PostRepository.BoardScopedPostListRow delegate,
-                                              String boardName,
-                                              String boardSlug) implements PostRepository.PostListRow {
-
-        @Override
-        public Long getId() {
-            return delegate.getId();
-        }
-
-        @Override
-        public String getTitle() {
-            return delegate.getTitle();
-        }
-
-        @Override
-        public String getContent() {
-            return delegate.getContent();
-        }
-
-        @Override
-        public LocalDateTime getCreatedAt() {
-            return delegate.getCreatedAt();
-        }
-
-        @Override
-        public LocalDateTime getUpdatedAt() {
-            return delegate.getUpdatedAt();
-        }
-
-        @Override
-        public int getCommentCount() {
-            return delegate.getCommentCount();
-        }
-
-        @Override
-        public long getLikeCount() {
-            return delegate.getLikeCount();
-        }
-
-        @Override
-        public int getViewCount() {
-            return delegate.getViewCount();
-        }
-
-        @Override
-        public boolean isPinned() {
-            return delegate.isPinned();
-        }
-
-        @Override
-        public boolean isDraft() {
-            return delegate.isDraft();
-        }
-
-        @Override
-        public String getLegacyImageUrl() {
-            return delegate.getLegacyImageUrl();
-        }
-
-        @Override
-        public String getAuthorUsername() {
-            return delegate.getAuthorUsername();
-        }
-
-        @Override
-        public String getBoardName() {
-            return boardName;
-        }
-
-        @Override
-        public String getBoardSlug() {
-            return boardSlug;
-        }
-    }
+    /* ── 좋아요 ───────────────────────────────────────────── */
 
     /**
      * 게시물에 좋아요를 건다.
@@ -906,14 +280,7 @@ public class PostService {
         );
     }
 
-    /** 현재 사용자가 특정 게시물에 좋아요를 눌렀는지 확인 */
-    public boolean isLikedByUser(Long postId, String username) {
-        Post post = findPost(postId);
-        User user = findUser(username);
-        return postLikeRepository.existsByPostAndUser(post, user);
-    }
-
-    /* ── private helpers ──────────────────────────────────────── */
+    /* ── private helpers ──────────────────────────────────── */
 
     /**
      * 태그 이름 문자열(콤마 구분)을 Tag 엔티티 Set으로 변환한다.
@@ -968,6 +335,7 @@ public class PostService {
                 .collect(Collectors.toCollection(LinkedHashSet::new));
     }
 
+    /** boardSlug로 BoardSummary projection 조회. null/blank면 null 반환 */
     private BoardRepository.BoardSummary resolveBoardSummary(String boardSlug) {
         if (boardSlug == null || boardSlug.isBlank()) {
             return null;
@@ -977,35 +345,36 @@ public class PostService {
                 .orElseThrow(() -> new IllegalArgumentException("존재하지 않는 게시판: " + boardSlug));
     }
 
+    /** ID로 게시물 조회. 없으면 IllegalArgumentException */
     private Post findPost(Long id) {
         return postRepository.findById(id)
                 .orElseThrow(() -> new IllegalArgumentException("게시물을 찾을 수 없습니다: " + id));
     }
 
-    private User findUser(String username) {
-        return userRepository.findByUsername(username)
-                .orElseThrow(() -> new UsernameNotFoundException("사용자를 찾을 수 없습니다: " + username));
-    }
-
+    /** username으로 사용자의 게시물 작성용 snapshot 조회 */
     private UserRepository.PostCreateAuthorSnapshot findPostCreateAuthorSnapshot(String username) {
         return userRepository.findPostCreateAuthorSnapshotByUsername(username)
                 .orElseThrow(() -> new UsernameNotFoundException("사용자를 찾을 수 없습니다: " + username));
     }
 
+    /** username으로 사용자 조회 + 행 잠금 (좋아요 동시성 제어용) */
     private User findUserForUpdate(String username) {
         return userRepository.findByUsernameForUpdate(username)
                 .orElseThrow(() -> new UsernameNotFoundException("사용자를 찾을 수 없습니다: " + username));
     }
 
+    /** 좋아요 응답 DTO 생성 — DB에서 최신 좋아요 수를 조회 */
     private LikeResponse buildLikeResponse(Long postId, boolean liked) {
         return new LikeResponse(liked, postRepository.findLikeCountById(postId));
     }
 
+    /** 게시물 소유자 확인. 소유자가 아니면 AccessDeniedException */
     private void checkOwnership(String ownerUsername, String requestUsername) {
         if (!ownerUsername.equals(requestUsername)) {
             throw new AccessDeniedException("수정/삭제 권한이 없습니다");
         }
     }
 
+    /** 태그 해석 결과를 담는 값 객체. 엔티티 Set과 정렬된 이름 리스트를 함께 보관한다. */
     private record ResolvedTags(Set<Tag> entities, List<String> sortedNames) {}
 }

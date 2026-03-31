@@ -73,8 +73,8 @@ public class LoadTestBottleneckProfilingAspect {
     }
 
     @Around("""
-            execution(* com.effectivedisco.service.PostService.getPosts(int, int, String, String, String)) ||
-            execution(* com.effectivedisco.service.PostService.getPosts(int, int, String, String, String, String))
+            execution(* com.effectivedisco.service.PostReadService.getPosts(int, int, String, String, String)) ||
+            execution(* com.effectivedisco.service.PostReadService.getPosts(int, int, String, String, String, String))
             """)
     public Object profilePostList(ProceedingJoinPoint joinPoint) throws Throwable {
         return loadTestStepProfiler.profileChecked(

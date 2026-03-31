@@ -30,7 +30,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 @Transactional
 class PostListOptimizationIntegrationTest {
 
-    @Autowired PostService postService;
+    @Autowired PostReadService postReadService;
     @Autowired UserRepository userRepository;
     @Autowired BoardRepository boardRepository;
     @Autowired TagRepository tagRepository;
@@ -83,7 +83,7 @@ class PostListOptimizationIntegrationTest {
         entityManager.clear();
         statistics.clear();
 
-        Page<PostResponse> result = postService.getPosts(0, 10, null, null, null, "latest");
+        Page<PostResponse> result = postReadService.getPosts(0, 10, null, null, null, "latest");
 
         assertThat(result.getContent()).hasSize(10);
         assertThat(result.getContent()).allSatisfy(post -> {
@@ -135,7 +135,7 @@ class PostListOptimizationIntegrationTest {
         entityManager.clear();
         statistics.clear();
 
-        Page<PostResponse> result = postService.getPosts(0, 10, "load", null, "dev-" + tagPrefix, "latest");
+        Page<PostResponse> result = postReadService.getPosts(0, 10, "load", null, "dev-" + tagPrefix, "latest");
 
         assertThat(result.getContent()).hasSize(5);
         assertThat(result.getTotalElements()).isEqualTo(5);
@@ -184,7 +184,7 @@ class PostListOptimizationIntegrationTest {
         entityManager.clear();
         statistics.clear();
 
-        PostScrollResponse result = postService.getPostSlice(5, "load", null, "slice-" + tagPrefix, "latest", null, null, null);
+        PostScrollResponse result = postReadService.getPostSlice(5, "load", null, "slice-" + tagPrefix, "latest", null, null, null);
 
         assertThat(result.getContent()).hasSize(5);
         assertThat(result.isHasNext()).isTrue();
@@ -228,7 +228,7 @@ class PostListOptimizationIntegrationTest {
         entityManager.clear();
         statistics.clear();
 
-        PostScrollResponse result = postService.getPostSlice(5, null, null, "browse-" + tagPrefix, "latest", null, null, null);
+        PostScrollResponse result = postReadService.getPostSlice(5, null, null, "browse-" + tagPrefix, "latest", null, null, null);
 
         assertThat(result.getContent()).hasSize(5);
         assertThat(result.isHasNext()).isTrue();
@@ -283,7 +283,7 @@ class PostListOptimizationIntegrationTest {
         entityManager.clear();
         statistics.clear();
 
-        PostScrollResponse result = postService.getPostSlice(3, null, null, "like-rank-" + tagPrefix, "likes", null, null, null);
+        PostScrollResponse result = postReadService.getPostSlice(3, null, null, "like-rank-" + tagPrefix, "likes", null, null, null);
 
         assertThat(result.getContent()).hasSize(3);
         assertThat(result.isHasNext()).isTrue();
@@ -343,7 +343,7 @@ class PostListOptimizationIntegrationTest {
         entityManager.clear();
         statistics.clear();
 
-        PostScrollResponse result = postService.getPostSlice(2, null, null, "comment-rank-" + tagPrefix, "comments", null, null, null);
+        PostScrollResponse result = postReadService.getPostSlice(2, null, null, "comment-rank-" + tagPrefix, "comments", null, null, null);
 
         assertThat(result.getContent()).hasSize(2);
         assertThat(result.isHasNext()).isTrue();
@@ -389,7 +389,7 @@ class PostListOptimizationIntegrationTest {
         entityManager.flush();
         entityManager.clear();
 
-        Page<PostResponse> result = postService.getPosts(0, 10, "search-author", null, null, "latest");
+        Page<PostResponse> result = postReadService.getPosts(0, 10, "search-author", null, null, "latest");
 
         assertThat(result.getContent()).hasSize(1);
         assertThat(result.getContent().getFirst().getAuthor()).isEqualTo("fts-search-author");
@@ -426,7 +426,7 @@ class PostListOptimizationIntegrationTest {
         entityManager.clear();
         statistics.clear();
 
-        Page<PostResponse> result = postService.getPosts(0, 10, "load", null, "dedup-" + tagPrefix, "latest");
+        Page<PostResponse> result = postReadService.getPosts(0, 10, "load", null, "dedup-" + tagPrefix, "latest");
 
         assertThat(result.getContent()).hasSize(1);
         assertThat(result.getTotalElements())

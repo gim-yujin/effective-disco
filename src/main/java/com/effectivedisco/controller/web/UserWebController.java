@@ -6,7 +6,7 @@ import com.effectivedisco.service.BlockService;
 import com.effectivedisco.service.BookmarkService;
 import com.effectivedisco.service.FollowService;
 import com.effectivedisco.service.ImageService;
-import com.effectivedisco.service.PostService;
+import com.effectivedisco.service.PostReadService;
 import com.effectivedisco.service.UserService;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpSession;
@@ -33,7 +33,7 @@ import org.springframework.web.servlet.mvc.support.RedirectAttributes;
 public class UserWebController {
 
     private final UserService     userService;
-    private final PostService     postService;
+    private final PostReadService postReadService;
     private final BookmarkService bookmarkService;
     private final FollowService   followService;
     private final BlockService    blockService;
@@ -53,7 +53,7 @@ public class UserWebController {
                           @AuthenticationPrincipal UserDetails userDetails,
                           Model model) {
         model.addAttribute("profile", userService.getProfile(username));
-        model.addAttribute("posts", postService.getPostsByAuthor(username, page, 10));
+        model.addAttribute("posts", postReadService.getPostsByAuthor(username, page, 10));
 
         boolean isOther = userDetails != null && !userDetails.getUsername().equals(username);
 

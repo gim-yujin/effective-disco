@@ -19,8 +19,10 @@ public class PostRequest {
     @Size(max = 200)
     private String title;
 
-    @Schema(description = "게시물 본문", example = "Spring Boot 4를 사용해보니...")
+    /** 게시물 본문 — 최대 50,000자로 제한하여 과도한 페이로드를 차단한다. */
+    @Schema(description = "게시물 본문 (최대 50,000자)", example = "Spring Boot 4를 사용해보니...")
     @NotBlank
+    @Size(max = 50_000, message = "본문은 50,000자 이내로 입력하세요.")
     private String content;
 
     @Schema(description = "태그 목록 (쉼표 구분)", example = "spring, java, backend")
@@ -40,7 +42,14 @@ public class PostRequest {
      * 웹 컨트롤러에서 ImageService.storeAll()로 파일들을 저장한 후 URL 목록을 설정한다.
      * REST API에서는 사용하지 않는다.
      */
-    @Schema(description = "첨부 이미지 URL 목록 (REST API 미사용)", hidden = true)
+    /**
+     * 첨부 이미지 서빙 URL 목록.
+     * 웹 컨트롤러에서 ImageService.storeAll()로 파일들을 저장한 후 URL 목록을 설정한다.
+     * REST API에서는 사용하지 않는다.
+     * 최대 10장으로 제한하여 과도한 이미지 첨부를 방지한다.
+     */
+    @Schema(description = "첨부 이미지 URL 목록 (REST API 미사용, 최대 10장)", hidden = true)
+    @Size(max = 10, message = "이미지는 최대 10장까지 첨부할 수 있습니다.")
     private List<String> imageUrls = new ArrayList<>();
 
     /**

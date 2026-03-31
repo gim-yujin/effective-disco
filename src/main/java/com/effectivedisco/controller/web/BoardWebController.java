@@ -12,6 +12,7 @@ import com.effectivedisco.service.BoardService;
 import com.effectivedisco.service.BookmarkService;
 import com.effectivedisco.service.CommentService;
 import com.effectivedisco.service.ImageService;
+import com.effectivedisco.service.PostReadService;
 import com.effectivedisco.service.PostService;
 import jakarta.servlet.http.HttpSession;
 import lombok.RequiredArgsConstructor;
@@ -51,6 +52,7 @@ import java.util.Set;
 public class BoardWebController {
 
     private final PostService     postService;
+    private final PostReadService postReadService;
     private final BoardService    boardService;
     private final CommentService  commentService;
     private final BookmarkService bookmarkService;
@@ -69,7 +71,7 @@ public class BoardWebController {
     public String boardList(Model model) {
         model.addAttribute("boards", boardService.getAllBoards());
         // 홈 화면 인기 태그 (최대 15개)
-        model.addAttribute("popularTags", postService.getPopularTagNames(15));
+        model.addAttribute("popularTags", postReadService.getPopularTagNames(15));
         return "boards/index";
     }
 
@@ -92,7 +94,7 @@ public class BoardWebController {
                                 @RequestParam(defaultValue = "latest") String sort,
                                 @AuthenticationPrincipal UserDetails userDetails,
                                 Model model) {
-        var posts = postService.getPosts(page, size, keyword, tag, slug, sort);
+        var posts = postReadService.getPosts(page, size, keyword, tag, slug, sort);
         boolean infiniteScrollEnabled = page == 0
                 && (keyword == null || keyword.isBlank())
                 && (tag == null || tag.isBlank())
@@ -101,7 +103,7 @@ public class BoardWebController {
 
         // sort 파라미터를 서비스에 전달해 좋아요순/댓글순 정렬 지원
         model.addAttribute("posts",       posts);
-        model.addAttribute("pinnedPosts", postService.getPinnedPosts(slug));
+        model.addAttribute("pinnedPosts", postReadService.getPinnedPosts(slug));
         model.addAttribute("board",       boardService.getBoard(slug));
         model.addAttribute("keyword", keyword != null ? keyword : "");
         model.addAttribute("tag",     tag     != null ? tag     : "");
@@ -112,7 +114,7 @@ public class BoardWebController {
         model.addAttribute("scrollCursorCreatedAt", scrollCursor.createdAt());
         model.addAttribute("scrollCursorId", scrollCursor.id());
         // 이 게시판 안에서 사용된 태그 목록 (태그 필터 바)
-        model.addAttribute("allTags", postService.getAllTagNames());
+        model.addAttribute("allTags", postReadService.getAllTagNames());
         // 차단된 사용자명 집합 — 템플릿에서 해당 사용자의 게시물 행을 숨기는 데 사용
         Set<String> blocked = userDetails != null
                 ? blockService.getBlockedUsernames(userDetails.getUsername())
@@ -137,7 +139,7 @@ public class BoardWebController {
         Set<String> blocked = userDetails != null
                 ? blockService.getBlockedUsernames(userDetails.getUsername())
                 : Collections.emptySet();
-        return postService.getBoardScrollPosts(size, slug, sort, cursorCreatedAt, cursorId, blocked);
+        return postReadService.getBoardScrollPosts(size, slug, sort, cursorCreatedAt, cursorId, blocked);
     }
 
     private PostScrollCursor resolveScrollCursor(List<PostResponse> posts) {
@@ -169,7 +171,7 @@ public class BoardWebController {
         // 로그인한 사용자의 최근 초안 목록 (최대 5개) — 폼 상단에서 바로 불러올 수 있도록 전달
         if (userDetails != null) {
             model.addAttribute("recentDrafts",
-                    postService.getDrafts(userDetails.getUsername(), 0, 5).getContent());
+                    postReadService.getDrafts(userDetails.getUsername(), 0, 5).getContent());
         }
         return "post/form";
     }
@@ -228,7 +230,7 @@ public class BoardWebController {
             postService.incrementViewCount(id);
         }
 
-        PostResponse post = postService.getPost(id);
+        PostResponse post = postReadService.getPost(id);
 
         // 초안은 작성자 본인만 열람 가능 — 다른 사용자가 URL로 직접 접근하면 홈으로 리다이렉트
         if (post.isDraft()) {
@@ -245,7 +247,7 @@ public class BoardWebController {
         model.addAttribute("commentsPage",   commentsPage);
         model.addAttribute("commentRequest", new CommentRequest());
 
-        boolean liked      = userDetails != null && postService.isLikedByUser(id, userDetails.getUsername());
+        boolean liked      = userDetails != null && postReadService.isLikedByUser(id, userDetails.getUsername());
         boolean bookmarked = userDetails != null && bookmarkService.isBookmarked(userDetails.getUsername(), id);
         model.addAttribute("liked",      liked);
         model.addAttribute("bookmarked", bookmarked);
@@ -268,7 +270,7 @@ public class BoardWebController {
     public String editPostForm(@PathVariable Long id,
                                Model model,
                                @AuthenticationPrincipal UserDetails userDetails) {
-        PostResponse post = postService.getPost(id);
+        PostResponse post = postReadService.getPost(id);
         // 작성자가 아니면 상세 페이지로 리다이렉트
         if (!post.getAuthor().equals(userDetails.getUsername())) {
             return "redirect:/posts/" + id;
@@ -320,7 +322,7 @@ public class BoardWebController {
     public String deletePost(@PathVariable Long id,
                              @AuthenticationPrincipal UserDetails userDetails) {
         // 삭제 전에 게시판 슬러그를 미리 저장 (삭제 후엔 조회 불가)
-        PostResponse post = postService.getPost(id);
+        PostResponse post = postReadService.getPost(id);
         String boardSlug = post.getBoardSlug();
 
         postService.deletePost(id, userDetails.getUsername());
@@ -454,7 +456,7 @@ public class BoardWebController {
     public String draftList(@AuthenticationPrincipal UserDetails userDetails,
                             @RequestParam(defaultValue = "0") int page,
                             Model model) {
-        model.addAttribute("drafts", postService.getDrafts(userDetails.getUsername(), page, 20));
+        model.addAttribute("drafts", postReadService.getDrafts(userDetails.getUsername(), page, 20));
         return "post/drafts";
     }
 

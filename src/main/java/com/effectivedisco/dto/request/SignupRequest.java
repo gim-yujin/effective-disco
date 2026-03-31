@@ -22,8 +22,13 @@ public class SignupRequest {
     @Email
     private String email;
 
-    @Schema(description = "비밀번호 (6자 이상)", example = "secret123")
+    /**
+     * 비밀번호 — 6~100자 제한.
+     * 최솟값: 보안상 너무 짧은 비밀번호 차단.
+     * 최댓값: BCrypt 해싱 시 과도한 CPU 소모를 방지 (72바이트 이상은 BCrypt가 무시하지만, 입력 자체를 제한).
+     */
+    @Schema(description = "비밀번호 (6~100자)", example = "secret123")
     @NotBlank
-    @Size(min = 6)
+    @Size(min = 6, max = 100, message = "비밀번호는 6자 이상 100자 이하로 입력하세요.")
     private String password;
 }

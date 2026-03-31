@@ -1,6 +1,6 @@
 package com.effectivedisco.controller.web;
 
-import com.effectivedisco.service.PostService;
+import com.effectivedisco.service.PostReadService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
 import org.springframework.security.core.userdetails.UsernameNotFoundException;
@@ -15,7 +15,7 @@ import org.springframework.web.bind.annotation.RequestParam;
 @RequiredArgsConstructor
 public class SearchWebController {
 
-    private final PostService postService;
+    private final PostReadService postReadService;
 
     /**
      * 전체 게시판 통합 검색 결과 페이지.
@@ -39,14 +39,14 @@ public class SearchWebController {
                 type = "tag";
                 searchTarget = q.substring(1).trim();
                 model.addAttribute("posts",
-                        postService.getPosts(page, 20, null, searchTarget, null));
+                        postReadService.getPosts(page, 20, null, searchTarget, null));
 
             } else if (q.startsWith("@")) {
                 type = "author";
                 searchTarget = q.substring(1).trim();
                 try {
                     model.addAttribute("posts",
-                            postService.getPostsByAuthor(searchTarget, page, 20));
+                            postReadService.getPostsByAuthor(searchTarget, page, 20));
                 } catch (UsernameNotFoundException e) {
                     model.addAttribute("posts", Page.empty());
                     model.addAttribute("userNotFound", true);
@@ -54,7 +54,7 @@ public class SearchWebController {
 
             } else {
                 model.addAttribute("posts",
-                        postService.getPosts(page, 20, q, null, null));
+                        postReadService.getPosts(page, 20, q, null, null));
             }
         } else {
             model.addAttribute("posts", null);
@@ -63,7 +63,7 @@ public class SearchWebController {
         model.addAttribute("q", q);
         model.addAttribute("type", type);
         model.addAttribute("searchTarget", searchTarget);
-        model.addAttribute("popularTags", postService.getPopularTagNames(15));
+        model.addAttribute("popularTags", postReadService.getPopularTagNames(15));
         return "search/results";
     }
 }

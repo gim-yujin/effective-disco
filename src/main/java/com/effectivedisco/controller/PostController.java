@@ -5,6 +5,7 @@ import com.effectivedisco.dto.response.LikeResponse;
 import com.effectivedisco.dto.response.PostScrollResponse;
 import com.effectivedisco.dto.response.PostResponse;
 import com.effectivedisco.service.BlockService;
+import com.effectivedisco.service.PostReadService;
 import com.effectivedisco.service.PostService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
@@ -31,8 +32,9 @@ import java.util.Set;
 @RequiredArgsConstructor
 public class PostController {
 
-    private final PostService postService;
-    private final BlockService blockService;
+    private final PostService     postService;
+    private final PostReadService postReadService;
+    private final BlockService    blockService;
 
     @Operation(summary = "게시물 목록 조회",
                description = "boardSlug·keyword·tag 조합으로 필터링 가능합니다. " +
@@ -54,7 +56,7 @@ public class PostController {
             @RequestParam(required = false) String boardSlug,
             @Parameter(description = "정렬 기준: latest | likes | comments")
             @RequestParam(defaultValue = "latest") String sort) {
-        return ResponseEntity.ok(postService.getPosts(page, size, keyword, tag, boardSlug, sort));
+        return ResponseEntity.ok(postReadService.getPosts(page, size, keyword, tag, boardSlug, sort));
     }
 
     @Operation(summary = "게시판 최신 목록 무한 스크롤 배치 조회",
@@ -85,7 +87,7 @@ public class PostController {
         Set<String> blockedUsernames = userDetails == null
                 ? Set.of()
                 : blockService.getBlockedUsernames(userDetails.getUsername());
-        return ResponseEntity.ok(postService.getBoardScrollPosts(
+        return ResponseEntity.ok(postReadService.getBoardScrollPosts(
                 size, boardSlug, sort, cursorCreatedAt, cursorId, blockedUsernames
         ));
     }
@@ -117,7 +119,7 @@ public class PostController {
             @RequestParam(required = false) Long cursorSortValue,
             @Parameter(description = "다음 배치를 위한 ID 커서")
             @RequestParam(required = false) Long cursorId) {
-        return ResponseEntity.ok(postService.getPostSlice(
+        return ResponseEntity.ok(postReadService.getPostSlice(
                 size, keyword, tag, boardSlug, sort, cursorCreatedAt, cursorSortValue, cursorId
         ));
     }
@@ -135,7 +137,7 @@ public class PostController {
             @Parameter(description = "게시물 ID") @PathVariable Long id) {
         // REST API는 stateless이므로 세션 중복 방지 없이 매 요청마다 조회수를 증가시킨다
         postService.incrementViewCount(id);
-        return ResponseEntity.ok(postService.getPost(id));
+        return ResponseEntity.ok(postReadService.getPost(id));
     }
 
     @Operation(summary = "게시물 작성", security = @SecurityRequirement(name = "bearerAuth"))
