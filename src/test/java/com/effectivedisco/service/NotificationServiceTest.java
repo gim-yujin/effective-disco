@@ -36,21 +36,26 @@ import static org.mockito.Mockito.verify;
 @ExtendWith(MockitoExtension.class)
 class NotificationServiceTest {
 
-    @Mock NotificationRepository  notificationRepository;
-    @Mock UserRepository          userRepository;
-    @Mock SseEmitterService       sseEmitterService;
-    @Mock ApplicationEventPublisher eventPublisher;
+    @Mock NotificationRepository       notificationRepository;
+    @Mock UserRepository               userRepository;
+    @Mock SseEmitterService            sseEmitterService;
+    @Mock ApplicationEventPublisher    eventPublisher;
+    @Mock NotificationSettingService   notificationSettingService;
 
     NotificationService notificationService;
 
     @BeforeEach
     void setUp() {
+        // 기본적으로 모든 알림 타입이 수신 허용 상태로 설정 (일부 테스트에서 사용하지 않으므로 lenient)
+        org.mockito.Mockito.lenient().when(notificationSettingService.isEnabled(any(), any())).thenReturn(true);
+
         notificationService = new NotificationService(
                 notificationRepository,
                 userRepository,
                 sseEmitterService,
                 eventPublisher,
-                new NoOpLoadTestStepProfiler()
+                new NoOpLoadTestStepProfiler(),
+                notificationSettingService
         );
     }
 
@@ -78,6 +83,18 @@ class NotificationServiceTest {
         Post post   = makePost(1L, author);
 
         notificationService.notifyComment(post, "author");
+
+        verify(eventPublisher, never()).publishEvent(any());
+    }
+
+    @Test
+    void notifyComment_whenRecipientDisabledCommentNotification_doesNotPublishEvent() {
+        // 수신자가 COMMENT 알림을 비활성화한 경우
+        given(notificationSettingService.isEnabled("author", NotificationType.COMMENT)).willReturn(false);
+        User author = makeUser("author");
+        Post post   = makePost(1L, author);
+
+        notificationService.notifyComment(post, "commenter");
 
         verify(eventPublisher, never()).publishEvent(any());
     }

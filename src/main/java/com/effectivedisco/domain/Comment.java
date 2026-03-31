@@ -42,17 +42,25 @@ public class Comment {
     @OrderBy("createdAt ASC")
     private List<Comment> replies = new ArrayList<>();
 
+    /**
+     * 댓글 깊이 (0 = 최상위 댓글, 1 = 대댓글, 2 = 대대댓글, ...).
+     * 설정된 최대 깊이(app.comment.max-depth)까지만 허용된다.
+     */
+    @Column(nullable = false, columnDefinition = "int default 0")
+    private int depth = 0;
+
     @Column(nullable = false)
     private LocalDateTime createdAt;
 
     private LocalDateTime updatedAt;
 
     @Builder
-    public Comment(String content, Post post, User author, Comment parent) {
+    public Comment(String content, Post post, User author, Comment parent, int depth) {
         this.content = content;
         this.post = post;
         this.author = author;
         this.parent = parent;
+        this.depth = depth;
         this.createdAt = LocalDateTime.now();
     }
 

@@ -194,6 +194,16 @@ public interface UserRepository extends JpaRepository<User, Long> {
     )
     int refreshUnreadNotificationCount(@Param("userId") Long userId);
 
+    /** 접두사로 사용자명을 검색한다 (자동완성용, 최대 10건) */
+    @Query("""
+            SELECT u.username
+            FROM User u
+            WHERE LOWER(u.username) LIKE LOWER(CONCAT(:prefix, '%'))
+            ORDER BY u.username ASC
+            """)
+    List<String> findUsernamesByPrefix(@Param("prefix") String prefix,
+                                       org.springframework.data.domain.Pageable pageable);
+
     /** 관리자 패널: 가입일 최신순 전체 사용자 목록 */
     List<User> findAllByOrderByCreatedAtDesc();
 

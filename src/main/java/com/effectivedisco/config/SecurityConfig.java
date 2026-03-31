@@ -39,7 +39,7 @@ public class SecurityConfig {
                         session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers("/api/auth/**").permitAll()
-                        .requestMatchers(HttpMethod.GET, "/api/posts/**", "/api/boards/**").permitAll()
+                        .requestMatchers(HttpMethod.GET, "/api/posts/**", "/api/boards/**", "/api/search/**").permitAll()
                         .requestMatchers("/v3/api-docs/**", "/swagger-ui/**", "/swagger-ui.html").permitAll()
                         .anyRequest().authenticated())
                 .addFilterBefore(jwtAuthenticationFilter, UsernamePasswordAuthenticationFilter.class)
@@ -79,7 +79,7 @@ public class SecurityConfig {
                     auth.requestMatchers("/admin/**").hasAuthority("ROLE_ADMIN");
                     // /notifications, /messages, /reports, /settings, /bookmarks, /sse, /feed 는 로그인 필요
                     auth.requestMatchers("/notifications/**", "/messages/**", "/reports/**",
-                                    "/settings/**", "/bookmarks", "/sse/**", "/feed",
+                                    "/settings/**", "/bookmarks/**", "/bookmarks", "/sse/**", "/feed",
                                     "/blocks", "/drafts/**").authenticated();
                     auth.anyRequest().authenticated();
                 })

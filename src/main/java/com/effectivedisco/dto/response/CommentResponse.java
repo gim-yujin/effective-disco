@@ -26,7 +26,11 @@ public class CommentResponse {
     @Schema(description = "최종 수정 시각 (수정된 경우 '(수정됨)' 표시용)")
     private final LocalDateTime updatedAt;
 
-    @Schema(description = "대댓글 목록 (최대 1단계 중첩)")
+    /** 댓글 깊이 (0 = 최상위, 1 = 대댓글, 2 = 대대댓글, ...) */
+    @Schema(description = "댓글 깊이 (0 = 최상위 댓글)", example = "0")
+    private final int depth;
+
+    @Schema(description = "대댓글 목록")
     private final List<CommentResponse> replies;
 
     /**
@@ -65,6 +69,7 @@ public class CommentResponse {
                            String author,
                            LocalDateTime createdAt,
                            LocalDateTime updatedAt,
+                           int depth,
                            String authorProfileImageUrl,
                            List<CommentResponse> replies) {
         this.id = id;
@@ -72,6 +77,7 @@ public class CommentResponse {
         this.author = author;
         this.createdAt = createdAt;
         this.updatedAt = updatedAt;
+        this.depth = depth;
         this.authorProfileImageUrl = authorProfileImageUrl;
         this.replies = List.copyOf(replies);
     }
@@ -85,6 +91,7 @@ public class CommentResponse {
         this.author = authorUsername;
         this.createdAt = comment.getCreatedAt();
         this.updatedAt = comment.getUpdatedAt();
+        this.depth = comment.getDepth();
         this.authorProfileImageUrl = authorProfileImageUrl;
         this.replies = replies;
     }

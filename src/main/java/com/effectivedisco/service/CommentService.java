@@ -10,6 +10,7 @@ import com.effectivedisco.repository.PostRepository;
 import com.effectivedisco.repository.UserRepository;
 import jakarta.persistence.EntityManager;
 import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.PageRequest;
@@ -24,7 +25,6 @@ import java.util.List;
 import java.util.Map;
 
 @Service
-@RequiredArgsConstructor
 public class CommentService {
 
     private final CommentRepository   commentRepository;
@@ -32,6 +32,23 @@ public class CommentService {
     private final UserRepository      userRepository;
     private final NotificationService notificationService;
     private final EntityManager       entityManager;
+
+    /** 댓글 최대 깊이. 0 = 최상위만, 1 = 1단계 대댓글, 2 = 2단계까지 허용 (기본값 2) */
+    private final int maxDepth;
+
+    public CommentService(CommentRepository commentRepository,
+                          PostRepository postRepository,
+                          UserRepository userRepository,
+                          NotificationService notificationService,
+                          EntityManager entityManager,
+                          @Value("${app.comment.max-depth:2}") int maxDepth) {
+        this.commentRepository   = commentRepository;
+        this.postRepository      = postRepository;
+        this.userRepository      = userRepository;
+        this.notificationService = notificationService;
+        this.entityManager       = entityManager;
+        this.maxDepth            = maxDepth;
+    }
 
     @Transactional(readOnly = true)
     public Page<CommentResponse> getCommentsPage(Long postId, int page, int size) {
@@ -129,14 +146,18 @@ public class CommentService {
         if (!parent.getPost().getId().equals(postId)) {
             throw new IllegalArgumentException("Comment does not belong to the post");
         }
-        if (parent.isReply()) {
-            throw new IllegalArgumentException("대댓글에는 답글을 달 수 없습니다");
+        // 부모 댓글의 깊이 + 1 이 최대 허용 깊이를 초과하면 답글을 달 수 없다
+        int replyDepth = parent.getDepth() + 1;
+        if (replyDepth > maxDepth) {
+            throw new IllegalArgumentException(
+                    "최대 댓글 깊이(" + maxDepth + "단계)를 초과하여 답글을 달 수 없습니다");
         }
         Comment reply = Comment.builder()
                 .content(request.getContent())
                 .post(post)
                 .author(user)
                 .parent(parent)
+                .depth(replyDepth)
                 .build();
         CommentResponse response = new CommentResponse(
                 commentRepository.save(reply),
@@ -242,6 +263,7 @@ public class CommentService {
                 comment.getAuthorUsername(),
                 comment.getCreatedAt(),
                 comment.getUpdatedAt(),
+                comment.getDepth(),
                 comment.getAuthorProfileImageUrl(),
                 replies
         );

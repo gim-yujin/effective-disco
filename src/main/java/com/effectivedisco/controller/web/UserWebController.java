@@ -1,16 +1,23 @@
 package com.effectivedisco.controller.web;
 
+import com.effectivedisco.domain.NotificationType;
 import com.effectivedisco.dto.request.PasswordChangeRequest;
 import com.effectivedisco.dto.request.ProfileEditRequest;
 import com.effectivedisco.service.BlockService;
 import com.effectivedisco.service.BookmarkService;
 import com.effectivedisco.service.FollowService;
 import com.effectivedisco.service.ImageService;
+import com.effectivedisco.service.NotificationSettingService;
 import com.effectivedisco.service.PostReadService;
 import com.effectivedisco.service.UserService;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpSession;
 import lombok.RequiredArgsConstructor;
+
+import java.util.Collections;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Set;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.stereotype.Controller;
@@ -32,19 +39,76 @@ import org.springframework.web.servlet.mvc.support.RedirectAttributes;
 @RequiredArgsConstructor
 public class UserWebController {
 
-    private final UserService     userService;
-    private final PostReadService postReadService;
-    private final BookmarkService bookmarkService;
-    private final FollowService   followService;
-    private final BlockService    blockService;
-    private final ImageService    imageService;
+    private final UserService                userService;
+    private final PostReadService            postReadService;
+    private final BookmarkService            bookmarkService;
+    private final FollowService              followService;
+    private final BlockService               blockService;
+    private final ImageService               imageService;
+    private final NotificationSettingService notificationSettingService;
 
     /* ── 공개 프로필 ──────────────────────────────────────────── */
 
     @GetMapping("/bookmarks")
-    public String bookmarks(@AuthenticationPrincipal UserDetails userDetails, Model model) {
-        model.addAttribute("bookmarks", bookmarkService.getBookmarks(userDetails.getUsername()));
+    public String bookmarks(@AuthenticationPrincipal UserDetails userDetails,
+                            @RequestParam(required = false) Long folderId,
+                            Model model) {
+        String username = userDetails.getUsername();
+        // 폴더 목록 (사이드바 표시용)
+        model.addAttribute("folders", bookmarkService.getFolders(username));
+        model.addAttribute("selectedFolderId", folderId);
+
+        // 폴더별 또는 전체 북마크 조회
+        if (folderId != null) {
+            model.addAttribute("bookmarks", bookmarkService.getBookmarksByFolder(username, folderId));
+        } else {
+            model.addAttribute("bookmarks", bookmarkService.getBookmarks(username));
+        }
         return "users/bookmarks";
+    }
+
+    /** 북마크 폴더 생성 */
+    @PostMapping("/bookmarks/folders")
+    public String createBookmarkFolder(@AuthenticationPrincipal UserDetails userDetails,
+                                        @RequestParam String name,
+                                        RedirectAttributes redirectAttributes) {
+        try {
+            bookmarkService.createFolder(userDetails.getUsername(), name);
+        } catch (IllegalArgumentException e) {
+            redirectAttributes.addFlashAttribute("folderError", e.getMessage());
+        }
+        return "redirect:/bookmarks";
+    }
+
+    /** 북마크 폴더 이름 변경 */
+    @PostMapping("/bookmarks/folders/{folderId}/rename")
+    public String renameBookmarkFolder(@AuthenticationPrincipal UserDetails userDetails,
+                                        @PathVariable Long folderId,
+                                        @RequestParam String name,
+                                        RedirectAttributes redirectAttributes) {
+        try {
+            bookmarkService.renameFolder(userDetails.getUsername(), folderId, name);
+        } catch (IllegalArgumentException e) {
+            redirectAttributes.addFlashAttribute("folderError", e.getMessage());
+        }
+        return "redirect:/bookmarks?folderId=" + folderId;
+    }
+
+    /** 북마크 폴더 삭제 (북마크는 미분류로 복원) */
+    @PostMapping("/bookmarks/folders/{folderId}/delete")
+    public String deleteBookmarkFolder(@AuthenticationPrincipal UserDetails userDetails,
+                                        @PathVariable Long folderId) {
+        bookmarkService.deleteFolder(userDetails.getUsername(), folderId);
+        return "redirect:/bookmarks";
+    }
+
+    /** 북마크를 다른 폴더로 이동 */
+    @PostMapping("/bookmarks/{postId}/move")
+    public String moveBookmark(@AuthenticationPrincipal UserDetails userDetails,
+                               @PathVariable Long postId,
+                               @RequestParam(required = false) Long folderId) {
+        bookmarkService.moveBookmarkToFolder(userDetails.getUsername(), postId, folderId);
+        return "redirect:/bookmarks" + (folderId != null ? "?folderId=" + folderId : "");
     }
 
     @GetMapping("/users/{username}")
@@ -154,7 +218,29 @@ public class UserWebController {
     public String settings(@AuthenticationPrincipal UserDetails userDetails,
                            Model model) {
         model.addAttribute("profile", userService.getProfile(userDetails.getUsername()));
+        // 알림 수신 설정 (타입별 on/off 상태)
+        model.addAttribute("notificationSettings",
+                notificationSettingService.getSettings(userDetails.getUsername()));
+        model.addAttribute("notificationTypes", NotificationType.values());
         return "users/settings";
+    }
+
+    /**
+     * 알림 수신 설정 변경.
+     * 각 알림 타입별 on/off 체크박스를 처리한다.
+     */
+    @PostMapping("/settings/notifications")
+    public String updateNotificationSettings(@AuthenticationPrincipal UserDetails userDetails,
+                                              @RequestParam(required = false) List<String> enabledTypes,
+                                              RedirectAttributes redirectAttributes) {
+        // 체크된 타입만 enabledTypes로 전달됨 — 모든 타입을 순회하며 on/off 설정
+        Set<String> enabled = enabledTypes != null ? new HashSet<>(enabledTypes) : Collections.emptySet();
+        for (NotificationType type : NotificationType.values()) {
+            notificationSettingService.updateSetting(
+                    userDetails.getUsername(), type, enabled.contains(type.name()));
+        }
+        redirectAttributes.addFlashAttribute("notificationMsg", "알림 설정이 저장되었습니다.");
+        return "redirect:/settings";
     }
 
     /* ── 프로필 이미지 변경 ───────────────────────────────────── */

@@ -34,6 +34,7 @@ public class NotificationService {
     private final SseEmitterService      sseEmitterService;
     private final ApplicationEventPublisher eventPublisher;
     private final LoadTestStepProfiler   loadTestStepProfiler;
+    private final NotificationSettingService notificationSettingService;
 
     /**
      * 게시물에 댓글이 달렸을 때 게시물 작성자에게 알림을 요청한다.
@@ -282,7 +283,14 @@ public class NotificationService {
         return userRepository.findUnreadNotificationCountByUsername(username).orElse(0L);
     }
 
+    /**
+     * 수신자의 알림 설정을 확인한 뒤 이벤트를 발행한다.
+     * 해당 알림 타입이 비활성(off)이면 이벤트를 발행하지 않는다.
+     */
     private void publishNotification(NotificationRequestedEvent event) {
+        if (!notificationSettingService.isEnabled(event.recipientUsername(), event.type())) {
+            return;
+        }
         eventPublisher.publishEvent(event);
     }
 

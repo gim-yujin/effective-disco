@@ -9,9 +9,9 @@ import com.effectivedisco.repository.CommentRepository;
 import com.effectivedisco.repository.PostRepository;
 import com.effectivedisco.repository.UserRepository;
 import jakarta.persistence.EntityManager;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.security.access.AccessDeniedException;
@@ -34,7 +34,16 @@ class CommentServiceTest {
     @Mock NotificationService notificationService;
     @Mock EntityManager       entityManager;
 
-    @InjectMocks CommentService commentService;
+    CommentService commentService;
+
+    @BeforeEach
+    void setUp() {
+        // 기본 최대 깊이 2로 설정
+        commentService = new CommentService(
+                commentRepository, postRepository, userRepository,
+                notificationService, entityManager, 2
+        );
+    }
 
     @Test
     void createComment_success_returnsResponse() {
@@ -86,18 +95,19 @@ class CommentServiceTest {
     }
 
     @Test
-    void createReply_parentIsReply_throwsException() {
+    void createReply_exceedsMaxDepth_throwsException() {
+        // maxDepth=2인 상태에서 depth=2인 부모에 답글을 달면 거부되어야 한다
         Post post = makePost(1L, makeUser("author"));
-        Comment grandParent = makeComment(9L, "root", post, makeUser("u"), null);
-        Comment parent = makeComment(10L, "reply", post, makeUser("u"), grandParent); // 이미 대댓글
+        Comment deepParent = makeComment(10L, "deep reply", post, makeUser("u"), null);
+        ReflectionTestUtils.setField(deepParent, "depth", 2); // 이미 최대 깊이
 
         given(postRepository.findById(1L)).willReturn(Optional.of(post));
         given(userRepository.findByUsername("user")).willReturn(Optional.of(makeUser("user")));
-        given(commentRepository.findById(10L)).willReturn(Optional.of(parent));
+        given(commentRepository.findById(10L)).willReturn(Optional.of(deepParent));
 
         assertThatThrownBy(() -> commentService.createReply(1L, 10L, makeRequest("nested"), "user"))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("대댓글에는 답글을 달 수 없습니다");
+                .hasMessageContaining("최대 댓글 깊이");
     }
 
     @Test

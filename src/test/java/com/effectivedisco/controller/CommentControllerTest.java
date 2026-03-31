@@ -178,21 +178,24 @@ class CommentControllerTest {
     }
 
     /**
-     * 대댓글(parent != null)에 다시 답글을 달려 하면 400 Bad Request 가 반환되어야 한다.
-     * CommentService: "대댓글에는 답글을 달 수 없습니다"
+     * 최대 깊이에 도달한 댓글에 답글을 달려 하면 400 Bad Request 가 반환되어야 한다.
+     * 기본 max-depth=2 설정에서 depth=2인 댓글에 답글을 달면 depth=3이 되어 거부된다.
      */
     @Test
     void createReply_onReply_returns400() throws Exception {
+        // depth=0 최상위 → depth=1 답글 → depth=2 답글 생성 후, depth=2에 다시 답글 시도
         Comment parent = commentRepository.save(Comment.builder()
-                .content("부모 댓글").post(post).author(owner).build());
+                .content("부모 댓글").post(post).author(owner).depth(0).build());
         Comment reply  = commentRepository.save(Comment.builder()
-                .content("대댓글").post(post).author(owner).parent(parent).build());
+                .content("대댓글 1단계").post(post).author(owner).parent(parent).depth(1).build());
+        Comment deepReply = commentRepository.save(Comment.builder()
+                .content("대댓글 2단계").post(post).author(owner).parent(reply).depth(2).build());
 
         mockMvc.perform(post("/api/posts/{postId}/comments/{id}/replies",
-                        post.getId(), reply.getId())
+                        post.getId(), deepReply.getId())
                         .header("Authorization", "Bearer " + ownerToken)
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(commentJson("이중 대댓글")))
+                        .content(commentJson("최대 깊이 초과 대댓글")))
                 .andExpect(status().isBadRequest());
     }
 

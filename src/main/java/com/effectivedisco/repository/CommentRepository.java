@@ -19,6 +19,8 @@ public interface CommentRepository extends JpaRepository<Comment, Long> {
         LocalDateTime getCreatedAt();
         LocalDateTime getUpdatedAt();
         Long getParentId();
+        /** 댓글 깊이 (0 = 최상위, 1 = 대댓글, 2 = 대대댓글, ...) */
+        int getDepth();
         String getAuthorUsername();
         String getAuthorProfileImageUrl();
     }
@@ -47,6 +49,7 @@ public interface CommentRepository extends JpaRepository<Comment, Long> {
                 c.createdAt AS createdAt,
                 c.updatedAt AS updatedAt,
                 c.parent.id AS parentId,
+                c.depth AS depth,
                 a.username AS authorUsername,
                 a.profileImageUrl AS authorProfileImageUrl
             FROM Comment c
@@ -76,6 +79,7 @@ public interface CommentRepository extends JpaRepository<Comment, Long> {
                 c.createdAt AS createdAt,
                 c.updatedAt AS updatedAt,
                 c.parent.id AS parentId,
+                c.depth AS depth,
                 a.username AS authorUsername,
                 a.profileImageUrl AS authorProfileImageUrl
             FROM Comment c

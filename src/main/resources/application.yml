@@ -40,6 +40,9 @@ server:
 
 app:
   upload-dir: uploads/images
+  # 댓글 최대 깊이 (0 = 최상위만, 1 = 대댓글 1단계, 2 = 2단계 ... 기본값 2)
+  comment:
+    max-depth: ${APP_COMMENT_MAX_DEPTH:2}
   # 비밀번호 재설정 링크에 사용할 베이스 URL (환경 변수 APP_BASE_URL로 오버라이드 가능)
   base-url: ${APP_BASE_URL:http://localhost:8080}
 

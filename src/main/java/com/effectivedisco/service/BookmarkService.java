@@ -1,9 +1,11 @@
 package com.effectivedisco.service;
 
 import com.effectivedisco.domain.Bookmark;
+import com.effectivedisco.domain.BookmarkFolder;
 import com.effectivedisco.domain.Post;
 import com.effectivedisco.domain.User;
 import com.effectivedisco.dto.response.PostResponse;
+import com.effectivedisco.repository.BookmarkFolderRepository;
 import com.effectivedisco.repository.BookmarkRepository;
 import com.effectivedisco.repository.PostRepository;
 import com.effectivedisco.repository.UserRepository;
@@ -18,9 +20,12 @@ import java.util.List;
 @RequiredArgsConstructor
 public class BookmarkService {
 
-    private final BookmarkRepository bookmarkRepository;
-    private final PostRepository     postRepository;
-    private final UserRepository     userRepository;
+    private final BookmarkRepository       bookmarkRepository;
+    private final BookmarkFolderRepository folderRepository;
+    private final PostRepository           postRepository;
+    private final UserRepository           userRepository;
+
+    /* ── 북마크 CRUD ─────────────────────────────────────────── */
 
     /**
      * 게시물을 북마크한다.
@@ -66,13 +71,96 @@ public class BookmarkService {
         return bookmarkRepository.existsByUserAndPost(user, post);
     }
 
-    /** 사용자의 북마크 목록을 최신순으로 반환 */
+    /** 사용자의 전체 북마크 목록을 최신순으로 반환 */
     public List<PostResponse> getBookmarks(String username) {
         User user = findUser(username);
         return bookmarkRepository.findByUserOrderByCreatedAtDesc(user).stream()
                 .map(b -> new PostResponse(b.getPost()))
                 .toList();
     }
+
+    /** 특정 폴더의 북마크 목록을 최신순으로 반환 */
+    @Transactional(readOnly = true)
+    public List<PostResponse> getBookmarksByFolder(String username, Long folderId) {
+        User user = findUser(username);
+        BookmarkFolder folder = findFolder(folderId, user);
+        return bookmarkRepository.findByUserAndFolderOrderByCreatedAtDesc(user, folder).stream()
+                .map(b -> new PostResponse(b.getPost()))
+                .toList();
+    }
+
+    /** 미분류(폴더 없음) 북마크 목록을 최신순으로 반환 */
+    @Transactional(readOnly = true)
+    public List<PostResponse> getUncategorizedBookmarks(String username) {
+        User user = findUser(username);
+        return bookmarkRepository.findByUserAndFolderIsNullOrderByCreatedAtDesc(user).stream()
+                .map(b -> new PostResponse(b.getPost()))
+                .toList();
+    }
+
+    /**
+     * 북마크를 특정 폴더로 이동한다.
+     * folderId가 null이면 미분류로 이동한다.
+     */
+    @Transactional
+    public void moveBookmarkToFolder(String username, Long postId, Long folderId) {
+        User user = findUserForUpdate(username);
+        Post post = postRepository.findById(postId)
+                .orElseThrow(() -> new IllegalArgumentException("게시물을 찾을 수 없습니다: " + postId));
+        Bookmark bookmark = bookmarkRepository.findByUserAndPost(user, post)
+                .orElseThrow(() -> new IllegalArgumentException("해당 북마크를 찾을 수 없습니다"));
+        BookmarkFolder folder = folderId != null ? findFolder(folderId, user) : null;
+        bookmark.moveToFolder(folder);
+    }
+
+    /* ── 폴더 CRUD ───────────────────────────────────────────── */
+
+    /** 사용자의 북마크 폴더 목록 (이름순) */
+    @Transactional(readOnly = true)
+    public List<BookmarkFolder> getFolders(String username) {
+        User user = findUser(username);
+        return folderRepository.findByUserOrderByNameAsc(user);
+    }
+
+    /** 새 북마크 폴더를 생성한다 */
+    @Transactional
+    public BookmarkFolder createFolder(String username, String folderName) {
+        User user = findUser(username);
+        if (folderRepository.findByUserAndName(user, folderName).isPresent()) {
+            throw new IllegalArgumentException("이미 존재하는 폴더 이름입니다: " + folderName);
+        }
+        return folderRepository.save(new BookmarkFolder(user, folderName));
+    }
+
+    /** 북마크 폴더 이름을 변경한다 */
+    @Transactional
+    public BookmarkFolder renameFolder(String username, Long folderId, String newName) {
+        User user = findUser(username);
+        BookmarkFolder folder = findFolder(folderId, user);
+        // 같은 이름으로 변경하면 무시
+        if (!folder.getName().equals(newName)) {
+            if (folderRepository.findByUserAndName(user, newName).isPresent()) {
+                throw new IllegalArgumentException("이미 존재하는 폴더 이름입니다: " + newName);
+            }
+            folder.rename(newName);
+        }
+        return folder;
+    }
+
+    /**
+     * 북마크 폴더를 삭제한다.
+     * 폴더에 속한 북마크는 미분류로 복원된다 (삭제되지 않음).
+     */
+    @Transactional
+    public void deleteFolder(String username, Long folderId) {
+        User user = findUser(username);
+        BookmarkFolder folder = findFolder(folderId, user);
+        // 폴더에 속한 북마크를 미분류로 복원
+        bookmarkRepository.clearFolder(folder);
+        folderRepository.delete(folder);
+    }
+
+    /* ── private helpers ─────────────────────────────────────── */
 
     private User findUser(String username) {
         return userRepository.findByUsername(username)
@@ -82,5 +170,10 @@ public class BookmarkService {
     private User findUserForUpdate(String username) {
         return userRepository.findByUsernameForUpdate(username)
                 .orElseThrow(() -> new UsernameNotFoundException(username));
+    }
+
+    private BookmarkFolder findFolder(Long folderId, User user) {
+        return folderRepository.findByIdAndUser(folderId, user)
+                .orElseThrow(() -> new IllegalArgumentException("폴더를 찾을 수 없습니다: " + folderId));
     }
 }
