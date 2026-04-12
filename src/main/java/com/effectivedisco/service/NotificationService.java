@@ -105,19 +105,20 @@ public class NotificationService {
      * update/delete 쿼리가 트랜잭션 없이 실행될 수 있다.
      * REQUIRES_NEW 로 별도 트랜잭션을 열어 알림 row 저장, unread counter 증가,
      * SSE 예약을 안전하게 마무리한다.
-     * 또한 수신자 User 행을 잠가 "알림 생성"과 "전체 읽음 처리"가 엇갈릴 때도
-     * unread counter가 실제 unread row 수와 어긋나지 않게 직렬화한다.
+     *
+     * lock 제거:
+     * 기존에는 수신자 User 행을 FOR UPDATE 로 잠가 store/read-all/read-page 를 직렬화했다.
+     * 그러나 incrementUnreadNotificationCount 는 이미 atomic UPDATE (SET count = count + 1) 이고,
+     * read 경로의 markPageAsReadByIds / markAllAsReadUpToId 도 WHERE isRead = false 덕분에
+     * 실제 전환 수를 정확히 반환한다. FOR UPDATE 없이도 counter drift 가 발생하지 않으므로
+     * lock convoy → pool saturation 병목을 제거한다.
      */
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public void storeNotificationAfterCommit(NotificationRequestedEvent event) {
-        // 문제 해결:
-        // broad mixed 초기 burst 에서는 notification.store 전체 시간보다
-        // "recipient FOR UPDATE 획득"이 실제 병목인지가 더 중요하다.
-        // 잠금 획득, row 저장, counter 증가를 분리 기록해 user lock 경로를 직접 좁힌다.
         UserRepository.NotificationRecipientSnapshot recipient = loadTestStepProfiler.profile(
-                "notification.store.lock-recipient",
+                "notification.store.find-recipient",
                 true,
-                () -> userRepository.findNotificationRecipientSnapshotByUsernameForUpdate(event.recipientUsername()).orElse(null)
+                () -> userRepository.findNotificationRecipientSnapshotByUsername(event.recipientUsername()).orElse(null)
         );
         if (recipient == null) {
             return;
@@ -134,11 +135,6 @@ public class NotificationService {
                 true,
                 () -> notificationRepository.save(notification)
         );
-        // 문제 해결:
-        // notification.store 는 같은 recipient 잠금 아래에서만 실행되므로
-        // 저장 직후 unread counter 는 "현재 잠금 스냅샷 + 1" 이 정확한 값이다.
-        // 매 insert 마다 COUNT(*) refresh 를 다시 치면 hot path 에서 불필요한 DB 시간을 쓰므로
-        // store 경로는 원자 increment 와 확정 unread 값 전파로 마무리한다.
         loadTestStepProfiler.profile(
                 "notification.store.counter.increment",
                 true,
@@ -336,21 +332,21 @@ public class NotificationService {
         return Math.max(1, Math.min(size, 50));
     }
 
+    /**
+     * lock 제거:
+     * 기존에는 findByIdForUpdate 로 User 행을 잠근 뒤 page-state 조회 → mark → refresh 를 직렬화했다.
+     * markPageAsReadByIds 는 WHERE isRead = false 조건이 있어 실제 전환 수를 정확히 반환하므로
+     * 그 값을 atomic decrement delta 로 쓰면 lock 없이도 counter drift 가 발생하지 않는다.
+     * refreshUnreadNotificationCount (COUNT subquery) 도 decrementUnreadNotificationCount 로 교체해
+     * read-page hot path 의 connection 점유 시간을 줄인다.
+     */
     private int markNotificationPageRead(UserRepository.NotificationRecipientSnapshot recipient, int page, int size) {
-        // 문제 해결:
-        // read-page 는 user lock, page-state 조회, id update, counter refresh 중
-        // 어느 단계가 초기 burst 에서 두꺼운지 분리해야 한다.
-        User lockedRecipient = loadTestStepProfiler.profile(
-                "notification.read-page.lock-recipient",
-                true,
-                () -> userRepository.findByIdForUpdate(recipient.getId())
-                        .orElseThrow(() -> new UsernameNotFoundException("사용자를 찾을 수 없습니다: " + recipient.getUsername()))
-        );
+        Long recipientId = recipient.getId();
         PageRequest pageable = PageRequest.of(Math.max(page, 0), normalizeNotificationPageSize(size));
         Slice<NotificationPageState> slice = loadTestStepProfiler.profile(
                 "notification.read-page.page-state",
                 true,
-                () -> notificationRepository.findPageStateSliceByRecipientIdOrderByCreatedAtDesc(lockedRecipient.getId(), pageable)
+                () -> notificationRepository.findPageStateSliceByRecipientIdOrderByCreatedAtDesc(recipientId, pageable)
         );
         List<Long> unreadIds = slice.getContent().stream()
                 .filter(notification -> !notification.read())
@@ -358,67 +354,56 @@ public class NotificationService {
                 .toList();
 
         if (unreadIds.isEmpty()) {
-            loadTestStepProfiler.profile(
-                    "notification.read-page.counter.refresh",
-                    true,
-                    () -> userRepository.refreshUnreadNotificationCount(lockedRecipient.getId())
-            );
-            scheduleUnreadCountRefreshAfterCommit(lockedRecipient.getUsername());
             return 0;
         }
 
-        // 문제 해결:
-        // "현재 페이지 읽음"도 notification.store/read-all 과 같은 recipient 잠금 아래에서 끝내야
-        // 페이지 unread id 계산, row update, counter refresh 가 하나의 일관된 순서로 보장된다.
         int transitionedCount = loadTestStepProfiler.profile(
                 "notification.read-page.mark-ids",
                 true,
-                () -> notificationRepository.markPageAsReadByIds(lockedRecipient.getId(), unreadIds)
+                () -> notificationRepository.markPageAsReadByIds(recipientId, unreadIds)
         );
-        loadTestStepProfiler.profile(
-                "notification.read-page.counter.refresh",
-                true,
-                () -> userRepository.refreshUnreadNotificationCount(lockedRecipient.getId())
-        );
-        scheduleUnreadCountRefreshAfterCommit(lockedRecipient.getUsername());
+        if (transitionedCount > 0) {
+            loadTestStepProfiler.profile(
+                    "notification.read-page.counter.decrement",
+                    true,
+                    () -> userRepository.decrementUnreadNotificationCount(recipientId, transitionedCount)
+            );
+        }
+        scheduleUnreadCountRefreshAfterCommit(recipient.getUsername());
         return transitionedCount;
     }
 
+    /**
+     * lock 제거:
+     * 기존에는 findByIdForUpdate 로 User 행을 잠근 뒤 cutoff 조회 → mark → refresh 를 직렬화했다.
+     * markAllAsReadUpToId 는 WHERE isRead = false AND id <= cutoffId 조건이 있어
+     * 실제 전환 수를 정확히 반환하므로 atomic decrement 로 counter 를 맞출 수 있다.
+     * cutoffId 덕분에 mark 이후 새로 삽입된 알림은 전환 대상에서 제외되어
+     * store 의 increment 와 겹치지 않는다.
+     */
     private long markAllUnreadNotificationsRead(UserRepository.NotificationRecipientSnapshot recipient) {
-        User lockedRecipient = loadTestStepProfiler.profile(
-                "notification.read-all.lock-recipient",
-                true,
-                () -> userRepository.findByIdForUpdate(recipient.getId())
-                        .orElseThrow(() -> new UsernameNotFoundException("사용자를 찾을 수 없습니다: " + recipient.getUsername()))
-        );
+        Long recipientId = recipient.getId();
         Long cutoffId = loadTestStepProfiler.profile(
                 "notification.read-all.find-cutoff",
                 true,
-                () -> notificationRepository.findLatestNotificationIdByRecipientId(lockedRecipient.getId())
+                () -> notificationRepository.findLatestNotificationIdByRecipientId(recipientId)
         );
         if (cutoffId == null) {
-            loadTestStepProfiler.profile(
-                    "notification.read-all.counter.refresh",
-                    true,
-                    () -> userRepository.refreshUnreadNotificationCount(lockedRecipient.getId())
-            );
-            scheduleUnreadCountRefreshAfterCommit(lockedRecipient.getUsername());
             return 0L;
         }
-        // 문제 해결:
-        // read-all 도 같은 recipient 잠금 아래에서 notification row transition 과 counter refresh 를 묶어야
-        // store/read-page 와 경쟁해도 unread counter drift 가 남지 않는다.
         int transitionedCount = loadTestStepProfiler.profile(
                 "notification.read-all.mark-cutoff",
                 true,
-                () -> notificationRepository.markAllAsReadUpToId(lockedRecipient.getId(), cutoffId)
+                () -> notificationRepository.markAllAsReadUpToId(recipientId, cutoffId)
         );
-        loadTestStepProfiler.profile(
-                "notification.read-all.counter.refresh",
-                true,
-                () -> userRepository.refreshUnreadNotificationCount(lockedRecipient.getId())
-        );
-        scheduleUnreadCountRefreshAfterCommit(lockedRecipient.getUsername());
+        if (transitionedCount > 0) {
+            loadTestStepProfiler.profile(
+                    "notification.read-all.counter.decrement",
+                    true,
+                    () -> userRepository.decrementUnreadNotificationCount(recipientId, transitionedCount)
+            );
+        }
+        scheduleUnreadCountRefreshAfterCommit(recipient.getUsername());
         return transitionedCount;
     }
 
