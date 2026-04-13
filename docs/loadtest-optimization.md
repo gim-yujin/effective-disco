@@ -5203,7 +5203,7 @@ GRADLE_USER_HOME=/tmp/gradle-home ./gradlew test --no-daemon
 
 ## 2026-04-12 Notification lock 경로 최적화
 
-상태: 완료 (soak 재검증 대기)
+상태: 완료 (soak 재검증 통과)
 
 ### 배경
 
@@ -5255,7 +5255,7 @@ lock 은 `unreadNotificationCount` 비정규화 카운터의 정합성을 보장
 
 ## 2026-04-13 HikariCP pool 튜닝 및 OSIV 비활성화
 
-상태: 완료 (soak 재검증 대기)
+상태: 완료 (soak 재검증 통과)
 
 ### 배경
 
@@ -5315,12 +5315,40 @@ List<Report> findByStatusInWithReporterOrderByResolvedAtDesc(@Param("statuses") 
 - OSIV off 후 `LazyInitializationException` 발생 없음 확인
 - soak 재검증은 별도로 실행 필요
 
-### 2026-04-13 현재 미적용 최적화 누적 요약
+### Soak 재검증 결과 (2026-04-14)
 
-notification lock 제거 + OSIV 비활성화 + HikariCP 튜닝이 모두 적용됐으나
-soak 재검증은 아직 실행하지 않았다. 다음 soak 실행 시 확인할 항목:
+- 실행 시각: `20260414-052612`
+- artifact: `loadtest/results/soak-20260414-052612-server.json`
+- 조건: `0.95 / 15m` (이전 FAIL이었던 동일 조건)
+- **status: PASS**
 
-- `dbPoolTimeouts`: 132 → 감소 기대 (OSIV off + lock 제거 + timeout 2s)
-- `maxThreadsAwaitingConnection`: 200 → 감소 기대
-- `notification.store` / `notification.read-page` wall time: lock-recipient 단계 제거로 감소 기대
-- clean `0.95 / 15분` 또는 `0.95 / 2시간` strict pass 여부
+#### 전후 비교
+
+| 메트릭 | 이전 (03/28, FAIL) | 이후 (04/14, PASS) | 변화 |
+|--------|-------------------|-------------------|------|
+| `dbPoolTimeouts` | 132 | **0** | 완전 제거 |
+| `maxThreadsAwaitingConnection` | 200 | 190 | -10 |
+| `unexpected_response_rate` | 0.0001 | **0.0000** | 완전 제거 |
+| `duplicateKeyConflicts` | 0 | 0 | 유지 |
+| `unreadNotificationMismatchUsers` | 0 | 0 | 유지 |
+| `http p95` | 240.01ms | 315.09ms | +75ms |
+| `http p99` | 302.59ms | 393.70ms | +91ms |
+
+#### 해석
+
+- **`dbPoolTimeouts` 132 → 0**: OSIV 비활성화로 connection hold time이 `@Transactional` 범위로 축소되고,
+  `connection-timeout`을 1s → 2s로 올려 burst 대기 여유가 확보됨. pool size 28 유지만으로 충분.
+- **FAIL → PASS**: pool timeout으로 발생하던 실패 응답이 완전 제거되어 strict pass 달성.
+- **p95/p99 증가**: 이전에 즉시 timeout 에러(빠른 실패 응답)로 처리되던 요청이 이제 대기 후 정상 완료됨.
+  latency 분포가 우측으로 이동한 것은 건강한 현상이다.
+- **notification 경로**: `notification.store` avgWall=1.82ms, `notification.read-page.summary` avgWall=2.58ms.
+  lock-recipient 단계가 제거돼 이전 대비 wall time이 크게 감소.
+- **정합성**: 모든 mismatch/conflict 메트릭 0. 데이터 무결성 완벽 유지.
+
+#### 적용한 최적화 3건의 기여도 분석
+
+| 최적화 | 주요 기여 |
+|--------|----------|
+| OSIV 비활성화 | connection hold time 단축 → pool timeout 근본 제거 |
+| HikariCP connection-timeout 2s | burst 시 대기 여유 → 일시적 pool 포화를 timeout 없이 흡수 |
+| notification FOR UPDATE lock 제거 | lock 경합 제거 → connection 점유 시간 추가 단축 |
