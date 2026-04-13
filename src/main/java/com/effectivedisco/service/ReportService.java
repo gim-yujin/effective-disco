@@ -59,9 +59,9 @@ public class ReportService {
 
     /* ── 관리자: 처리 ───────────────────────────────────────────── */
 
-    /** 미처리(PENDING) 신고 목록을 접수 시간순으로 반환 */
+    /** 미처리(PENDING) 신고 목록을 접수 시간순으로 반환 — reporter를 함께 fetch */
     public List<Report> getPendingReports() {
-        return reportRepository.findByStatusOrderByCreatedAtAsc(ReportStatus.PENDING);
+        return reportRepository.findByStatusWithReporterOrderByCreatedAtAsc(ReportStatus.PENDING);
     }
 
     /** 신고 처리: 조치 완료(RESOLVED) */
@@ -82,7 +82,7 @@ public class ReportService {
      * 관리자 패널 "처리 이력" 탭에서 사용한다.
      */
     public List<Report> getResolvedReports() {
-        return reportRepository.findByStatusInOrderByResolvedAtDesc(
+        return reportRepository.findByStatusInWithReporterOrderByResolvedAtDesc(
                 Arrays.asList(ReportStatus.RESOLVED, ReportStatus.DISMISSED));
     }
 

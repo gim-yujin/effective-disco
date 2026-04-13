@@ -14,13 +14,15 @@ spring:
         # PostgreSQL wait/slow-query 계측은 loadtest 인스턴스가 만든 커넥션만 골라봐야 의미가 있다.
         # application_name 을 고정해 pg_stat_activity 에서 기본 앱과 실험용 앱을 구분한다.
         ApplicationName: ${APP_LOAD_TEST_PG_APPLICATION_NAME:effective-disco-loadtest}
-      # 문제 해결:
-      # 2026-03-24 pool sweep(20/24/28/32) 기준 현재 로컬 부하 시나리오에서는 28이
-      # timeout 없이 p95/p99가 가장 낮았다. loadtest 기본값을 28로 올려
-      # "20은 부족하지만 32는 과한" 현재 관측치를 설정에 반영한다.
+      # 2026-04-13 OSIV 비활성화 + notification lock 제거 후 재조정.
+      # OSIV off 로 connection hold time 이 서비스 트랜잭션 범위로 줄었고,
+      # lock 제거로 같은 pool 에서 더 많은 요청을 소화할 수 있다.
+      # pool 28 유지, connection-timeout 을 2초로 올려 burst 흡수 여유를 확보.
       maximum-pool-size: ${APP_LOAD_TEST_DB_POOL_MAX_SIZE:28}
       minimum-idle: ${APP_LOAD_TEST_DB_POOL_MIN_IDLE:10}
-      connection-timeout: ${APP_LOAD_TEST_DB_POOL_CONNECTION_TIMEOUT_MS:1000}
+      connection-timeout: ${APP_LOAD_TEST_DB_POOL_CONNECTION_TIMEOUT_MS:2000}
+      # leak-detection: 5초 이상 반환되지 않는 connection 로그 경고
+      leak-detection-threshold: ${APP_LOAD_TEST_DB_POOL_LEAK_DETECTION_MS:5000}
   jpa:
     show-sql: false
     properties:

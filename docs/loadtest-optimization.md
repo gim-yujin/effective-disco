@@ -5200,3 +5200,127 @@ GRADLE_USER_HOME=/tmp/gradle-home ./gradlew test --no-daemon
   - `notification.read-page/store` recipient lock 경로
   - pool saturation이 실제로 재현되는 `0.95+` mixed soak
 - 반대로 `browse/search`는 현 시점에서 추가 최적화 우선순위가 아니다.
+
+## 2026-04-12 Notification lock 경로 최적화
+
+상태: 완료 (soak 재검증 대기)
+
+### 배경
+
+- 2026-03-28 중지 결정 시 남은 병목은 `pool saturation + notification/user lock contention + write churn` 조합이었다.
+- 직전 strict failure (clean `0.95 / 15분`) 프로파일:
+  - `notification.store.lock-recipient ≈ 1.07ms / sql ≈ 0.85ms`
+  - `notification.read-page.lock-recipient ≈ 1.06ms / sql ≈ 0.89ms`
+  - `dbPoolTimeouts = 132`
+  - `maxThreadsAwaitingConnection = 200`
+- 세 개의 notification hot path (store / read-page / read-all)가 모두 같은 User 행에
+  `SELECT ... FOR UPDATE` lock을 건다.
+  같은 수신자에 대한 store/read 가 모두 직렬화되면서 lock convoy → pool saturation 발생.
+
+### 원인 분석
+
+| 경로 | Lock 방식 | Counter 갱신 |
+|------|----------|-------------|
+| `storeNotificationAfterCommit` | `findNotificationRecipientSnapshotByUsernameForUpdate` (native FOR UPDATE) | `incrementUnreadNotificationCount` (atomic) |
+| `markNotificationPageRead` | `findByIdForUpdate` (PESSIMISTIC_WRITE) | `refreshUnreadNotificationCount` (COUNT subquery) |
+| `markAllUnreadNotificationsRead` | `findByIdForUpdate` (PESSIMISTIC_WRITE) | `refreshUnreadNotificationCount` (COUNT subquery) |
+
+lock 은 `unreadNotificationCount` 비정규화 카운터의 정합성을 보장하기 위해 존재했다.
+그러나:
+- `incrementUnreadNotificationCount`는 이미 atomic SQL (`SET count = count + 1`)
+- `markPageAsReadByIds` / `markAllAsReadUpToId`는 `WHERE isRead = false` 조건으로 실제 전환 수를 정확히 반환
+- 반환값을 `decrementUnreadNotificationCount(delta)` 의 delta로 사용하면 lock 없이도 counter drift 없음
+- PostgreSQL UPDATE 자체의 row-level lock이 counter 갱신을 자연 직렬화
+
+### 적용한 변경
+
+| 경로 | 이전 | 이후 |
+|------|------|------|
+| store | `findNotificationRecipientSnapshotByUsernameForUpdate` (FOR UPDATE) | `findNotificationRecipientSnapshotByUsername` (lock 없음) |
+| read-page | `findByIdForUpdate` + `refreshUnreadNotificationCount` (COUNT subquery) | lock 제거 + `decrementUnreadNotificationCount(delta)` |
+| read-all | `findByIdForUpdate` + `refreshUnreadNotificationCount` (COUNT subquery) | lock 제거 + `decrementUnreadNotificationCount(delta)` |
+
+- 변경 파일: `NotificationService.java`, `NotificationServiceTest.java`
+- 동시성 통합 테스트 (`NotificationAfterCommitIntegrationTest`) 4개 모두 통과:
+  - `storeNotificationAfterCommit_concurrentRequests_incrementUnreadCounterExactlyOncePerNotification`
+  - `notificationCreateAndMarkAllRead_concurrentRequests_keepUnreadCounterAlignedWithUnreadRows`
+  - `notificationCreateAndMarkPageRead_concurrentRequests_keepUnreadCounterAlignedWithUnreadRows`
+  - `notifyLike_afterCommit_createsNotificationAndIncrementsUnreadCounter`
+
+### 기대 효과
+
+- store/read-page/read-all이 같은 수신자에 대해 병렬 실행 가능
+- connection hold time 감소 (lock wait 제거) → pool saturation 완화
+- `refreshUnreadNotificationCount`의 COUNT subquery 제거 → read 경로 쿼리 수 감소
+
+## 2026-04-13 HikariCP pool 튜닝 및 OSIV 비활성화
+
+상태: 완료 (soak 재검증 대기)
+
+### 배경
+
+- notification lock 제거 후에도 `dbPoolTimeouts = 132`, `maxThreadsAwaitingConnection = 200` 문제의
+  근본 원인인 connection 점유 시간이 남아 있었다.
+- Spring Boot 기본값 `spring.jpa.open-in-view = true`는 DB connection을
+  HTTP 요청의 전체 수명(서비스 로직 + Thymeleaf 렌더링 + 응답 전송) 동안 점유한다.
+- loadtest profile의 `connection-timeout: 1000ms`는 burst 시 과도하게 빠른 timeout 유발.
+
+### 원인 분석
+
+**OSIV (Open Session In View)**:
+- OSIV on: connection 점유 = 요청 시작 ~ 응답 완료 (뷰 렌더링 포함)
+- OSIV off: connection 점유 = `@Transactional` 진입 ~ 종료
+- 뷰 렌더링 시간(수~수십 ms)만큼 connection hold time이 불필요하게 늘어남
+- 28개 pool 에서 요청당 hold time이 10ms만 줄어도 초당 280개 connection-turn이 추가 확보됨
+
+**서비스 레이어 DTO 변환 확인**:
+- 모든 웹 컨트롤러는 서비스 레이어에서 DTO를 받아 모델에 전달
+- 유일한 예외: `ReportService.getPendingReports()` / `getResolvedReports()`가 `Report` 엔티티를 반환하고
+  admin 템플릿이 `r.reporter.username`으로 lazy association 접근
+- `AdminWebController`의 `List<User>`는 직접 필드만 접근 (lazy relation 없음)
+
+### 적용한 변경
+
+**1. `open-in-view: false` (application.yml)**
+
+```yaml
+spring.jpa.open-in-view: false
+```
+
+**2. `Report.reporter` lazy loading 수정 (ReportRepository)**
+
+OSIV 비활성화로 admin 템플릿의 `r.reporter.username` 접근이 `LazyInitializationException`을
+일으킬 수 있어 `JOIN FETCH` 쿼리 추가:
+
+```java
+@Query("SELECT r FROM Report r JOIN FETCH r.reporter WHERE r.status = :status ORDER BY r.createdAt ASC")
+List<Report> findByStatusWithReporterOrderByCreatedAtAsc(@Param("status") ReportStatus status);
+
+@Query("SELECT r FROM Report r JOIN FETCH r.reporter WHERE r.status IN :statuses ORDER BY r.resolvedAt DESC")
+List<Report> findByStatusInWithReporterOrderByResolvedAtDesc(@Param("statuses") List<ReportStatus> statuses);
+```
+
+**3. HikariCP loadtest 설정 조정 (application-loadtest.yml)**
+
+| 설정 | 이전 | 이후 | 근거 |
+|------|------|------|------|
+| `maximum-pool-size` | 28 | 28 (유지) | OSIV off + lock 제거 후 같은 pool 이 더 효율적 |
+| `minimum-idle` | 10 | 10 (유지) | 변경 불필요 |
+| `connection-timeout` | 1000ms | 2000ms | burst 흡수 여유 확보 |
+| `leak-detection-threshold` | (없음) | 5000ms | 5초 이상 미반환 connection 경고 로깅 |
+
+### 측정 (테스트 결과)
+
+- 전체 테스트 통과 (단위 + 통합 + 동시성)
+- OSIV off 후 `LazyInitializationException` 발생 없음 확인
+- soak 재검증은 별도로 실행 필요
+
+### 2026-04-13 현재 미적용 최적화 누적 요약
+
+notification lock 제거 + OSIV 비활성화 + HikariCP 튜닝이 모두 적용됐으나
+soak 재검증은 아직 실행하지 않았다. 다음 soak 실행 시 확인할 항목:
+
+- `dbPoolTimeouts`: 132 → 감소 기대 (OSIV off + lock 제거 + timeout 2s)
+- `maxThreadsAwaitingConnection`: 200 → 감소 기대
+- `notification.store` / `notification.read-page` wall time: lock-recipient 단계 제거로 감소 기대
+- clean `0.95 / 15분` 또는 `0.95 / 2시간` strict pass 여부

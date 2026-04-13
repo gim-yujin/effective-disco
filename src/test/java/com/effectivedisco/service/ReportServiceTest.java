@@ -117,7 +117,7 @@ class ReportServiceTest {
     @Test
     void getPendingReports_returnsListFromRepository() {
         Report r = makeReport(1L, ReportStatus.PENDING);
-        given(reportRepository.findByStatusOrderByCreatedAtAsc(ReportStatus.PENDING))
+        given(reportRepository.findByStatusWithReporterOrderByCreatedAtAsc(ReportStatus.PENDING))
                 .willReturn(List.of(r));
 
         assertThat(reportService.getPendingReports()).hasSize(1);

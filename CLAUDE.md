@@ -43,11 +43,36 @@ docker compose up -d --build
 - `controller/` — REST API (`/api/**`): JSON 요청/응답, JWT 인증
 - `controller/web/` — 웹 UI (`/`, `/boards/**`, `/posts/**`, `/users/**`): Thymeleaf 렌더링, 세션 인증
 
+### 서비스 분리: 쓰기 vs 읽기
+
+- `PostService` (쓰기 전용): create, update, delete, toggle favorite, pin
+- `PostReadService` (읽기 전용): list, search, pagination, scroll-cursor, filter, sort
+  - `@Transactional(readOnly = true)`로 Hibernate flush 생략 및 replica 라우팅 가능
+
 ### 게시물 데이터 모델
 
 - `Post.board`는 nullable (`@JoinColumn(name = "board_id")`에 `nullable = false` 없음) — 게시판 기능 도입 이전 데이터와의 하위 호환
 - `Post.tags`는 `@ManyToMany` (중간 테이블 `post_tags`)
 - 조회수 중복 방지는 DB가 아닌 `HttpSession`의 `Set<Long> viewedPosts`로 처리 (웹 컨트롤러)
+
+### 알림 시스템
+
+이벤트 기반 아키텍처로 비즈니스 트랜잭션과 알림 생성을 분리한다.
+
+1. 서비스가 `NotificationRequestedEvent`를 발행
+2. `NotificationEventListener`가 `@TransactionalEventListener(phase = AFTER_COMMIT)`으로 수신 — 원 트랜잭션이 커밋된 경우에만 알림 생성
+3. `storeNotificationAfterCommit()`이 `@Transactional(propagation = REQUIRES_NEW)`로 별도 트랜잭션에서 실행
+
+**Unread counter**: `User.unreadNotificationCount`는 비정규화 카운터다. `incrementUnreadNotificationCount` / `decrementUnreadNotificationCount(delta)` atomic UPDATE로 관리하며, notification hot path에 FOR UPDATE lock 없이 동작한다. `markPageAsReadByIds`와 `markAllAsReadUpToId`의 `WHERE isRead = false` 조건이 실제 전환 수를 정확히 반환하므로 decrement delta로 사용해도 counter drift가 발생하지 않는다.
+
+**SSE 실시간 푸시**: `SseEmitterService`가 `ConcurrentHashMap<String, SseEmitter>`로 사용자별 연결을 관리한다. 단일 서버 인메모리 방식이므로 클러스터 배포 시 Redis Pub/Sub 등이 필요하다.
+
+**알림 설정**: `NotificationSetting` 엔티티로 사용자별/타입별 수신 여부를 관리한다. row 부재 = 수신 허용 (lazy creation).
+
+### 동시성 패턴
+
+- `findByUsernameForUpdate()` (`PESSIMISTIC_WRITE`): bookmark/follow/block toggle 등 "조회 후 삽입" race를 방지하기 위해 요청 주체 User 행을 잠금
+- **Projection 기반 최적화**: `NotificationRecipientSnapshot`, `CommentAuthorSnapshot`, `SecurityUserSnapshot` 등 인터페이스 projection으로 hot path의 엔티티 hydration 비용을 줄임
 
 ### 예외 → HTTP 상태 코드 매핑
 
@@ -68,6 +93,14 @@ docker compose up -d --build
 - **통합 테스트** (`controller/`): `@SpringBootTest` + `@ActiveProfiles("test")` + `@Transactional`
   - H2 인메모리 DB 사용 (`src/test/resources/application.yml`)
   - `JwtTokenProvider`를 직접 주입해 Bearer 토큰 생성 후 `Authorization` 헤더에 첨부
+- **동시성 통합 테스트** (`NotificationAfterCommitIntegrationTest`): `ExecutorService` + `CountDownLatch`로 concurrent store/read-all/read-page 후 unread counter == unread rows 검증
+
+### 도메인 특이사항
+
+- **Message**: `deletedBySender` / `deletedByRecipient` 플래그로 소프트 삭제 (양쪽 독립)
+- **Block**: 단방향. 차단자의 게시물/댓글 조회에 영향
+- **Bookmark**: `BookmarkFolder`가 nullable (null = 미분류)
+- **계정 정지**: `User.suspended` + `suspendedUntil` (null = 영구 정지). `isCurrentlySuspended()`가 경과 시간 자동 판단
 
 ### Jackson
 
@@ -76,6 +109,14 @@ Spring Boot 4.x는 Jackson 3.x를 사용하므로 import가 `tools.jackson.datab
 ### 기본 게시판 시딩
 
 `BoardDataInitializer`(CommandLineRunner)가 애플리케이션 시작 시 게시판이 0개일 때만 free/dev/qna/notice 게시판을 생성한다. `@SpringBootTest` 통합 테스트에서는 `@Transactional`로 롤백되므로 간섭하지 않는다.
+
+### Load Test 인프라
+
+`@ConditionalOnProperty(name = "app.load-test.enabled", havingValue = "true")`로 조건부 활성화된다.
+
+- `LoadTestActionController`: 공개 REST API가 아닌 서비스 메서드 (follow, bookmark, block, notifications)를 `/internal/load-test/actions/*` 경로로 노출해 k6가 직접 호출
+- `LoadTestStepProfiler`: hot path 내부 단계별 wall-time / SQL count / SQL exec time 기록
+- baseline (`/notifications/read-page`) vs stress (`/notifications/read-all`) 시나리오 분리
 
 ### 환경 변수 오버라이드
 
