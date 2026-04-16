@@ -44,6 +44,7 @@ class PostServiceTest {
     @Mock BoardRepository     boardRepository;
     @Mock NotificationService notificationService;
     @Mock EntityManager       entityManager;
+    @Mock UserLookupService   userLookupService;
 
     PostService postService;
 
@@ -58,7 +59,8 @@ class PostServiceTest {
                 boardRepository,
                 notificationService,
                 new NoOpLoadTestStepProfiler(),
-                entityManager
+                entityManager,
+                userLookupService
         );
     }
 
@@ -182,7 +184,7 @@ class PostServiceTest {
         Post post = makePost(1L, "Title", "Content", makeUser("author"));
 
         given(postRepository.findById(1L)).willReturn(Optional.of(post));
-        given(userRepository.findByUsernameForUpdate("alice")).willReturn(Optional.of(user));
+        given(userLookupService.findByUsernameForUpdate("alice")).willReturn(user);
         given(postLikeRepository.existsByPostAndUser(post, user)).willReturn(false);
         given(postRepository.findLikeCountById(1L)).willReturn(1L);
 
@@ -201,7 +203,7 @@ class PostServiceTest {
         Post post = makePost(1L, "Title", "Content", makeUser("author"));
 
         given(postRepository.findById(1L)).willReturn(Optional.of(post));
-        given(userRepository.findByUsernameForUpdate("alice")).willReturn(Optional.of(user));
+        given(userLookupService.findByUsernameForUpdate("alice")).willReturn(user);
         given(postLikeRepository.existsByPostAndUser(post, user)).willReturn(true);
         given(postRepository.findLikeCountById(1L)).willReturn(1L);
 
@@ -220,7 +222,7 @@ class PostServiceTest {
         Post post = makePost(1L, "Title", "Content", makeUser("author"));
 
         given(postRepository.findById(1L)).willReturn(Optional.of(post));
-        given(userRepository.findByUsernameForUpdate("alice")).willReturn(Optional.of(user));
+        given(userLookupService.findByUsernameForUpdate("alice")).willReturn(user);
         given(postLikeRepository.deleteByPostAndUser(post, user)).willReturn(1L);
         given(postRepository.findLikeCountById(1L)).willReturn(0L);
 
@@ -237,7 +239,7 @@ class PostServiceTest {
         Post post = makePost(1L, "Title", "Content", makeUser("author"));
 
         given(postRepository.findById(1L)).willReturn(Optional.of(post));
-        given(userRepository.findByUsernameForUpdate("alice")).willReturn(Optional.of(user));
+        given(userLookupService.findByUsernameForUpdate("alice")).willReturn(user);
         given(postLikeRepository.deleteByPostAndUser(post, user)).willReturn(0L);
         given(postRepository.findLikeCountById(1L)).willReturn(0L);
 

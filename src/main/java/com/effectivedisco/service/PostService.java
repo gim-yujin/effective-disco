@@ -50,6 +50,7 @@ public class PostService {
     private final NotificationService notificationService;
     private final LoadTestStepProfiler loadTestStepProfiler;
     private final EntityManager       entityManager;
+    private final UserLookupService   userLookupService;
 
     /* ── 게시물 CRUD ──────────────────────────────────────── */
 
@@ -359,8 +360,7 @@ public class PostService {
 
     /** username으로 사용자 조회 + 행 잠금 (좋아요 동시성 제어용) */
     private User findUserForUpdate(String username) {
-        return userRepository.findByUsernameForUpdate(username)
-                .orElseThrow(() -> new UsernameNotFoundException("사용자를 찾을 수 없습니다: " + username));
+        return userLookupService.findByUsernameForUpdate(username);
     }
 
     /** 좋아요 응답 DTO 생성 — DB에서 최신 좋아요 수를 조회 */
@@ -370,9 +370,7 @@ public class PostService {
 
     /** 게시물 소유자 확인. 소유자가 아니면 AccessDeniedException */
     private void checkOwnership(String ownerUsername, String requestUsername) {
-        if (!ownerUsername.equals(requestUsername)) {
-            throw new AccessDeniedException("수정/삭제 권한이 없습니다");
-        }
+        OwnershipChecker.check(ownerUsername, requestUsername);
     }
 
     /** 태그 해석 결과를 담는 값 객체. 엔티티 Set과 정렬된 이름 리스트를 함께 보관한다. */

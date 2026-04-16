@@ -81,9 +81,6 @@ public class PostController {
             @Parameter(description = "다음 배치를 위한 ID 커서")
             @RequestParam(required = false) Long cursorId,
             @AuthenticationPrincipal UserDetails userDetails) {
-        if ((cursorCreatedAt == null) != (cursorId == null)) {
-            throw new IllegalArgumentException("cursorCreatedAt 과 cursorId 는 함께 전달해야 합니다.");
-        }
         Set<String> blockedUsernames = userDetails == null
                 ? Set.of()
                 : blockService.getBlockedUsernames(userDetails.getUsername());

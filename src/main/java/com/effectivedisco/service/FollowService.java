@@ -12,7 +12,6 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.PageRequest;
-import org.springframework.security.core.userdetails.UsernameNotFoundException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -34,6 +33,7 @@ public class FollowService {
     private final FollowRepository   followRepository;
     private final UserRepository     userRepository;
     private final PostRepository     postRepository;
+    private final UserLookupService  userLookupService;
 
     /**
      * 팔로우 관계를 생성한다.
@@ -48,8 +48,8 @@ public class FollowService {
         if (followerUsername.equals(followingUsername)) {
             throw new IllegalArgumentException("자기 자신을 팔로우할 수 없습니다.");
         }
-        User follower  = findUserForUpdate(followerUsername);
-        User following = findUser(followingUsername);
+        User follower  = userLookupService.findByUsernameForUpdate(followerUsername);
+        User following = userLookupService.findByUsername(followingUsername);
 
         // 문제 해결:
         // 토글은 동일 요청 재시도 시 상태를 뒤집어 버린다.
@@ -68,8 +68,8 @@ public class FollowService {
         if (followerUsername.equals(followingUsername)) {
             throw new IllegalArgumentException("자기 자신을 언팔로우할 수 없습니다.");
         }
-        User follower  = findUserForUpdate(followerUsername);
-        User following = findUser(followingUsername);
+        User follower  = userLookupService.findByUsernameForUpdate(followerUsername);
+        User following = userLookupService.findByUsername(followingUsername);
 
         // 문제 해결:
         // 삭제된 행 수에 따라 실제 변경 여부를 판단하면 동일한 언팔로우 요청 재시도가
@@ -113,7 +113,7 @@ public class FollowService {
      * @return 팔로워 목록 (최신 팔로우 순)
      */
     public List<UserSummaryResponse> getFollowers(String username) {
-        User user = findUser(username);
+        User user = userLookupService.findByUsername(username);
         return followRepository.findFollowers(user)
                 .stream()
                 .map(UserSummaryResponse::new)
@@ -128,7 +128,7 @@ public class FollowService {
      * @return 팔로잉 목록 (최신 팔로우 순)
      */
     public List<UserSummaryResponse> getFollowings(String username) {
-        User user = findUser(username);
+        User user = userLookupService.findByUsername(username);
         return followRepository.findFollowings(user)
                 .stream()
                 .map(UserSummaryResponse::new)
@@ -143,7 +143,7 @@ public class FollowService {
      * @param username 피드를 요청한 사용자명
      */
     public Page<PostResponse> getFeed(String username, int page, int size) {
-        User user = findUser(username);
+        User user = userLookupService.findByUsername(username);
         List<User> following = followRepository.findFollowingUsers(user);
 
         // 팔로잉한 사람이 없으면 빈 페이지 반환
@@ -156,13 +156,4 @@ public class FollowService {
                 .map(PostResponse::new);
     }
 
-    private User findUser(String username) {
-        return userRepository.findByUsername(username)
-                .orElseThrow(() -> new UsernameNotFoundException("사용자를 찾을 수 없습니다: " + username));
-    }
-
-    private User findUserForUpdate(String username) {
-        return userRepository.findByUsernameForUpdate(username)
-                .orElseThrow(() -> new UsernameNotFoundException("사용자를 찾을 수 없습니다: " + username));
-    }
 }

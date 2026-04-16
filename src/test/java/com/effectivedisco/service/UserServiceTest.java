@@ -39,6 +39,7 @@ class UserServiceTest {
     @Mock FollowRepository       followRepository;  // 팔로우 기능 추가로 필요
     @Mock BlockRepository        blockRepository;   // 사용자 차단 기능 추가로 필요
     @Mock PasswordEncoder        passwordEncoder;
+    @Mock UserLookupService      userLookupService;
 
     @InjectMocks UserService userService;
 
@@ -49,7 +50,7 @@ class UserServiceTest {
         User user = makeUser("alice", "alice@old.com", "encoded");
         ProfileEditRequest req = profileReq("alice@new.com", "Hello!");
 
-        given(userRepository.findByUsername("alice")).willReturn(Optional.of(user));
+        given(userLookupService.findByUsername("alice")).willReturn(user);
         given(userRepository.existsByEmail("alice@new.com")).willReturn(false);
 
         userService.updateProfile("alice", req);
@@ -64,7 +65,7 @@ class UserServiceTest {
         User user = makeUser("alice", "alice@old.com", "encoded");
         ProfileEditRequest req = profileReq("taken@other.com", null);
 
-        given(userRepository.findByUsername("alice")).willReturn(Optional.of(user));
+        given(userLookupService.findByUsername("alice")).willReturn(user);
         given(userRepository.existsByEmail("taken@other.com")).willReturn(true);
 
         assertThatThrownBy(() -> userService.updateProfile("alice", req))
@@ -77,7 +78,7 @@ class UserServiceTest {
         User user = makeUser("alice", "alice@same.com", "encoded");
         ProfileEditRequest req = profileReq("alice@same.com", "bio");
 
-        given(userRepository.findByUsername("alice")).willReturn(Optional.of(user));
+        given(userLookupService.findByUsername("alice")).willReturn(user);
 
         // should not call existsByEmail when email hasn't changed
         userService.updateProfile("alice", req);
@@ -93,7 +94,7 @@ class UserServiceTest {
         User user = makeUser("alice", "alice@test.com", "encoded_old");
         PasswordChangeRequest req = pwReq("oldPw", "newPw123", "newPw123");
 
-        given(userRepository.findByUsername("alice")).willReturn(Optional.of(user));
+        given(userLookupService.findByUsername("alice")).willReturn(user);
         given(passwordEncoder.matches("oldPw", "encoded_old")).willReturn(true);
         given(passwordEncoder.encode("newPw123")).willReturn("encoded_new");
 
@@ -107,7 +108,7 @@ class UserServiceTest {
         User user = makeUser("alice", "alice@test.com", "encoded");
         PasswordChangeRequest req = pwReq("wrongPw", "newPw123", "newPw123");
 
-        given(userRepository.findByUsername("alice")).willReturn(Optional.of(user));
+        given(userLookupService.findByUsername("alice")).willReturn(user);
         given(passwordEncoder.matches("wrongPw", "encoded")).willReturn(false);
 
         assertThatThrownBy(() -> userService.changePassword("alice", req))
@@ -120,7 +121,7 @@ class UserServiceTest {
         User user = makeUser("alice", "alice@test.com", "encoded");
         PasswordChangeRequest req = pwReq("oldPw", "newPw123", "differentPw");
 
-        given(userRepository.findByUsername("alice")).willReturn(Optional.of(user));
+        given(userLookupService.findByUsername("alice")).willReturn(user);
         given(passwordEncoder.matches("oldPw", "encoded")).willReturn(true);
 
         assertThatThrownBy(() -> userService.changePassword("alice", req))
@@ -133,7 +134,7 @@ class UserServiceTest {
     @Test
     void withdraw_success_deletesRelatedDataAndUser() {
         User user = makeUser("alice", "alice@test.com", "encoded");
-        given(userRepository.findByUsername("alice")).willReturn(Optional.of(user));
+        given(userLookupService.findByUsername("alice")).willReturn(user);
         given(passwordEncoder.matches("myPw", "encoded")).willReturn(true);
 
         userService.withdraw("alice", "myPw");
@@ -149,7 +150,7 @@ class UserServiceTest {
     @Test
     void withdraw_wrongPassword_throwsException() {
         User user = makeUser("alice", "alice@test.com", "encoded");
-        given(userRepository.findByUsername("alice")).willReturn(Optional.of(user));
+        given(userLookupService.findByUsername("alice")).willReturn(user);
         given(passwordEncoder.matches("wrongPw", "encoded")).willReturn(false);
 
         assertThatThrownBy(() -> userService.withdraw("alice", "wrongPw"))

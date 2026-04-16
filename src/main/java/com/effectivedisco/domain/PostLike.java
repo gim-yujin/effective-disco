@@ -3,7 +3,6 @@ package com.effectivedisco.domain;
 import jakarta.persistence.*;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
-import org.hibernate.annotations.CreationTimestamp;
 
 import java.time.LocalDateTime;
 
@@ -27,11 +26,11 @@ public class PostLike {
     @JoinColumn(name = "user_id", nullable = false)
     private User user;
 
-    @CreationTimestamp
     private LocalDateTime createdAt;
 
     public PostLike(Post post, User user) {
         this.post = post;
         this.user = user;
+        this.createdAt = LocalDateTime.now();
     }
 }

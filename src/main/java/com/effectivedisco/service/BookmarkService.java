@@ -8,9 +8,7 @@ import com.effectivedisco.dto.response.PostResponse;
 import com.effectivedisco.repository.BookmarkFolderRepository;
 import com.effectivedisco.repository.BookmarkRepository;
 import com.effectivedisco.repository.PostRepository;
-import com.effectivedisco.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
-import org.springframework.security.core.userdetails.UsernameNotFoundException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -23,7 +21,7 @@ public class BookmarkService {
     private final BookmarkRepository       bookmarkRepository;
     private final BookmarkFolderRepository folderRepository;
     private final PostRepository           postRepository;
-    private final UserRepository           userRepository;
+    private final UserLookupService        userLookupService;
 
     /* ── 북마크 CRUD ─────────────────────────────────────────── */
 
@@ -33,7 +31,7 @@ public class BookmarkService {
      */
     @Transactional
     public void bookmark(String username, Long postId) {
-        User user = findUserForUpdate(username);
+        User user = userLookupService.findByUsernameForUpdate(username);
         Post post = postRepository.findById(postId)
                 .orElseThrow(() -> new IllegalArgumentException("게시물을 찾을 수 없습니다: " + postId));
 
@@ -51,7 +49,7 @@ public class BookmarkService {
      */
     @Transactional
     public void unbookmark(String username, Long postId) {
-        User user = findUserForUpdate(username);
+        User user = userLookupService.findByUsernameForUpdate(username);
         Post post = postRepository.findById(postId)
                 .orElseThrow(() -> new IllegalArgumentException("게시물을 찾을 수 없습니다: " + postId));
 
@@ -65,7 +63,7 @@ public class BookmarkService {
 
     /** 현재 사용자가 해당 게시물을 북마크했는지 여부 */
     public boolean isBookmarked(String username, Long postId) {
-        User user = findUser(username);
+        User user = userLookupService.findByUsername(username);
         Post post = postRepository.findById(postId)
                 .orElseThrow(() -> new IllegalArgumentException("게시물을 찾을 수 없습니다: " + postId));
         return bookmarkRepository.existsByUserAndPost(user, post);
@@ -73,7 +71,7 @@ public class BookmarkService {
 
     /** 사용자의 전체 북마크 목록을 최신순으로 반환 */
     public List<PostResponse> getBookmarks(String username) {
-        User user = findUser(username);
+        User user = userLookupService.findByUsername(username);
         return bookmarkRepository.findByUserOrderByCreatedAtDesc(user).stream()
                 .map(b -> new PostResponse(b.getPost()))
                 .toList();
@@ -82,7 +80,7 @@ public class BookmarkService {
     /** 특정 폴더의 북마크 목록을 최신순으로 반환 */
     @Transactional(readOnly = true)
     public List<PostResponse> getBookmarksByFolder(String username, Long folderId) {
-        User user = findUser(username);
+        User user = userLookupService.findByUsername(username);
         BookmarkFolder folder = findFolder(folderId, user);
         return bookmarkRepository.findByUserAndFolderOrderByCreatedAtDesc(user, folder).stream()
                 .map(b -> new PostResponse(b.getPost()))
@@ -92,7 +90,7 @@ public class BookmarkService {
     /** 미분류(폴더 없음) 북마크 목록을 최신순으로 반환 */
     @Transactional(readOnly = true)
     public List<PostResponse> getUncategorizedBookmarks(String username) {
-        User user = findUser(username);
+        User user = userLookupService.findByUsername(username);
         return bookmarkRepository.findByUserAndFolderIsNullOrderByCreatedAtDesc(user).stream()
                 .map(b -> new PostResponse(b.getPost()))
                 .toList();
@@ -104,7 +102,7 @@ public class BookmarkService {
      */
     @Transactional
     public void moveBookmarkToFolder(String username, Long postId, Long folderId) {
-        User user = findUserForUpdate(username);
+        User user = userLookupService.findByUsernameForUpdate(username);
         Post post = postRepository.findById(postId)
                 .orElseThrow(() -> new IllegalArgumentException("게시물을 찾을 수 없습니다: " + postId));
         Bookmark bookmark = bookmarkRepository.findByUserAndPost(user, post)
@@ -118,14 +116,14 @@ public class BookmarkService {
     /** 사용자의 북마크 폴더 목록 (이름순) */
     @Transactional(readOnly = true)
     public List<BookmarkFolder> getFolders(String username) {
-        User user = findUser(username);
+        User user = userLookupService.findByUsername(username);
         return folderRepository.findByUserOrderByNameAsc(user);
     }
 
     /** 새 북마크 폴더를 생성한다 */
     @Transactional
     public BookmarkFolder createFolder(String username, String folderName) {
-        User user = findUser(username);
+        User user = userLookupService.findByUsername(username);
         if (folderRepository.findByUserAndName(user, folderName).isPresent()) {
             throw new IllegalArgumentException("이미 존재하는 폴더 이름입니다: " + folderName);
         }
@@ -135,7 +133,7 @@ public class BookmarkService {
     /** 북마크 폴더 이름을 변경한다 */
     @Transactional
     public BookmarkFolder renameFolder(String username, Long folderId, String newName) {
-        User user = findUser(username);
+        User user = userLookupService.findByUsername(username);
         BookmarkFolder folder = findFolder(folderId, user);
         // 같은 이름으로 변경하면 무시
         if (!folder.getName().equals(newName)) {
@@ -153,7 +151,7 @@ public class BookmarkService {
      */
     @Transactional
     public void deleteFolder(String username, Long folderId) {
-        User user = findUser(username);
+        User user = userLookupService.findByUsername(username);
         BookmarkFolder folder = findFolder(folderId, user);
         // 폴더에 속한 북마크를 미분류로 복원
         bookmarkRepository.clearFolder(folder);
@@ -161,16 +159,6 @@ public class BookmarkService {
     }
 
     /* ── private helpers ─────────────────────────────────────── */
-
-    private User findUser(String username) {
-        return userRepository.findByUsername(username)
-                .orElseThrow(() -> new UsernameNotFoundException(username));
-    }
-
-    private User findUserForUpdate(String username) {
-        return userRepository.findByUsernameForUpdate(username)
-                .orElseThrow(() -> new UsernameNotFoundException(username));
-    }
 
     private BookmarkFolder findFolder(Long folderId, User user) {
         return folderRepository.findByIdAndUser(folderId, user)

@@ -6,6 +6,7 @@ import com.effectivedisco.dto.request.ProfileEditRequest;
 import com.effectivedisco.dto.response.UserProfileResponse;
 
 import java.time.LocalDateTime;
+import java.util.List;
 import com.effectivedisco.repository.BlockRepository;
 import com.effectivedisco.repository.CommentRepository;
 import com.effectivedisco.repository.FollowRepository;
@@ -16,7 +17,6 @@ import com.effectivedisco.repository.PostRepository;
 import com.effectivedisco.repository.ReportRepository;
 import com.effectivedisco.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
-import org.springframework.security.core.userdetails.UsernameNotFoundException;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -38,6 +38,7 @@ public class UserService {
     private final FollowRepository       followRepository;
     private final BlockRepository        blockRepository;
     private final PasswordEncoder        passwordEncoder;
+    private final UserLookupService      userLookupService;
 
     /**
      * 사용자 프로필 정보를 조회한다.
@@ -50,9 +51,7 @@ public class UserService {
      * @throws UsernameNotFoundException 존재하지 않는 사용자
      */
     public UserProfileResponse getProfile(String username) {
-        User user = userRepository.findByUsername(username)
-                .orElseThrow(() -> new UsernameNotFoundException(
-                        "존재하지 않는 사용자입니다: " + username));
+        User user = userLookupService.findByUsername(username);
 
         // 초안을 제외한 공개 게시물 수만 집계
         long postCount     = postRepository.countByAuthorAndDraftFalse(user);
@@ -78,7 +77,7 @@ public class UserService {
      */
     @Transactional
     public void updateProfileImage(String username, String imageUrl) {
-        User user = findUser(username);
+        User user = userLookupService.findByUsername(username);
         user.updateProfileImageUrl(imageUrl);
     }
 
@@ -88,7 +87,7 @@ public class UserService {
      */
     @Transactional
     public void updateProfile(String username, ProfileEditRequest req) {
-        User user = findUser(username);
+        User user = userLookupService.findByUsername(username);
 
         String newEmail = req.getEmail();
         if (newEmail != null && !newEmail.isBlank() && !newEmail.equals(user.getEmail())) {
@@ -109,7 +108,7 @@ public class UserService {
      */
     @Transactional
     public void changePassword(String username, PasswordChangeRequest req) {
-        User user = findUser(username);
+        User user = userLookupService.findByUsername(username);
 
         if (!passwordEncoder.matches(req.getCurrentPassword(), user.getPassword())) {
             throw new IllegalArgumentException("현재 비밀번호가 올바르지 않습니다.");
@@ -128,7 +127,7 @@ public class UserService {
      */
     @Transactional
     public void withdraw(String username, String password) {
-        User user = findUser(username);
+        User user = userLookupService.findByUsername(username);
 
         if (!passwordEncoder.matches(password, user.getPassword())) {
             throw new IllegalArgumentException("비밀번호가 올바르지 않습니다.");
@@ -188,9 +187,48 @@ public class UserService {
         target.unsuspend();
     }
 
-    private User findUser(String username) {
-        return userRepository.findByUsername(username)
-                .orElseThrow(() -> new UsernameNotFoundException(
-                        "존재하지 않는 사용자입니다: " + username));
+    /* ── 관리자 전용 조회/변경 ───────────────────────────────── */
+
+    /** 관리자 대시보드용 전체 사용자 목록 (최신 가입순) */
+    @Transactional(readOnly = true)
+    public List<User> getAllUsersForAdmin() {
+        return userRepository.findAllByOrderByCreatedAtDesc();
+    }
+
+    /**
+     * 사용자 권한 토글: ROLE_USER ↔ ROLE_ADMIN.
+     * 자기 자신의 권한은 변경할 수 없다 (관리자 잠금 방지).
+     *
+     * @param userId               대상 사용자 ID
+     * @param currentAdminUsername  현재 요청 관리자 username
+     */
+    @Transactional
+    public void toggleRole(Long userId, String currentAdminUsername) {
+        User target = userRepository.findById(userId)
+                .orElseThrow(() -> new IllegalArgumentException("사용자를 찾을 수 없습니다: " + userId));
+        if (!target.getUsername().equals(currentAdminUsername)) {
+            if (target.isAdmin()) {
+                target.demoteToUser();
+            } else {
+                target.promoteToAdmin();
+            }
+        }
+    }
+
+    /**
+     * 계정 정지 (관리자 자신은 제외).
+     *
+     * @param userId               정지할 사용자 ID
+     * @param currentAdminUsername  현재 요청 관리자 username
+     * @param reason               정지 사유
+     * @param days                 정지 일수 (null이면 영구)
+     */
+    @Transactional
+    public void suspendUserByAdmin(Long userId, String currentAdminUsername, String reason, Integer days) {
+        User target = userRepository.findById(userId)
+                .orElseThrow(() -> new IllegalArgumentException("사용자를 찾을 수 없습니다: " + userId));
+        if (!target.getUsername().equals(currentAdminUsername)) {
+            suspendUser(userId, reason, days);
+        }
     }
 }

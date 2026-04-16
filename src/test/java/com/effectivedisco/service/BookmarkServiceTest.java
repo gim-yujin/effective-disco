@@ -6,7 +6,6 @@ import com.effectivedisco.domain.User;
 import com.effectivedisco.dto.response.PostResponse;
 import com.effectivedisco.repository.BookmarkRepository;
 import com.effectivedisco.repository.PostRepository;
-import com.effectivedisco.repository.UserRepository;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
@@ -29,7 +28,7 @@ class BookmarkServiceTest {
 
     @Mock BookmarkRepository bookmarkRepository;
     @Mock PostRepository     postRepository;
-    @Mock UserRepository     userRepository;
+    @Mock UserLookupService  userLookupService;
 
     @InjectMocks BookmarkService bookmarkService;
 
@@ -39,7 +38,7 @@ class BookmarkServiceTest {
     void bookmark_notBookmarked_saves() {
         User user = makeUser("alice");
         Post post = makePost(1L, user);
-        given(userRepository.findByUsernameForUpdate("alice")).willReturn(Optional.of(user));
+        given(userLookupService.findByUsernameForUpdate("alice")).willReturn(user);
         given(postRepository.findById(1L)).willReturn(Optional.of(post));
         given(bookmarkRepository.existsByUserAndPost(user, post)).willReturn(false);
 
@@ -52,7 +51,7 @@ class BookmarkServiceTest {
     void bookmark_alreadyBookmarked_isIdempotent() {
         User user = makeUser("alice");
         Post post = makePost(1L, user);
-        given(userRepository.findByUsernameForUpdate("alice")).willReturn(Optional.of(user));
+        given(userLookupService.findByUsernameForUpdate("alice")).willReturn(user);
         given(postRepository.findById(1L)).willReturn(Optional.of(post));
         given(bookmarkRepository.existsByUserAndPost(user, post)).willReturn(true);
 
@@ -64,7 +63,7 @@ class BookmarkServiceTest {
     @Test
     void bookmark_postNotFound_throwsException() {
         User user = makeUser("alice");
-        given(userRepository.findByUsernameForUpdate("alice")).willReturn(Optional.of(user));
+        given(userLookupService.findByUsernameForUpdate("alice")).willReturn(user);
         given(postRepository.findById(99L)).willReturn(Optional.empty());
 
         assertThatThrownBy(() -> bookmarkService.bookmark("alice", 99L))
@@ -75,7 +74,7 @@ class BookmarkServiceTest {
     void unbookmark_existingBookmark_deletesRelation() {
         User user = makeUser("alice");
         Post post = makePost(1L, user);
-        given(userRepository.findByUsernameForUpdate("alice")).willReturn(Optional.of(user));
+        given(userLookupService.findByUsernameForUpdate("alice")).willReturn(user);
         given(postRepository.findById(1L)).willReturn(Optional.of(post));
         given(bookmarkRepository.deleteByUserAndPost(user, post)).willReturn(1L);
 
@@ -88,7 +87,7 @@ class BookmarkServiceTest {
     void unbookmark_missingBookmark_isIdempotent() {
         User user = makeUser("alice");
         Post post = makePost(1L, user);
-        given(userRepository.findByUsernameForUpdate("alice")).willReturn(Optional.of(user));
+        given(userLookupService.findByUsernameForUpdate("alice")).willReturn(user);
         given(postRepository.findById(1L)).willReturn(Optional.of(post));
         given(bookmarkRepository.deleteByUserAndPost(user, post)).willReturn(0L);
 
@@ -103,7 +102,7 @@ class BookmarkServiceTest {
     void isBookmarked_whenExists_returnsTrue() {
         User user = makeUser("alice");
         Post post = makePost(1L, user);
-        given(userRepository.findByUsername("alice")).willReturn(Optional.of(user));
+        given(userLookupService.findByUsername("alice")).willReturn(user);
         given(postRepository.findById(1L)).willReturn(Optional.of(post));
         given(bookmarkRepository.existsByUserAndPost(user, post)).willReturn(true);
 
@@ -114,7 +113,7 @@ class BookmarkServiceTest {
     void isBookmarked_whenAbsent_returnsFalse() {
         User user = makeUser("alice");
         Post post = makePost(1L, user);
-        given(userRepository.findByUsername("alice")).willReturn(Optional.of(user));
+        given(userLookupService.findByUsername("alice")).willReturn(user);
         given(postRepository.findById(1L)).willReturn(Optional.of(post));
         given(bookmarkRepository.existsByUserAndPost(user, post)).willReturn(false);
 
@@ -128,7 +127,7 @@ class BookmarkServiceTest {
         User user = makeUser("alice");
         Post post = makePost(1L, user);
         Bookmark bookmark = new Bookmark(user, post);
-        given(userRepository.findByUsername("alice")).willReturn(Optional.of(user));
+        given(userLookupService.findByUsername("alice")).willReturn(user);
         given(bookmarkRepository.findByUserOrderByCreatedAtDesc(user)).willReturn(List.of(bookmark));
 
         List<PostResponse> result = bookmarkService.getBookmarks("alice");

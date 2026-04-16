@@ -33,6 +33,7 @@ class CommentServiceTest {
     @Mock UserRepository      userRepository;
     @Mock NotificationService notificationService;
     @Mock EntityManager       entityManager;
+    @Mock UserLookupService   userLookupService;
 
     CommentService commentService;
 
@@ -41,7 +42,7 @@ class CommentServiceTest {
         // 기본 최대 깊이 2로 설정
         commentService = new CommentService(
                 commentRepository, postRepository, userRepository,
-                notificationService, entityManager, 2
+                notificationService, entityManager, userLookupService, 2
         );
     }
 
@@ -86,7 +87,7 @@ class CommentServiceTest {
 
         given(commentRepository.findById(10L)).willReturn(Optional.of(parent));
         given(postRepository.findById(1L)).willReturn(Optional.of(post));
-        given(userRepository.findByUsername("replier")).willReturn(Optional.of(replier));
+        given(userLookupService.findByUsername("replier")).willReturn(replier);
         given(commentRepository.save(any(Comment.class))).willReturn(saved);
 
         CommentResponse response = commentService.createReply(1L, 10L, makeRequest("reply"), "replier");
@@ -102,7 +103,7 @@ class CommentServiceTest {
         ReflectionTestUtils.setField(deepParent, "depth", 2); // 이미 최대 깊이
 
         given(postRepository.findById(1L)).willReturn(Optional.of(post));
-        given(userRepository.findByUsername("user")).willReturn(Optional.of(makeUser("user")));
+        given(userLookupService.findByUsername("user")).willReturn(makeUser("user"));
         given(commentRepository.findById(10L)).willReturn(Optional.of(deepParent));
 
         assertThatThrownBy(() -> commentService.createReply(1L, 10L, makeRequest("nested"), "user"))
@@ -117,7 +118,7 @@ class CommentServiceTest {
         Comment parent = makeComment(10L, "comment", post2, makeUser("u"), null); // post2 소속
 
         given(postRepository.findById(1L)).willReturn(Optional.of(post1));
-        given(userRepository.findByUsername("user")).willReturn(Optional.of(makeUser("user")));
+        given(userLookupService.findByUsername("user")).willReturn(makeUser("user"));
         given(commentRepository.findById(10L)).willReturn(Optional.of(parent));
 
         assertThatThrownBy(() -> commentService.createReply(1L, 10L, makeRequest("reply"), "user"))

@@ -3,9 +3,7 @@ package com.effectivedisco.service;
 import com.effectivedisco.domain.Block;
 import com.effectivedisco.domain.User;
 import com.effectivedisco.repository.BlockRepository;
-import com.effectivedisco.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
-import org.springframework.security.core.userdetails.UsernameNotFoundException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -23,8 +21,8 @@ import java.util.stream.Collectors;
 @RequiredArgsConstructor
 public class BlockService {
 
-    private final BlockRepository blockRepository;
-    private final UserRepository  userRepository;
+    private final BlockRepository  blockRepository;
+    private final UserLookupService userLookupService;
 
     /**
      * 차단 관계를 생성한다.
@@ -40,8 +38,8 @@ public class BlockService {
             throw new IllegalArgumentException("자기 자신을 차단할 수 없습니다.");
         }
 
-        User blocker = findUserForUpdate(blockerUsername);
-        User blocked = findUser(blockedUsername);
+        User blocker = userLookupService.findByUsernameForUpdate(blockerUsername);
+        User blocked = userLookupService.findByUsername(blockedUsername);
 
         // 문제 해결:
         // 토글은 재시도 시 차단이 풀리는 잘못된 결과를 만들 수 있다.
@@ -61,8 +59,8 @@ public class BlockService {
             throw new IllegalArgumentException("자기 자신을 차단 해제할 수 없습니다.");
         }
 
-        User blocker = findUserForUpdate(blockerUsername);
-        User blocked = findUser(blockedUsername);
+        User blocker = userLookupService.findByUsernameForUpdate(blockerUsername);
+        User blocked = userLookupService.findByUsername(blockedUsername);
 
         // 문제 해결:
         // delete count 기반 해제는 같은 요청이 여러 번 반복돼도 최종 상태를 false로 유지한다.
@@ -79,8 +77,8 @@ public class BlockService {
      * @return 차단 중이면 true
      */
     public boolean isBlocking(String blockerUsername, String blockedUsername) {
-        User blocker = findUser(blockerUsername);
-        User blocked = findUser(blockedUsername);
+        User blocker = userLookupService.findByUsername(blockerUsername);
+        User blocked = userLookupService.findByUsername(blockedUsername);
         return blockRepository.existsByBlockerAndBlocked(blocker, blocked);
     }
 
@@ -94,7 +92,7 @@ public class BlockService {
      * @return 차단된 사용자명 집합 (차단 없으면 빈 집합)
      */
     public Set<String> getBlockedUsernames(String username) {
-        User user = findUser(username);
+        User user = userLookupService.findByUsername(username);
         return blockRepository.findByBlockerOrderByCreatedAtDesc(user).stream()
                 .map(b -> b.getBlocked().getUsername())
                 .collect(Collectors.toSet());
@@ -108,19 +106,8 @@ public class BlockService {
      * @return Block 엔티티 목록
      */
     public List<Block> getBlockList(String username) {
-        User user = findUser(username);
+        User user = userLookupService.findByUsername(username);
         return blockRepository.findByBlockerOrderByCreatedAtDesc(user);
     }
 
-    private User findUser(String username) {
-        return userRepository.findByUsername(username)
-                .orElseThrow(() -> new UsernameNotFoundException(
-                        "존재하지 않는 사용자입니다: " + username));
-    }
-
-    private User findUserForUpdate(String username) {
-        return userRepository.findByUsernameForUpdate(username)
-                .orElseThrow(() -> new UsernameNotFoundException(
-                        "존재하지 않는 사용자입니다: " + username));
-    }
 }

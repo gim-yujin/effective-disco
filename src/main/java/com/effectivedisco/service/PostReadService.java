@@ -20,7 +20,6 @@ import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Slice;
-import org.springframework.security.core.userdetails.UsernameNotFoundException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -52,6 +51,7 @@ public class PostReadService {
     private final TagRepository       tagRepository;
     private final BoardRepository     boardRepository;
     private final LoadTestStepProfiler loadTestStepProfiler;
+    private final UserLookupService   userLookupService;
 
     /* ── 페이지 기반 목록 조회 ─────────────────────────────── */
 
@@ -135,6 +135,9 @@ public class PostReadService {
                                                   LocalDateTime cursorCreatedAt,
                                                   Long cursorId,
                                                   Set<String> blockedUsernames) {
+        if ((cursorCreatedAt == null) != (cursorId == null)) {
+            throw new IllegalArgumentException("cursorCreatedAt 과 cursorId 는 함께 전달해야 합니다.");
+        }
         String sortKey = normalizeSortKey(sort);
         if (!"latest".equals(sortKey)) {
             throw new IllegalArgumentException("무한 스크롤은 최신순 게시판 목록만 지원합니다.");
@@ -704,7 +707,7 @@ public class PostReadService {
 
     /** 페이지 크기를 1~50 범위로 클램핑 */
     private int clampPageSize(int size) {
-        return Math.max(1, Math.min(size, 50));
+        return PaginationUtils.clampPageSize(size, 50);
     }
 
     /** ID로 게시물 조회. 없으면 IllegalArgumentException */
@@ -715,8 +718,7 @@ public class PostReadService {
 
     /** username으로 사용자 조회. 없으면 UsernameNotFoundException */
     private User findUser(String username) {
-        return userRepository.findByUsername(username)
-                .orElseThrow(() -> new UsernameNotFoundException("사용자를 찾을 수 없습니다: " + username));
+        return userLookupService.findByUsername(username);
     }
 
     /* ── BoardScopedPostListRow 어댑터 ────────────────────── */

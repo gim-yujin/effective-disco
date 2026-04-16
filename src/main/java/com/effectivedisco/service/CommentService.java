@@ -9,7 +9,6 @@ import com.effectivedisco.repository.CommentRepository;
 import com.effectivedisco.repository.PostRepository;
 import com.effectivedisco.repository.UserRepository;
 import jakarta.persistence.EntityManager;
-import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageImpl;
@@ -32,6 +31,7 @@ public class CommentService {
     private final UserRepository      userRepository;
     private final NotificationService notificationService;
     private final EntityManager       entityManager;
+    private final UserLookupService   userLookupService;
 
     /** 댓글 최대 깊이. 0 = 최상위만, 1 = 1단계 대댓글, 2 = 2단계까지 허용 (기본값 2) */
     private final int maxDepth;
@@ -41,19 +41,21 @@ public class CommentService {
                           UserRepository userRepository,
                           NotificationService notificationService,
                           EntityManager entityManager,
+                          UserLookupService userLookupService,
                           @Value("${app.comment.max-depth:2}") int maxDepth) {
         this.commentRepository   = commentRepository;
         this.postRepository      = postRepository;
         this.userRepository      = userRepository;
         this.notificationService = notificationService;
         this.entityManager       = entityManager;
+        this.userLookupService   = userLookupService;
         this.maxDepth            = maxDepth;
     }
 
     @Transactional(readOnly = true)
     public Page<CommentResponse> getCommentsPage(Long postId, int page, int size) {
         int pageNumber = Math.max(page, 0);
-        int pageSize = Math.max(1, Math.min(size, 100));
+        int pageSize = PaginationUtils.clampPageSize(size, 100);
         PageRequest pageable = PageRequest.of(pageNumber, pageSize);
 
         Page<CommentRepository.CommentViewRow> topLevelComments =
@@ -89,7 +91,7 @@ public class CommentService {
 
     @Transactional(readOnly = true)
     public int getLastTopLevelCommentPage(Long postId, int size) {
-        int pageSize = Math.max(1, Math.min(size, 100));
+        int pageSize = PaginationUtils.clampPageSize(size, 100);
         long topLevelCount = commentRepository.countByPostIdAndParentIsNull(postId);
         if (topLevelCount == 0) {
             return 0;
@@ -99,7 +101,7 @@ public class CommentService {
 
     @Transactional(readOnly = true)
     public int getCommentPageForAnchor(Long postId, Long commentId, int size) {
-        int pageSize = Math.max(1, Math.min(size, 100));
+        int pageSize = PaginationUtils.clampPageSize(size, 100);
         Long topLevelCommentId = commentRepository.findTopLevelCommentIdByCommentId(commentId);
         if (topLevelCommentId == null) {
             throw new IllegalArgumentException("Comment not found: " + commentId);
@@ -140,7 +142,7 @@ public class CommentService {
     @Transactional
     public CommentResponse createReply(Long postId, Long parentCommentId, CommentRequest request, String username) {
         Post post = findPost(postId);
-        User user = findUser(username);
+        User user = userLookupService.findByUsername(username);
         Comment parent = commentRepository.findById(parentCommentId)
                 .orElseThrow(() -> new IllegalArgumentException("Comment not found: " + parentCommentId));
         if (!parent.getPost().getId().equals(postId)) {
@@ -239,20 +241,13 @@ public class CommentService {
                 .orElseThrow(() -> new IllegalArgumentException("Post not found: " + postId));
     }
 
-    private User findUser(String username) {
-        return userRepository.findByUsername(username)
-                .orElseThrow(() -> new UsernameNotFoundException("User not found: " + username));
-    }
-
     private UserRepository.CommentAuthorSnapshot findCommentAuthorSnapshot(String username) {
         return userRepository.findCommentAuthorSnapshotByUsername(username)
                 .orElseThrow(() -> new UsernameNotFoundException("User not found: " + username));
     }
 
     private void checkOwnership(String ownerUsername, String requestUsername) {
-        if (!ownerUsername.equals(requestUsername)) {
-            throw new AccessDeniedException("No permission to modify this resource");
-        }
+        OwnershipChecker.check(ownerUsername, requestUsername);
     }
 
     private CommentResponse toCommentResponse(CommentRepository.CommentViewRow comment,

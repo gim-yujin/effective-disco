@@ -3,7 +3,6 @@ package com.effectivedisco.service;
 import com.effectivedisco.domain.Block;
 import com.effectivedisco.domain.User;
 import com.effectivedisco.repository.BlockRepository;
-import com.effectivedisco.repository.UserRepository;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
@@ -11,7 +10,6 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.util.List;
-import java.util.Optional;
 import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -24,8 +22,8 @@ import static org.mockito.Mockito.verify;
 @ExtendWith(MockitoExtension.class)
 class BlockServiceTest {
 
-    @Mock BlockRepository blockRepository;
-    @Mock UserRepository  userRepository;
+    @Mock BlockRepository   blockRepository;
+    @Mock UserLookupService userLookupService;
 
     @InjectMocks BlockService blockService;
 
@@ -36,8 +34,8 @@ class BlockServiceTest {
         User blocker = makeUser("alice");
         User blocked = makeUser("bob");
 
-        given(userRepository.findByUsernameForUpdate("alice")).willReturn(Optional.of(blocker));
-        given(userRepository.findByUsername("bob")).willReturn(Optional.of(blocked));
+        given(userLookupService.findByUsernameForUpdate("alice")).willReturn(blocker);
+        given(userLookupService.findByUsername("bob")).willReturn(blocked);
         given(blockRepository.existsByBlockerAndBlocked(blocker, blocked)).willReturn(false);
 
         blockService.block("alice", "bob");
@@ -50,8 +48,8 @@ class BlockServiceTest {
         User blocker = makeUser("alice");
         User blocked = makeUser("bob");
 
-        given(userRepository.findByUsernameForUpdate("alice")).willReturn(Optional.of(blocker));
-        given(userRepository.findByUsername("bob")).willReturn(Optional.of(blocked));
+        given(userLookupService.findByUsernameForUpdate("alice")).willReturn(blocker);
+        given(userLookupService.findByUsername("bob")).willReturn(blocked);
         given(blockRepository.existsByBlockerAndBlocked(blocker, blocked)).willReturn(true);
 
         blockService.block("alice", "bob");
@@ -74,8 +72,8 @@ class BlockServiceTest {
         User blocker = makeUser("alice");
         User blocked = makeUser("bob");
 
-        given(userRepository.findByUsernameForUpdate("alice")).willReturn(Optional.of(blocker));
-        given(userRepository.findByUsername("bob")).willReturn(Optional.of(blocked));
+        given(userLookupService.findByUsernameForUpdate("alice")).willReturn(blocker);
+        given(userLookupService.findByUsername("bob")).willReturn(blocked);
         given(blockRepository.deleteByBlockerAndBlocked(blocker, blocked)).willReturn(1L);
 
         blockService.unblock("alice", "bob");
@@ -88,8 +86,8 @@ class BlockServiceTest {
         User blocker = makeUser("alice");
         User blocked = makeUser("bob");
 
-        given(userRepository.findByUsernameForUpdate("alice")).willReturn(Optional.of(blocker));
-        given(userRepository.findByUsername("bob")).willReturn(Optional.of(blocked));
+        given(userLookupService.findByUsernameForUpdate("alice")).willReturn(blocker);
+        given(userLookupService.findByUsername("bob")).willReturn(blocked);
         given(blockRepository.deleteByBlockerAndBlocked(blocker, blocked)).willReturn(0L);
 
         blockService.unblock("alice", "bob");
@@ -104,8 +102,8 @@ class BlockServiceTest {
         User blocker = makeUser("alice");
         User blocked = makeUser("bob");
 
-        given(userRepository.findByUsername("alice")).willReturn(Optional.of(blocker));
-        given(userRepository.findByUsername("bob")).willReturn(Optional.of(blocked));
+        given(userLookupService.findByUsername("alice")).willReturn(blocker);
+        given(userLookupService.findByUsername("bob")).willReturn(blocked);
         given(blockRepository.existsByBlockerAndBlocked(blocker, blocked)).willReturn(true);
 
         assertThat(blockService.isBlocking("alice", "bob")).isTrue();
@@ -116,8 +114,8 @@ class BlockServiceTest {
         User blocker = makeUser("alice");
         User blocked = makeUser("bob");
 
-        given(userRepository.findByUsername("alice")).willReturn(Optional.of(blocker));
-        given(userRepository.findByUsername("bob")).willReturn(Optional.of(blocked));
+        given(userLookupService.findByUsername("alice")).willReturn(blocker);
+        given(userLookupService.findByUsername("bob")).willReturn(blocked);
         given(blockRepository.existsByBlockerAndBlocked(blocker, blocked)).willReturn(false);
 
         assertThat(blockService.isBlocking("alice", "bob")).isFalse();
@@ -135,7 +133,7 @@ class BlockServiceTest {
         Block b1 = new Block(alice, bob);
         Block b2 = new Block(alice, carol);
 
-        given(userRepository.findByUsername("alice")).willReturn(Optional.of(alice));
+        given(userLookupService.findByUsername("alice")).willReturn(alice);
         given(blockRepository.findByBlockerOrderByCreatedAtDesc(alice)).willReturn(List.of(b1, b2));
 
         Set<String> result = blockService.getBlockedUsernames("alice");
@@ -147,7 +145,7 @@ class BlockServiceTest {
     void getBlockedUsernames_noBlocks_returnsEmptySet() {
         User alice = makeUser("alice");
 
-        given(userRepository.findByUsername("alice")).willReturn(Optional.of(alice));
+        given(userLookupService.findByUsername("alice")).willReturn(alice);
         given(blockRepository.findByBlockerOrderByCreatedAtDesc(alice)).willReturn(List.of());
 
         assertThat(blockService.getBlockedUsernames("alice")).isEmpty();

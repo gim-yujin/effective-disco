@@ -133,9 +133,6 @@ public class BoardWebController {
                                                LocalDateTime cursorCreatedAt,
                                                @RequestParam(required = false) Long cursorId,
                                                @AuthenticationPrincipal UserDetails userDetails) {
-        if ((cursorCreatedAt == null) != (cursorId == null)) {
-            throw new IllegalArgumentException("cursorCreatedAt 과 cursorId 는 함께 전달해야 합니다.");
-        }
         Set<String> blocked = userDetails != null
                 ? blockService.getBlockedUsernames(userDetails.getUsername())
                 : Collections.emptySet();

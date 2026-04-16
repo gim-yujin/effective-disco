@@ -1,12 +1,15 @@
 package com.effectivedisco.controller;
 
 import com.effectivedisco.domain.BookmarkFolder;
+import com.effectivedisco.dto.request.BookmarkFolderNameRequest;
+import com.effectivedisco.dto.request.BookmarkMoveRequest;
 import com.effectivedisco.dto.response.BookmarkFolderResponse;
 import com.effectivedisco.dto.response.PostResponse;
 import com.effectivedisco.service.BookmarkService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
+import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -15,7 +18,6 @@ import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
-import java.util.Map;
 
 /**
  * 북마크 및 북마크 폴더 REST API 컨트롤러.
@@ -71,9 +73,9 @@ public class BookmarkController {
     @Operation(summary = "북마크 폴더 이동", security = @SecurityRequirement(name = "bearerAuth"))
     @PutMapping("/bookmarks/{postId}/folder")
     public ResponseEntity<Void> moveBookmark(@PathVariable Long postId,
-                                              @RequestBody Map<String, Long> body,
+                                              @Valid @RequestBody BookmarkMoveRequest request,
                                               @AuthenticationPrincipal UserDetails userDetails) {
-        bookmarkService.moveBookmarkToFolder(userDetails.getUsername(), postId, body.get("folderId"));
+        bookmarkService.moveBookmarkToFolder(userDetails.getUsername(), postId, request.getFolderId());
         return ResponseEntity.ok().build();
     }
 
@@ -91,9 +93,9 @@ public class BookmarkController {
     @Operation(summary = "북마크 폴더 생성", security = @SecurityRequirement(name = "bearerAuth"))
     @PostMapping("/bookmark-folders")
     public ResponseEntity<BookmarkFolderResponse> createFolder(
-            @RequestBody Map<String, String> body,
+            @Valid @RequestBody BookmarkFolderNameRequest request,
             @AuthenticationPrincipal UserDetails userDetails) {
-        BookmarkFolder folder = bookmarkService.createFolder(userDetails.getUsername(), body.get("name"));
+        BookmarkFolder folder = bookmarkService.createFolder(userDetails.getUsername(), request.getName());
         return ResponseEntity.status(HttpStatus.CREATED).body(new BookmarkFolderResponse(folder));
     }
 
@@ -101,9 +103,9 @@ public class BookmarkController {
     @PutMapping("/bookmark-folders/{id}")
     public ResponseEntity<BookmarkFolderResponse> renameFolder(
             @PathVariable Long id,
-            @RequestBody Map<String, String> body,
+            @Valid @RequestBody BookmarkFolderNameRequest request,
             @AuthenticationPrincipal UserDetails userDetails) {
-        BookmarkFolder folder = bookmarkService.renameFolder(userDetails.getUsername(), id, body.get("name"));
+        BookmarkFolder folder = bookmarkService.renameFolder(userDetails.getUsername(), id, request.getName());
         return ResponseEntity.ok(new BookmarkFolderResponse(folder));
     }
 

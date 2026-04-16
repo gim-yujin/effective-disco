@@ -8,7 +8,6 @@ import com.effectivedisco.repository.MessageRepository;
 import com.effectivedisco.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.security.access.AccessDeniedException;
-import org.springframework.security.core.userdetails.UsernameNotFoundException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -22,6 +21,7 @@ public class MessageService {
     private final MessageRepository   messageRepository;
     private final UserRepository      userRepository;
     private final NotificationService notificationService;
+    private final UserLookupService   userLookupService;
 
     /**
      * 쪽지 전송.
@@ -30,8 +30,8 @@ public class MessageService {
      */
     @Transactional
     public MessageResponse send(MessageRequest request, String senderUsername) {
-        User sender    = findUser(senderUsername);
-        User recipient = findUser(request.getTo());
+        User sender    = userLookupService.findByUsername(senderUsername);
+        User recipient = userLookupService.findByUsername(request.getTo());
 
         if (sender.getUsername().equals(recipient.getUsername())) {
             throw new IllegalArgumentException("자기 자신에게는 쪽지를 보낼 수 없습니다.");
@@ -59,7 +59,7 @@ public class MessageService {
      */
     @Transactional(readOnly = true)
     public List<MessageResponse> getInbox(String username) {
-        User user = findUser(username);
+        User user = userLookupService.findByUsername(username);
         return messageRepository
                 .findByRecipientAndDeletedByRecipientFalseOrderByCreatedAtDesc(user)
                 .stream().map(MessageResponse::new).collect(Collectors.toList());
@@ -70,7 +70,7 @@ public class MessageService {
      */
     @Transactional(readOnly = true)
     public List<MessageResponse> getSent(String username) {
-        User user = findUser(username);
+        User user = userLookupService.findByUsername(username);
         return messageRepository
                 .findBySenderAndDeletedBySenderFalseOrderByCreatedAtDesc(user)
                 .stream().map(MessageResponse::new).collect(Collectors.toList());
@@ -132,8 +132,4 @@ public class MessageService {
                 .orElseThrow(() -> new IllegalArgumentException("쪽지를 찾을 수 없습니다: " + id));
     }
 
-    private User findUser(String username) {
-        return userRepository.findByUsername(username)
-                .orElseThrow(() -> new UsernameNotFoundException("사용자를 찾을 수 없습니다: " + username));
-    }
 }

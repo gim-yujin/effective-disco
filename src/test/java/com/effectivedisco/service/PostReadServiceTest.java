@@ -39,6 +39,7 @@ class PostReadServiceTest {
     @Mock PostLikeRepository postLikeRepository;
     @Mock TagRepository      tagRepository;
     @Mock BoardRepository    boardRepository;
+    @Mock UserLookupService  userLookupService;
 
     PostReadService postReadService;
 
@@ -50,7 +51,8 @@ class PostReadServiceTest {
                 postLikeRepository,
                 tagRepository,
                 boardRepository,
-                new NoOpLoadTestStepProfiler()
+                new NoOpLoadTestStepProfiler(),
+                userLookupService
         );
     }
 
@@ -113,7 +115,7 @@ class PostReadServiceTest {
         Post draft  = makePost(1L, "My Draft", "Content", author);
         ReflectionTestUtils.setField(draft, "draft", true);
 
-        given(userRepository.findByUsername("author")).willReturn(Optional.of(author));
+        given(userLookupService.findByUsername("author")).willReturn(author);
         given(postRepository.findByAuthorAndDraftTrueOrderByCreatedAtDesc(
                 any(User.class), any())).willReturn(new PageImpl<>(List.of(draft)));
 
@@ -131,7 +133,7 @@ class PostReadServiceTest {
         User user = makeUser("alice");
         Post post = makePost(1L, "Title", "Content", makeUser("author"));
         given(postRepository.findById(1L)).willReturn(Optional.of(post));
-        given(userRepository.findByUsername("alice")).willReturn(Optional.of(user));
+        given(userLookupService.findByUsername("alice")).willReturn(user);
         given(postLikeRepository.existsByPostAndUser(post, user)).willReturn(true);
 
         assertThat(postReadService.isLikedByUser(1L, "alice")).isTrue();
@@ -142,7 +144,7 @@ class PostReadServiceTest {
         User user = makeUser("alice");
         Post post = makePost(1L, "Title", "Content", makeUser("author"));
         given(postRepository.findById(1L)).willReturn(Optional.of(post));
-        given(userRepository.findByUsername("alice")).willReturn(Optional.of(user));
+        given(userLookupService.findByUsername("alice")).willReturn(user);
         given(postLikeRepository.existsByPostAndUser(post, user)).willReturn(false);
 
         assertThat(postReadService.isLikedByUser(1L, "alice")).isFalse();
@@ -155,7 +157,7 @@ class PostReadServiceTest {
         User author = makeUser("alice");
         Post post = makePost(1L, "Post", "Content", author);
 
-        given(userRepository.findByUsername("alice")).willReturn(Optional.of(author));
+        given(userLookupService.findByUsername("alice")).willReturn(author);
         given(postRepository.findByAuthorAndDraftFalseOrderByCreatedAtDesc(any(User.class), any()))
                 .willReturn(new PageImpl<>(List.of(post)));
 

@@ -1,6 +1,7 @@
 package com.effectivedisco.controller.web;
 
 import com.effectivedisco.service.NotificationService;
+import com.effectivedisco.service.PaginationUtils;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Slice;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
@@ -52,6 +53,6 @@ public class NotificationWebController {
     }
 
     private int normalizePageSize(int size) {
-        return Math.max(1, Math.min(size, 50));
+        return PaginationUtils.clampPageSize(size, 50);
     }
 }

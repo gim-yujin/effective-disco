@@ -33,6 +33,7 @@ class FollowServiceTest {
     @Mock FollowRepository   followRepository;
     @Mock UserRepository     userRepository;
     @Mock PostRepository     postRepository;
+    @Mock UserLookupService  userLookupService;
 
     @InjectMocks FollowService followService;
 
@@ -43,8 +44,8 @@ class FollowServiceTest {
         User follower  = makeUser("alice");
         User following = makeUser("bob");
 
-        given(userRepository.findByUsernameForUpdate("alice")).willReturn(Optional.of(follower));
-        given(userRepository.findByUsername("bob")).willReturn(Optional.of(following));
+        given(userLookupService.findByUsernameForUpdate("alice")).willReturn(follower);
+        given(userLookupService.findByUsername("bob")).willReturn(following);
         given(followRepository.existsByFollowerAndFollowing(follower, following)).willReturn(false);
 
         followService.follow("alice", "bob");
@@ -57,8 +58,8 @@ class FollowServiceTest {
         User follower  = makeUser("alice");
         User following = makeUser("bob");
 
-        given(userRepository.findByUsernameForUpdate("alice")).willReturn(Optional.of(follower));
-        given(userRepository.findByUsername("bob")).willReturn(Optional.of(following));
+        given(userLookupService.findByUsernameForUpdate("alice")).willReturn(follower);
+        given(userLookupService.findByUsername("bob")).willReturn(following);
         given(followRepository.existsByFollowerAndFollowing(follower, following)).willReturn(true);
 
         followService.follow("alice", "bob");
@@ -81,8 +82,8 @@ class FollowServiceTest {
         User follower  = makeUser("alice");
         User following = makeUser("bob");
 
-        given(userRepository.findByUsernameForUpdate("alice")).willReturn(Optional.of(follower));
-        given(userRepository.findByUsername("bob")).willReturn(Optional.of(following));
+        given(userLookupService.findByUsernameForUpdate("alice")).willReturn(follower);
+        given(userLookupService.findByUsername("bob")).willReturn(following);
         given(followRepository.deleteByFollowerAndFollowing(follower, following)).willReturn(1L);
 
         followService.unfollow("alice", "bob");
@@ -95,8 +96,8 @@ class FollowServiceTest {
         User follower  = makeUser("alice");
         User following = makeUser("bob");
 
-        given(userRepository.findByUsernameForUpdate("alice")).willReturn(Optional.of(follower));
-        given(userRepository.findByUsername("bob")).willReturn(Optional.of(following));
+        given(userLookupService.findByUsernameForUpdate("alice")).willReturn(follower);
+        given(userLookupService.findByUsername("bob")).willReturn(following);
         given(followRepository.deleteByFollowerAndFollowing(follower, following)).willReturn(0L);
 
         followService.unfollow("alice", "bob");
@@ -146,7 +147,7 @@ class FollowServiceTest {
         User bob   = makeUser("bob");
         Post post  = makePost(1L, "Hello", "Content", bob);
 
-        given(userRepository.findByUsername("alice")).willReturn(Optional.of(alice));
+        given(userLookupService.findByUsername("alice")).willReturn(alice);
         given(followRepository.findFollowingUsers(alice)).willReturn(List.of(bob));
         // 팔로우한 사용자의 공개 게시물 페이지 반환
         given(postRepository.findByAuthorInOrderByCreatedAtDesc(
@@ -164,7 +165,7 @@ class FollowServiceTest {
     void getFeed_emptyFollowing_returnsEmptyPageWithoutQueryingPostRepository() {
         User alice = makeUser("alice");
 
-        given(userRepository.findByUsername("alice")).willReturn(Optional.of(alice));
+        given(userLookupService.findByUsername("alice")).willReturn(alice);
         // 팔로우한 사람이 없으면 postRepository 쿼리 없이 빈 페이지 반환
         given(followRepository.findFollowingUsers(alice)).willReturn(List.of());
 

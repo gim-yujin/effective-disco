@@ -29,6 +29,7 @@ class MessageServiceTest {
     @Mock MessageRepository      messageRepository;
     @Mock UserRepository         userRepository;
     @Mock NotificationService    notificationService;
+    @Mock UserLookupService      userLookupService;
 
     @InjectMocks MessageService messageService;
 
@@ -40,8 +41,8 @@ class MessageServiceTest {
         User recipient = makeUser("bob");
         MessageRequest req = makeRequest("bob", "제목", "내용");
 
-        given(userRepository.findByUsername("alice")).willReturn(Optional.of(sender));
-        given(userRepository.findByUsername("bob")).willReturn(Optional.of(recipient));
+        given(userLookupService.findByUsername("alice")).willReturn(sender);
+        given(userLookupService.findByUsername("bob")).willReturn(recipient);
         given(messageRepository.save(any(Message.class)))
                 .willAnswer(inv -> {
                     Message message = inv.getArgument(0);
@@ -61,7 +62,7 @@ class MessageServiceTest {
         User alice = makeUser("alice");
         MessageRequest req = makeRequest("alice", "제목", "내용");
 
-        given(userRepository.findByUsername("alice")).willReturn(Optional.of(alice));
+        given(userLookupService.findByUsername("alice")).willReturn(alice);
 
         assertThatThrownBy(() -> messageService.send(req, "alice"))
                 .isInstanceOf(IllegalArgumentException.class)
@@ -76,7 +77,7 @@ class MessageServiceTest {
         User alice = makeUser("alice");
         Message msg = makeMessage(1L, alice, bob);
 
-        given(userRepository.findByUsername("bob")).willReturn(Optional.of(bob));
+        given(userLookupService.findByUsername("bob")).willReturn(bob);
         given(messageRepository.findByRecipientAndDeletedByRecipientFalseOrderByCreatedAtDesc(bob))
                 .willReturn(List.of(msg));
 

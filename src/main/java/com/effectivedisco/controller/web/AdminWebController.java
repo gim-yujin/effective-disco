@@ -1,8 +1,6 @@
 package com.effectivedisco.controller.web;
 
-import com.effectivedisco.domain.User;
 import com.effectivedisco.dto.request.BoardCreateRequest;
-import com.effectivedisco.repository.UserRepository;
 import com.effectivedisco.service.BoardService;
 import com.effectivedisco.service.CommentService;
 import com.effectivedisco.service.PostService;
@@ -23,7 +21,6 @@ import org.springframework.web.bind.annotation.*;
 @RequiredArgsConstructor
 public class AdminWebController {
 
-    private final UserRepository userRepository;
     private final UserService    userService;
     private final PostService    postService;
     private final CommentService commentService;
@@ -35,7 +32,7 @@ public class AdminWebController {
     @GetMapping
     public String dashboard(Model model) {
         model.addAttribute("boards", boardService.getAllBoards());
-        model.addAttribute("users", userRepository.findAllByOrderByCreatedAtDesc());
+        model.addAttribute("users", userService.getAllUsersForAdmin());
         return "admin/index";
     }
 
@@ -48,18 +45,7 @@ public class AdminWebController {
     @PostMapping("/users/{id}/toggle-role")
     public String toggleRole(@PathVariable Long id,
                              @RequestParam String currentUsername) {
-        User target = userRepository.findById(id)
-                .orElseThrow(() -> new IllegalArgumentException("사용자를 찾을 수 없습니다: " + id));
-
-        // 자기 자신의 권한은 변경 불가 — 관리자 잠금 방지
-        if (!target.getUsername().equals(currentUsername)) {
-            if (target.isAdmin()) {
-                target.demoteToUser();
-            } else {
-                target.promoteToAdmin();
-            }
-            userRepository.save(target);
-        }
+        userService.toggleRole(id, currentUsername);
         return "redirect:/admin";
     }
 
@@ -73,12 +59,7 @@ public class AdminWebController {
                               @RequestParam(required = false) String reason,
                               @RequestParam(required = false) Integer days,
                               @RequestParam String currentUsername) {
-        User target = userRepository.findById(id)
-                .orElseThrow(() -> new IllegalArgumentException("사용자를 찾을 수 없습니다: " + id));
-        // 관리자 자신은 정지 불가
-        if (!target.getUsername().equals(currentUsername)) {
-            userService.suspendUser(id, reason, days);
-        }
+        userService.suspendUserByAdmin(id, currentUsername, reason, days);
         return "redirect:/admin";
     }
 

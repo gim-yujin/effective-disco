@@ -4,9 +4,7 @@ import com.effectivedisco.domain.NotificationSetting;
 import com.effectivedisco.domain.NotificationType;
 import com.effectivedisco.domain.User;
 import com.effectivedisco.repository.NotificationSettingRepository;
-import com.effectivedisco.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
-import org.springframework.security.core.userdetails.UsernameNotFoundException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -24,7 +22,7 @@ import java.util.Map;
 public class NotificationSettingService {
 
     private final NotificationSettingRepository settingRepository;
-    private final UserRepository                userRepository;
+    private final UserLookupService             userLookupService;
 
     /**
      * 해당 사용자의 알림 수신 설정 전체를 반환한다.
@@ -34,7 +32,7 @@ public class NotificationSettingService {
      */
     @Transactional(readOnly = true)
     public Map<NotificationType, Boolean> getSettings(String username) {
-        User user = findUser(username);
+        User user = userLookupService.findByUsername(username);
         // 기본값: 모든 타입 수신
         Map<NotificationType, Boolean> result = new EnumMap<>(NotificationType.class);
         for (NotificationType type : NotificationType.values()) {
@@ -53,7 +51,7 @@ public class NotificationSettingService {
      */
     @Transactional
     public void updateSetting(String username, NotificationType type, boolean enabled) {
-        User user = findUser(username);
+        User user = userLookupService.findByUsername(username);
         NotificationSetting setting = settingRepository.findByUserAndNotificationType(user, type)
                 .orElse(null);
         if (setting == null) {
@@ -73,8 +71,4 @@ public class NotificationSettingService {
                 .orElse(true);
     }
 
-    private User findUser(String username) {
-        return userRepository.findByUsername(username)
-                .orElseThrow(() -> new UsernameNotFoundException("사용자를 찾을 수 없습니다: " + username));
-    }
 }

@@ -329,7 +329,7 @@ public class NotificationService {
     }
 
     private int normalizeNotificationPageSize(int size) {
-        return Math.max(1, Math.min(size, 50));
+        return PaginationUtils.clampPageSize(size, 50);
     }
 
     /**
