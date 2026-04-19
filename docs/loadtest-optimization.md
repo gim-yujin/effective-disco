@@ -5412,3 +5412,70 @@ thresholds on metrics 'block_mixed_duration, bookmark_mixed_duration, follow_mix
 
 - 콘솔에 10분 간격 progress 출력 기능을 `run-bbs-soak.sh` sampler에 `PROGRESS_INTERVAL_SECONDS` (기본 600) 환경 변수로 내장. 기본값으로 장시간 소크에서 자동 progress가 기록된다.
 - `run-bbs-managed-soak.sh`는 bootRun 기동 → readiness → k6 → cleanup → SIGTERM 순서로 lifecycle을 책임지므로 2h 런 중 wrapper를 중단하지 말 것. 이전 시도에서 cleanup이 120s를 넘겨 timeout났지만 summary는 정상 생성되는 best-effort 구조는 이번에도 동일하게 동작.
+
+### Block/Bookmark/Follow toggle FOR UPDATE lock 제거 (2026-04-19, commit `0af8873`)
+
+이전 2h FAIL의 직접 원인인 `block_mixed` / `bookmark_mixed` / `follow_mixed` p95 threshold crossing을 해결하기 위해, 세 경로의 "requester User 행 lock → exists check → save" 패턴을 dialect-aware atomic upsert로 교체했다.
+
+#### 변경 내용
+
+| 영역 | 이전 | 이후 |
+|------|------|------|
+| requester User lock | `findByUsernameForUpdate()` (PESSIMISTIC_WRITE) | 제거 |
+| insert | JPA `save()` → unique 제약 후 catch | `RelationAtomicInserter` (PostgreSQL `ON CONFLICT DO NOTHING` / H2 `MERGE`) |
+| delete | `findByFollowerAndFollowee(...)` → entity delete | `@Modifying @Query` bulk DELETE (1 round trip) |
+| 영향 범위 | `BlockService.toggleBlock` / `BookmarkService.toggleBookmark` / `FollowService.toggleFollow` | 동일 3종 |
+
+unique 제약(`(blocker_id, blocked_id)` 등)이 동시성을 실질적으로 보장하므로, requester User 행을 lock하는 건 불필요한 serialization이었다. notification 경로와 동일한 atomic 스타일로 통일.
+
+#### 측정: Soak 0.95 / 2h 확인 (2026-04-20, post-lock-removal)
+
+- 실행 시각: `20260420-000357`
+- artifact: `loadtest/results/soak-20260420-000357.md` / `-server.json` / `-metrics.jsonl` / `-k6.json`
+- 콘솔 로그 (10분 progress tick): `loadtest/results/soak-run-20260420-000345.console.log`
+- 조건: `SOAK_FACTOR=0.95`, `SOAK_DURATION=2h`, `WARMUP_DURATION=2m`, `PROGRESS_INTERVAL_SECONDS=600`
+- **status: PASS**
+
+##### 이전 2h (04-19, FAIL) 대비 비교
+
+| 메트릭 | 04-19 2h (FAIL) | 04-20 2h (PASS) | 변화 |
+|--------|-----------------|-----------------|------|
+| `http p95` | 350.06ms | **331.26ms** | -18.8ms |
+| `http p99` | 468.02ms | **399.81ms** | -68.2ms |
+| `block_mixed_duration` p95 | 417.12ms | **378.05ms** | **-39.1ms (threshold <400ms 통과)** |
+| `bookmark_mixed_duration` p95 | 418.02ms | **378.43ms** | **-39.6ms (통과)** |
+| `follow_mixed_duration` p95 | 427.89ms | **382.77ms** | **-45.1ms (통과)** |
+| `block_mixed_duration` p99 | 539.41ms | 441.64ms | -97.8ms |
+| `bookmark_mixed_duration` p99 | 541.40ms | 441.94ms | -99.5ms |
+| `follow_mixed_duration` p99 | 552.82ms | 446.96ms | -105.9ms |
+| `dbPoolTimeouts` | 0 | 0 | 유지 |
+| `duplicateKeyConflicts` / invariants | 0 | 0 | 유지 |
+| `unexpected_response_rate` | 0.0000 | 0.0000 | 유지 |
+| `maxThreadsAwaitingConnection` | 193 | 191 | -2 |
+
+k6 per-scenario threshold가 한 건도 crossing되지 않고 2h 내내 안정. 10분 progress tick은 내내 `dbPoolTimeouts=0 duplicateKeyConflicts=0 maxActiveConnections=28 longestTransactionMs=15–43ms` 범위를 유지.
+
+##### 해석
+
+- **원인 가설 적중**: requester User 행 lock 제거만으로 3종 scenario p95가 일제히 39–45ms 하락. FOR UPDATE lock이 실제로 2h sustained 0.95 부하에서 wait event를 만들고 있었음이 확인됨.
+- **collateral 개선**: 3종 경로의 lock 제거가 connection hold time을 줄이면서 전체 `http p95` -18ms / `http p99` -68ms까지 함께 좋아졌다. p99 개선폭이 크다는 건 꼬리 분포(lock 대기로 튀던 소수 요청)가 정리됐다는 의미.
+- **cleanup 409**: `cleanup endpoint timed out or returned non-2xx`는 이전과 동일한 best-effort 실패 — summary는 captured artifacts에서 정상 생성.
+
+#### 확정된 새 dominant bottleneck: `post.like.add` / `post.like.remove`
+
+이번 2h에서 profile 상위는 여전히 like 경로다:
+
+| profile | sampleCount | avgWallMs | maxWallMs | avgSqlMs | avgStmts |
+|---------|-------------|-----------|-----------|----------|----------|
+| `post.like.add` | 3,224,906 | **15.19** | 677.98 | 14.48 | 4.00 |
+| `post.like.remove` | 3,234,377 | **15.18** | 598.79 | 14.47 | 4.00 |
+| `comment.create` | 1,324,849 | 2.70 | 54.01 | 1.55 | 4.98 |
+| `notification.store` | 1,303,484 | 1.85 | 124.61 | 1.06 | 3.00 |
+
+`post.like.add/remove` 단일 경로가 전체 wall-time 지분 최대(sample × avg 기준). 다음 최적화 타겟은 이 경로이며, 4-SQL 중 어느 단계(exists check / insert / counter update / duplicate catch)가 15ms를 쓰는지 sub-profile 분해 필요.
+
+#### 다음 단계 후보
+
+1. `post.like.add/remove` 경로 sub-profile 분해 (resolve-post / unique-check / insert / counter-update) 로 15ms 원인 지점 식별
+2. `post_likes` atomic upsert + `post.likeCount` atomic update로 전환 검토 (block/bookmark/follow와 동일 스타일)
+3. 재측정 후 per-scenario p95 threshold 재설정 (현 post-lock-removal 베이스라인 반영)
