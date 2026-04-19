@@ -8,6 +8,7 @@ import com.effectivedisco.loadtest.NoOpLoadTestStepProfiler;
 import com.effectivedisco.repository.BoardRepository;
 import com.effectivedisco.repository.PostLikeRepository;
 import com.effectivedisco.repository.PostRepository;
+import com.effectivedisco.repository.RelationAtomicInserter;
 import com.effectivedisco.repository.TagRepository;
 import com.effectivedisco.repository.UserRepository;
 import jakarta.persistence.EntityManager;
@@ -25,6 +26,7 @@ import java.util.Optional;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.BDDMockito.given;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -36,15 +38,16 @@ import static org.mockito.Mockito.verify;
 @ExtendWith(MockitoExtension.class)
 class PostServiceTest {
 
-    @Mock PostRepository      postRepository;
-    @Mock UserRepository      userRepository;
-    @Mock PostLikeRepository  postLikeRepository;
-    @Mock TagRepository       tagRepository;
-    @Mock TagWriteService     tagWriteService;
-    @Mock BoardRepository     boardRepository;
-    @Mock NotificationService notificationService;
-    @Mock EntityManager       entityManager;
-    @Mock UserLookupService   userLookupService;
+    @Mock PostRepository         postRepository;
+    @Mock UserRepository         userRepository;
+    @Mock PostLikeRepository     postLikeRepository;
+    @Mock TagRepository          tagRepository;
+    @Mock TagWriteService        tagWriteService;
+    @Mock BoardRepository        boardRepository;
+    @Mock NotificationService    notificationService;
+    @Mock EntityManager          entityManager;
+    @Mock UserLookupService      userLookupService;
+    @Mock RelationAtomicInserter relationAtomicInserter;
 
     PostService postService;
 
@@ -60,7 +63,8 @@ class PostServiceTest {
                 notificationService,
                 new NoOpLoadTestStepProfiler(),
                 entityManager,
-                userLookupService
+                userLookupService,
+                relationAtomicInserter
         );
     }
 
@@ -181,18 +185,18 @@ class PostServiceTest {
     @Test
     void likePost_whenNotLiked_createsLikeAndReturnsLatestCount() {
         User user = makeUser("alice");
+        ReflectionTestUtils.setField(user, "id", 7L);
         Post post = makePost(1L, "Title", "Content", makeUser("author"));
 
         given(postRepository.findById(1L)).willReturn(Optional.of(post));
-        given(userLookupService.findByUsernameForUpdate("alice")).willReturn(user);
-        given(postLikeRepository.existsByPostAndUser(post, user)).willReturn(false);
+        given(userLookupService.findByUsername("alice")).willReturn(user);
+        given(relationAtomicInserter.insertPostLike(eq(1L), eq(7L), any())).willReturn(1);
         given(postRepository.findLikeCountById(1L)).willReturn(1L);
 
         var response = postService.likePost(1L, "alice");
 
         assertThat(response.isLiked()).isTrue();
         assertThat(response.getLikeCount()).isEqualTo(1L);
-        verify(postLikeRepository).save(any());
         verify(postRepository).incrementLikeCount(1L);
         verify(notificationService).notifyLike(post, "alice");
     }
@@ -200,18 +204,18 @@ class PostServiceTest {
     @Test
     void likePost_whenAlreadyLiked_isIdempotent() {
         User user = makeUser("alice");
+        ReflectionTestUtils.setField(user, "id", 7L);
         Post post = makePost(1L, "Title", "Content", makeUser("author"));
 
         given(postRepository.findById(1L)).willReturn(Optional.of(post));
-        given(userLookupService.findByUsernameForUpdate("alice")).willReturn(user);
-        given(postLikeRepository.existsByPostAndUser(post, user)).willReturn(true);
+        given(userLookupService.findByUsername("alice")).willReturn(user);
+        given(relationAtomicInserter.insertPostLike(eq(1L), eq(7L), any())).willReturn(0);
         given(postRepository.findLikeCountById(1L)).willReturn(1L);
 
         var response = postService.likePost(1L, "alice");
 
         assertThat(response.isLiked()).isTrue();
         assertThat(response.getLikeCount()).isEqualTo(1L);
-        verify(postLikeRepository, never()).save(any());
         verify(postRepository, never()).incrementLikeCount(1L);
         verify(notificationService, never()).notifyLike(any(), any());
     }
@@ -222,7 +226,7 @@ class PostServiceTest {
         Post post = makePost(1L, "Title", "Content", makeUser("author"));
 
         given(postRepository.findById(1L)).willReturn(Optional.of(post));
-        given(userLookupService.findByUsernameForUpdate("alice")).willReturn(user);
+        given(userLookupService.findByUsername("alice")).willReturn(user);
         given(postLikeRepository.deleteByPostAndUser(post, user)).willReturn(1L);
         given(postRepository.findLikeCountById(1L)).willReturn(0L);
 
@@ -239,7 +243,7 @@ class PostServiceTest {
         Post post = makePost(1L, "Title", "Content", makeUser("author"));
 
         given(postRepository.findById(1L)).willReturn(Optional.of(post));
-        given(userLookupService.findByUsernameForUpdate("alice")).willReturn(user);
+        given(userLookupService.findByUsername("alice")).willReturn(user);
         given(postLikeRepository.deleteByPostAndUser(post, user)).willReturn(0L);
         given(postRepository.findLikeCountById(1L)).willReturn(0L);
 

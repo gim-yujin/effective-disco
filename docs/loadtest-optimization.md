@@ -5534,3 +5534,42 @@ k6 per-scenario threshold가 한 건도 crossing되지 않고 2h 내내 안정. 
 1. `post.like.add/remove` 경로를 block/bookmark/follow와 동일하게 atomic upsert/delete로 전환 (`findUserForUpdate` 제거, `RelationAtomicInserter` 도입)
 2. 전환 후 동일 조건(0.95 / 2h) 재측정으로 예상 효과 확정
 3. 개선 폭이 충분하면 per-scenario p95 threshold도 재조정 검토
+
+### `post.like` FOR UPDATE lock 제거 + atomic upsert/delete 전환 (2026-04-20)
+
+sub-profile 분해에서 확정된 원인(`resolve-user` FOR UPDATE 가 15ms 중 14ms 독식)을 block/bookmark/follow와 동일한 atomic 패턴으로 해소.
+
+#### 변경 내용
+
+| 영역 | 이전 | 이후 |
+|------|------|------|
+| requester User lock | `userLookupService.findByUsernameForUpdate()` (PESSIMISTIC_WRITE) | `userLookupService.findByUsername()` (non-locking) |
+| state 확인 + 삽입 | `existsByPostAndUser()` → `postLikeRepository.save(new PostLike(...))` (2 SQL, race 시 unique 위반) | `RelationAtomicInserter.insertPostLike(postId, userId, now)` (1 SQL, atomic) |
+| delete | derived `deleteByPostAndUser` (SELECT 후 em.remove) | `@Modifying @Query` bulk DELETE (1 SQL, 0 또는 1 row affected 반환) |
+| counter / notify 게이팅 | `!exists` 분기 | `inserted > 0` / `deleted > 0` 반환값 분기 |
+| 영향 범위 | `PostService.likePost` / `PostService.unlikePost` | 동일 2개 메서드 |
+
+#### Dialect별 atomic insert 구현
+
+`RelationAtomicInserter.insertPostLike`는 "실제 신규 삽입 건수(0 또는 1)"를 정확히 반환해야 counter increment 와 notification 발행을 올바르게 게이팅할 수 있다. block/bookmark/follow 와 달리 **side-effect (likeCount UPDATE + notify event)** 가 있기 때문에 insert 반환값의 정확성이 중요하다.
+
+- **PostgreSQL**: `INSERT ... ON CONFLICT (post_id, user_id) DO NOTHING` — 충돌 시 0, 신규 삽입 시 1 반환. race-free.
+- **H2 2.4.240 (테스트)**: `ON CONFLICT` 미지원. `MERGE INTO ... KEY (...) VALUES (...)` 은 기존 row 에도 update count = 1 을 보고하므로 사용 불가. 대신 `INSERT INTO ... SELECT ... WHERE NOT EXISTS` 구문을 사용해 0/1 을 정확히 반환하고, 동시 실행으로 둘 다 `WHERE NOT EXISTS` 를 통과하는 race 는 unique 제약이 나중 INSERT 를 차단 → `DuplicateKeyException` 을 캐치해 0 으로 해석.
+
+#### 예상 효과 (재측정 전)
+
+| profile | sub-profile 측정값 | 예상값 |
+|---------|-------------------|--------|
+| `post.like.add` avgWall | 15.41ms | ~1.0ms (resolve-user FOR UPDATE 제거로 −14ms) |
+| `post.like.remove` avgWall | 15.08ms | ~1.0ms (동일) |
+| `like_add_race_duration` p95 | 221.11ms | 210ms 미만 |
+| `like_remove_race_duration` p95 | 220.66ms | 210ms 미만 |
+
+#### 단위 테스트
+
+전체 376 tests pass. `PostServiceTest`는 `RelationAtomicInserter.insertPostLike` mock 반환값(1 또는 0)을 기반으로 counter/notify 게이팅을 검증하고, `WritePathConcurrencyTest.likePost_concurrentDuplicateRequests` 는 실제 H2에서 8개 스레드 동시 like 시 단일 row + likeCount=1 을 보장함을 확인.
+
+#### 다음 단계
+
+1. 동일 조건(0.95 / 2h) 재측정으로 `post.like.add/remove` avgWall 하락 및 k6 per-scenario p95 개선 확정
+2. 예상대로 하락 시 per-scenario threshold 재조정 검토 (post-optimization baseline 반영)

@@ -3,7 +3,6 @@ package com.effectivedisco.service;
 import com.effectivedisco.domain.Board;
 import com.effectivedisco.domain.Post;
 import com.effectivedisco.domain.PostImage;
-import com.effectivedisco.domain.PostLike;
 import com.effectivedisco.domain.Tag;
 import com.effectivedisco.domain.User;
 import com.effectivedisco.dto.request.PostRequest;
@@ -13,6 +12,7 @@ import com.effectivedisco.loadtest.LoadTestStepProfiler;
 import com.effectivedisco.repository.BoardRepository;
 import com.effectivedisco.repository.PostLikeRepository;
 import com.effectivedisco.repository.PostRepository;
+import com.effectivedisco.repository.RelationAtomicInserter;
 import com.effectivedisco.repository.TagRepository;
 import com.effectivedisco.repository.UserRepository;
 import jakarta.persistence.EntityManager;
@@ -23,6 +23,7 @@ import org.springframework.security.core.userdetails.UsernameNotFoundException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.LocalDateTime;
 import java.util.Arrays;
 import java.util.HashSet;
 import java.util.LinkedHashSet;
@@ -41,16 +42,17 @@ import java.util.stream.Collectors;
 @RequiredArgsConstructor
 public class PostService {
 
-    private final PostRepository      postRepository;
-    private final UserRepository      userRepository;
-    private final PostLikeRepository  postLikeRepository;
-    private final TagRepository       tagRepository;
-    private final TagWriteService     tagWriteService;
-    private final BoardRepository     boardRepository;
-    private final NotificationService notificationService;
-    private final LoadTestStepProfiler loadTestStepProfiler;
-    private final EntityManager       entityManager;
-    private final UserLookupService   userLookupService;
+    private final PostRepository         postRepository;
+    private final UserRepository         userRepository;
+    private final PostLikeRepository     postLikeRepository;
+    private final TagRepository          tagRepository;
+    private final TagWriteService        tagWriteService;
+    private final BoardRepository        boardRepository;
+    private final NotificationService    notificationService;
+    private final LoadTestStepProfiler   loadTestStepProfiler;
+    private final EntityManager          entityManager;
+    private final UserLookupService      userLookupService;
+    private final RelationAtomicInserter relationAtomicInserter;
 
     /* ── 게시물 CRUD ──────────────────────────────────────── */
 
@@ -228,25 +230,25 @@ public class PostService {
     @Transactional
     public LikeResponse likePost(Long postId, String username) {
         // 문제 해결:
-        // like-focused 재현 조합에서는 post.list 와 좋아요 등록이 동시에 돌 때 어느 쪽이
-        // pool과 SQL 시간을 먼저 밀어 올리는지 봐야 한다. service 내부에서 직접 profile을 남기면
-        // AOP 누락 없이 좋아요 등록 경로의 wall/sql/statement count를 안정적으로 수집할 수 있다.
+        // 요청 주체 User 행 FOR UPDATE 는 concurrent like/unlike 를 직렬화해
+        // sub-profile 측정에서 post.like.add avgWall 15ms 중 14ms 를 잡아먹었다.
+        // unique (post_id, user_id) 제약 + atomic upsert (PG: ON CONFLICT DO NOTHING,
+        // H2: MERGE) 로 교체해 no-op 경로에서 lock 없이 상수-시간으로 완료되게 한다.
         return loadTestStepProfiler.profile(
                 "post.like.add",
                 true,
                 () -> {
+                    User user = loadTestStepProfiler.profile(
+                            "post.like.add.resolve-user", true,
+                            () -> userLookupService.findByUsername(username));
                     Post post = loadTestStepProfiler.profile(
                             "post.like.add.resolve-post", true, () -> findPost(postId));
-                    User user = loadTestStepProfiler.profile(
-                            "post.like.add.resolve-user", true, () -> findUserForUpdate(username));
 
-                    boolean alreadyLiked = loadTestStepProfiler.profile(
-                            "post.like.add.exists-check", true,
-                            () -> postLikeRepository.existsByPostAndUser(post, user));
-                    if (!alreadyLiked) {
-                        loadTestStepProfiler.profile(
-                                "post.like.add.insert", true,
-                                () -> postLikeRepository.save(new PostLike(post, user)));
+                    int inserted = loadTestStepProfiler.profile(
+                            "post.like.add.insert", true,
+                            () -> relationAtomicInserter.insertPostLike(
+                                    post.getId(), user.getId(), LocalDateTime.now()));
+                    if (inserted > 0) {
                         loadTestStepProfiler.profile(
                                 "post.like.add.counter-increment", true,
                                 () -> postRepository.incrementLikeCount(postId));
@@ -267,17 +269,18 @@ public class PostService {
      */
     @Transactional
     public LikeResponse unlikePost(Long postId, String username) {
-        // 문제 해결:
-        // 좋아요 해제도 등록과 다른 SQL/락 경로를 타므로 별도 profile로 남겨야
-        // add/remove 중 어느 경로가 재현 조합에서 더 비싼지 비교할 수 있다.
+        // bulk DELETE (@Modifying) 가 단일 문으로 원자적이므로 FOR UPDATE 없이도
+        // 반복 요청에서 likeCount 가 한 번만 감소한다. deleted==0 경로가 압도적이라
+        // resolve-user 를 non-locking 으로 전환한 효과가 가장 크게 나타난다.
         return loadTestStepProfiler.profile(
                 "post.like.remove",
                 true,
                 () -> {
+                    User user = loadTestStepProfiler.profile(
+                            "post.like.remove.resolve-user", true,
+                            () -> userLookupService.findByUsername(username));
                     Post post = loadTestStepProfiler.profile(
                             "post.like.remove.resolve-post", true, () -> findPost(postId));
-                    User user = loadTestStepProfiler.profile(
-                            "post.like.remove.resolve-user", true, () -> findUserForUpdate(username));
 
                     long deleted = loadTestStepProfiler.profile(
                             "post.like.remove.delete", true,
@@ -369,11 +372,6 @@ public class PostService {
     private UserRepository.PostCreateAuthorSnapshot findPostCreateAuthorSnapshot(String username) {
         return userRepository.findPostCreateAuthorSnapshotByUsername(username)
                 .orElseThrow(() -> new UsernameNotFoundException("사용자를 찾을 수 없습니다: " + username));
-    }
-
-    /** username으로 사용자 조회 + 행 잠금 (좋아요 동시성 제어용) */
-    private User findUserForUpdate(String username) {
-        return userLookupService.findByUsernameForUpdate(username);
     }
 
     /** 좋아요 응답 DTO 생성 — DB에서 최신 좋아요 수를 조회 */

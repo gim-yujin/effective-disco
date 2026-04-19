@@ -11,7 +11,17 @@ import org.springframework.data.repository.query.Param;
 public interface PostLikeRepository extends JpaRepository<PostLike, Long> {
 
     boolean existsByPostAndUser(Post post, User user);
-    long deleteByPostAndUser(Post post, User user);
+
+    /**
+     * 좋아요를 단일 bulk DELETE로 제거한다.
+     *
+     * <p>파생 delete는 엔티티 로드 → {@code em.remove()} 순서로 동작해 동시 호출 시
+     * 두 번째 호출에서 {@code StaleObjectState} 가 발생한다. bulk DELETE는 0건/1건 결과 모두
+     * 정상 처리되므로 lock 없이 idempotent 삭제가 가능하다.
+     */
+    @Modifying(clearAutomatically = true)
+    @Query("DELETE FROM PostLike l WHERE l.post = :post AND l.user = :user")
+    long deleteByPostAndUser(@Param("post") Post post, @Param("user") User user);
 
     /** 특정 게시물의 좋아요 수 */
     long countByPost(Post post);
