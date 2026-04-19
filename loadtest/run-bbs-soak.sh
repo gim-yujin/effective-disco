@@ -7,6 +7,7 @@ SOAK_FACTOR="${SOAK_FACTOR:-1.25}"
 SOAK_DURATION="${SOAK_DURATION:-30m}"
 WARMUP_DURATION="${WARMUP_DURATION:-2m}"
 SAMPLE_INTERVAL_SECONDS="${SAMPLE_INTERVAL_SECONDS:-60}"
+PROGRESS_INTERVAL_SECONDS="${PROGRESS_INTERVAL_SECONDS:-600}"
 CLEANUP_CURL_MAX_TIME="${CLEANUP_CURL_MAX_TIME:-120}"
 SUITE_TIMESTAMP="$(date +%Y%m%d-%H%M%S)"
 SQL_CHECK_FILE="loadtest/sql/consistency-checks.sql"
@@ -162,13 +163,37 @@ extract_json_number() {
   sed -n "s/.*\"${key}\":\\([0-9][0-9]*\\).*/\\1/p" "$file" | head -n1
 }
 
+extract_snapshot_number() {
+  local snapshot="$1"
+  local key="$2"
+  printf '%s' "$snapshot" | sed -n "s/.*\"${key}\":\\([0-9][0-9]*\\).*/\\1/p" | head -n1
+}
+
 sample_metrics_loop() {
   local monitored_pid="$1"
+  local start_ts next_progress_ts
+  start_ts="$(date +%s)"
+  next_progress_ts=$((start_ts + PROGRESS_INTERVAL_SECONDS))
   while kill -0 "$monitored_pid" >/dev/null 2>&1; do
-    local timestamp snapshot
+    local now timestamp snapshot
+    now="$(date +%s)"
     timestamp="$(date -Iseconds)"
     if snapshot="$(curl -fsS "$BASE_URL/internal/load-test/metrics" 2>/dev/null)"; then
       printf '{"timestamp":"%s","metrics":%s}\n' "$timestamp" "$snapshot" >>"$TIMELINE_FILE"
+      if (( now >= next_progress_ts )); then
+        local elapsed_min pool_timeouts dup_keys max_awaiting max_active longest_tx
+        elapsed_min=$(( (now - start_ts) / 60 ))
+        pool_timeouts="$(extract_snapshot_number "$snapshot" "dbPoolTimeouts")"
+        dup_keys="$(extract_snapshot_number "$snapshot" "duplicateKeyConflicts")"
+        max_awaiting="$(extract_snapshot_number "$snapshot" "maxThreadsAwaitingConnection")"
+        max_active="$(extract_snapshot_number "$snapshot" "maxActiveConnections")"
+        longest_tx="$(extract_snapshot_number "$snapshot" "longestTransactionMs")"
+        printf '[soak progress] elapsed=%dm dbPoolTimeouts=%s duplicateKeyConflicts=%s maxThreadsAwaitingConnection=%s maxActiveConnections=%s longestTransactionMs=%s\n' \
+          "$elapsed_min" "${pool_timeouts:-n/a}" "${dup_keys:-n/a}" "${max_awaiting:-n/a}" "${max_active:-n/a}" "${longest_tx:-n/a}"
+        while (( now >= next_progress_ts )); do
+          next_progress_ts=$((next_progress_ts + PROGRESS_INTERVAL_SECONDS))
+        done
+      fi
     fi
     sleep "$SAMPLE_INTERVAL_SECONDS"
   done

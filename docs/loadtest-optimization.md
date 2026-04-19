@@ -5352,3 +5352,63 @@ List<Report> findByStatusInWithReporterOrderByResolvedAtDesc(@Param("statuses") 
 | OSIV 비활성화 | connection hold time 단축 → pool timeout 근본 제거 |
 | HikariCP connection-timeout 2s | burst 시 대기 여유 → 일시적 pool 포화를 timeout 없이 흡수 |
 | notification FOR UPDATE lock 제거 | lock 경합 제거 → connection 점유 시간 추가 단축 |
+
+### Soak 재측정 결과 (2026-04-19) — 0.95 / 2시간 (post-OSIV 최초)
+
+- 실행 시각: `20260419-200547`
+- artifact: `loadtest/results/soak-20260419-200547.md` / `-server.json` / `-metrics.jsonl`
+- 콘솔 로그 (10분 progress tick): `loadtest/results/soak-run-20260419-200440.console.log`
+- 조건: `SOAK_FACTOR=0.95`, `SOAK_DURATION=2h`, `WARMUP_DURATION=2m`, `PROGRESS_INTERVAL_SECONDS=600`
+- **status: FAIL (k6 per-scenario threshold crossing)** — 아래 해석 참조
+- 인프라 레벨은 완전 통과: `dbPoolTimeouts=0`, `duplicateKeyConflicts=0`, 모든 SQL invariant=0, `unexpected_response_rate=0.0000`
+
+#### 이전 `0.95 / 2h` 시도와의 비교
+
+이전 0.95/2h 시도는 `soak-20260327-232958` (pre-OSIV + FOR UPDATE lock 유지 상태)로 pool timeout 69건과 search 벽시계 drift로 FAIL.
+
+| 메트릭 | 이전 2h (03-27, pre-OSIV) | 이번 2h (04-19) | 변화 |
+|--------|-----------------------|------------------|------|
+| `dbPoolTimeouts` | 69 | **0** | 완전 제거 |
+| `maxThreadsAwaitingConnection` | 200 | 193 | -7 |
+| `unexpected_response_rate` | 0.0000 | 0.0000 | 유지 |
+| `duplicateKeyConflicts` / invariants | 0 | 0 | 유지 |
+| `post.list.search.keyword.board.rows` avgWall | 21.17ms | **3.37ms** | **-84%** (search 경로 최적화 + 2h sustained 안정) |
+| `post.list.search.keyword.board.rows` maxWall | 62.31ms | 78.60ms | +26% (꼬리 증가했으나 평균은 크게 안정) |
+| `notification.store` avgWall | 2.29ms | 2.00ms | -13% |
+| `notification.read-page.summary` avgWall | 3.54ms | 2.71ms | -23% |
+| `http p95` | 274.74ms | 350.06ms | +75ms |
+| `http p99` | 347.57ms | 468.02ms | +120ms |
+
+#### FAIL 원인 분해
+
+k6 summary에서 아래 세 개 scenario threshold가 교차하면서 k6 exit code가 0이 아니게 되어 runner가 FAIL로 판정:
+
+```
+thresholds on metrics 'block_mixed_duration, bookmark_mixed_duration, follow_mixed_duration' have been crossed
+```
+
+| scenario | p95 | p99 | threshold (p95) |
+|----------|-----|-----|-----------------|
+| `block_mixed_duration` | 417.12ms | 539.41ms | <400ms (추정) |
+| `bookmark_mixed_duration` | 418.02ms | 541.40ms | <400ms (추정) |
+| `follow_mixed_duration` | 427.89ms | 552.82ms | <400ms (추정) |
+
+모두 `FOR UPDATE` 기반 relation toggle scenario. infrastructure 지표(pool, 정합성)는 모두 통과했으나 2h sustained 0.95 부하에서 per-scenario p95가 400ms 한계를 17–28ms 초과.
+
+#### 해석
+
+- **OSIV/pool/lock 3종 세트가 2h sustained에서 유효함이 확인됐다.** pre-OSIV 2h 시도의 실패 원인(~100분 지점 search drift + pool timeout storm)은 완전히 재현되지 않는다. search 벽시계는 2h 내내 3.37ms 근처에서 평평하게 유지됐고(progress tick: longest tx 15–28ms 범위로 소폭 oscillation만), pool timeout은 끝까지 0이다.
+- **새 병목 후보: `post.like.add` / `post.like.remove`.** avgWall 13.29ms / 13.32ms, sample 각 3.2M — 전체 wall time에서 단일 최대 비중. 이전 2h에서는 search가 dominant(21ms × 24만 samples)였다면, 최적화 후 `like` race 경로가 새로 드러난 ceiling으로 이동했다. `post_likes` 테이블 unique 제약·중복 catch·counter update 경로가 sustained 0.95에서 15ms급 wall time을 쓴다.
+- **p95/p99 drift는 정상 범위**: 0.95/15m 대비 `http p95` 315→350ms (+35ms), `http p99` 394→468ms (+74ms). 기존 15m→2h 확장에서 관찰되는 자연적 drift로 보이며, pool timeout/conflict가 없는 상태에서 queue depth가 지속되는 현상.
+- **k6 threshold 자체는 pre-OSIV baseline에 맞춰져 있어** 2h × 0.95 post-OSIV 현황에서는 tight함. block/bookmark/follow `FOR UPDATE` 경로를 `post.like.*`와 동일한 atomic 스타일로 전환하는 최적화가 다음 단계 자연스러운 target.
+
+#### 다음 단계 후보
+
+1. `post.like.add/remove` 경로 분해(sub-profile 추가)로 15ms 원인 지점(FOR UPDATE lock vs counter update vs duplicate catch)을 식별
+2. `bookmark/follow/block` toggle 경로도 notification과 동일하게 atomic increment·unique conflict retry로 전환 검토
+3. 재측정 후 per-scenario p95 threshold 재설정(현 post-OSIV 베이스라인 반영)
+
+#### 운영 메모
+
+- 콘솔에 10분 간격 progress 출력 기능을 `run-bbs-soak.sh` sampler에 `PROGRESS_INTERVAL_SECONDS` (기본 600) 환경 변수로 내장. 기본값으로 장시간 소크에서 자동 progress가 기록된다.
+- `run-bbs-managed-soak.sh`는 bootRun 기동 → readiness → k6 → cleanup → SIGTERM 순서로 lifecycle을 책임지므로 2h 런 중 wrapper를 중단하지 말 것. 이전 시도에서 cleanup이 120s를 넘겨 timeout났지만 summary는 정상 생성되는 best-effort 구조는 이번에도 동일하게 동작.
