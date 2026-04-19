@@ -5479,3 +5479,58 @@ k6 per-scenario threshold가 한 건도 crossing되지 않고 2h 내내 안정. 
 1. `post.like.add/remove` 경로 sub-profile 분해 (resolve-post / unique-check / insert / counter-update) 로 15ms 원인 지점 식별
 2. `post_likes` atomic upsert + `post.likeCount` atomic update로 전환 검토 (block/bookmark/follow와 동일 스타일)
 3. 재측정 후 per-scenario p95 threshold 재설정 (현 post-lock-removal 베이스라인 반영)
+
+### `post.like.add/remove` sub-profile 분해 측정 (2026-04-20)
+
+`PostService.likePost` / `unlikePost` 내부를 6–7개 sub-profile로 분해해 15ms avgWall의 원인 지점을 식별.
+
+- 계측 대상: `resolve-post` / `resolve-user` / `exists-check` / `insert` / `counter-increment` / `notify` / `response` (add) 및 `resolve-post` / `resolve-user` / `delete` / `counter-decrement` / `response` (remove)
+- 실행 시각: `20260420-023930`
+- artifact: `loadtest/results/soak-20260420-023930.md` / `-server.json` / `-metrics.jsonl` / `-k6.json`
+- 콘솔 로그: `loadtest/results/soak-run-20260420-023919.console.log`
+- 조건: `SOAK_FACTOR=0.95`, `SOAK_DURATION=2h`, `WARMUP_DURATION=2m`, `PROGRESS_INTERVAL_SECONDS=600`
+- **status: PASS** (http p95 331.63ms, p99 397.11ms — 직전 baseline 331.26/399.81ms와 동일. 계측 오버헤드 측정 불가)
+
+#### 측정 결과: sub-profile 브레이크다운
+
+**`post.like.add` (avgWall 15.41ms, n=3,212,641)**
+
+| sub-step | sampleCount | avgWallMs | maxWallMs | avgSqlMs | 점유율 |
+|----------|-------------|-----------|-----------|----------|--------|
+| `resolve-user` (FOR UPDATE) | 3,212,641 | **14.33** | 66.96 | 14.11 | **93%** |
+| `resolve-post` | 3,212,641 | 0.39 | 17.59 | 0.22 | 2.5% |
+| `exists-check` | 3,212,641 | 0.36 | 9.81 | 0.19 | 2.3% |
+| `response` | 3,212,641 | 0.31 | 16.55 | 0.16 | 2.0% |
+| `insert` | 2 | 1.77 | 1.78 | 0.75 | — |
+| `counter-increment` | 2 | 1.52 | 1.81 | 0.40 | — |
+| `notify` | 2 | 1.91 | 2.45 | 0.51 | — |
+
+**`post.like.remove` (avgWall 15.08ms, n=3,226,058)**
+
+| sub-step | sampleCount | avgWallMs | maxWallMs | avgSqlMs | 점유율 |
+|----------|-------------|-----------|-----------|----------|--------|
+| `resolve-user` (FOR UPDATE) | 3,226,058 | **14.01** | 88.16 | 13.79 | **93%** |
+| `resolve-post` | 3,226,058 | 0.39 | 17.20 | 0.23 | 2.6% |
+| `delete` | 3,226,058 | 0.36 | 15.35 | 0.18 | 2.4% |
+| `response` | 3,226,058 | 0.31 | 15.00 | 0.16 | 2.1% |
+| `counter-decrement` | 1 | 3.75 | 3.75 | 1.37 | — |
+
+#### 핵심 발견
+
+1. **`findByUsernameForUpdate()`가 15ms의 93%를 독식.** avgSqlMs (14.11 / 13.79ms) ≈ avgWallMs 이므로, SQL execution time 내부에 lock wait가 포함된 것. block/bookmark/follow에서 제거했던 것과 **동일한 requester User 행 FOR UPDATE convoy 패턴**.
+
+2. **state 변경 경로는 거의 실행되지 않는다.** 3.2M likes 중 `insert` / `counter-increment` / `notify` sample이 각 1~2건, `delete`+`counter-decrement`도 1건. 즉 k6 시나리오의 거의 모든 요청이 "이미 좋아요 상태 → no-op" 또는 "안 누름 상태 → no-op" 경로로 떨어진다. 그럼에도 **no-op인 요청조차 FOR UPDATE로 직렬화**되고 있었던 것.
+
+3. **해법은 이미 검증된 패턴**: unique 제약 `(post_id, user_id)` 기반 atomic upsert (`ON CONFLICT DO NOTHING` / `MERGE`) + bulk DELETE + atomic counter UPDATE. `post.likeCount` atomic UPDATE는 이미 있으므로 `findUserForUpdate` 제거 + `postLikeRepository`를 `RelationAtomicInserter` 스타일로 전환하면 된다.
+
+#### 예상 효과
+
+- `post.like.add` / `post.like.remove` avgWall 15ms → ~1ms (resolve-user 경로 소거)
+- 해당 시나리오 `like_add_race` / `like_remove_race` p95 221.11 / 220.66ms → ~210ms 아래 (queue depth 감소)
+- http p95 전체도 15–20ms 추가 개선 가능성 (전체 wall-time 지분 최대 경로이므로)
+
+#### 다음 단계
+
+1. `post.like.add/remove` 경로를 block/bookmark/follow와 동일하게 atomic upsert/delete로 전환 (`findUserForUpdate` 제거, `RelationAtomicInserter` 도입)
+2. 전환 후 동일 조건(0.95 / 2h) 재측정으로 예상 효과 확정
+3. 개선 폭이 충분하면 per-scenario p95 threshold도 재조정 검토

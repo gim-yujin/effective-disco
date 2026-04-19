@@ -235,20 +235,28 @@ public class PostService {
                 "post.like.add",
                 true,
                 () -> {
-                    Post post = findPost(postId);
-                    User user = findUserForUpdate(username);
+                    Post post = loadTestStepProfiler.profile(
+                            "post.like.add.resolve-post", true, () -> findPost(postId));
+                    User user = loadTestStepProfiler.profile(
+                            "post.like.add.resolve-user", true, () -> findUserForUpdate(username));
 
-                    // 문제 해결:
-                    // 토글 방식은 같은 사용자의 중복 요청이 동시에 들어오면
-                    // exists() 둘 다 false -> insert 두 번 시도로 이어질 수 있다.
-                    // 요청 주체 User 행을 먼저 잠그고 "좋아요 상태 보장" 연산으로 바꾸면
-                    // 같은 요청이 여러 번 와도 상태가 뒤집히지 않고 한 번만 반영된다.
-                    if (!postLikeRepository.existsByPostAndUser(post, user)) {
-                        postLikeRepository.save(new PostLike(post, user));
-                        postRepository.incrementLikeCount(postId);
-                        notificationService.notifyLike(post, username);
+                    boolean alreadyLiked = loadTestStepProfiler.profile(
+                            "post.like.add.exists-check", true,
+                            () -> postLikeRepository.existsByPostAndUser(post, user));
+                    if (!alreadyLiked) {
+                        loadTestStepProfiler.profile(
+                                "post.like.add.insert", true,
+                                () -> postLikeRepository.save(new PostLike(post, user)));
+                        loadTestStepProfiler.profile(
+                                "post.like.add.counter-increment", true,
+                                () -> postRepository.incrementLikeCount(postId));
+                        loadTestStepProfiler.profile(
+                                "post.like.add.notify", true,
+                                () -> notificationService.notifyLike(post, username));
                     }
-                    return buildLikeResponse(postId, true);
+                    return loadTestStepProfiler.profile(
+                            "post.like.add.response", true,
+                            () -> buildLikeResponse(postId, true));
                 }
         );
     }
@@ -266,17 +274,22 @@ public class PostService {
                 "post.like.remove",
                 true,
                 () -> {
-                    Post post = findPost(postId);
-                    User user = findUserForUpdate(username);
+                    Post post = loadTestStepProfiler.profile(
+                            "post.like.remove.resolve-post", true, () -> findPost(postId));
+                    User user = loadTestStepProfiler.profile(
+                            "post.like.remove.resolve-user", true, () -> findUserForUpdate(username));
 
-                    // 문제 해결:
-                    // delete 결과 행 수로 실제 상태 변경 여부를 판단하면
-                    // 동일한 "좋아요 해제" 요청이 여러 번 와도 likeCount를 한 번만 줄일 수 있다.
-                    long deleted = postLikeRepository.deleteByPostAndUser(post, user);
+                    long deleted = loadTestStepProfiler.profile(
+                            "post.like.remove.delete", true,
+                            () -> postLikeRepository.deleteByPostAndUser(post, user));
                     if (deleted > 0) {
-                        postRepository.decrementLikeCount(postId);
+                        loadTestStepProfiler.profile(
+                                "post.like.remove.counter-decrement", true,
+                                () -> postRepository.decrementLikeCount(postId));
                     }
-                    return buildLikeResponse(postId, false);
+                    return loadTestStepProfiler.profile(
+                            "post.like.remove.response", true,
+                            () -> buildLikeResponse(postId, false));
                 }
         );
     }
