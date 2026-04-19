@@ -7,6 +7,7 @@ import com.effectivedisco.dto.response.PostResponse;
 import com.effectivedisco.dto.response.UserSummaryResponse;
 import com.effectivedisco.repository.FollowRepository;
 import com.effectivedisco.repository.PostRepository;
+import com.effectivedisco.repository.RelationAtomicInserter;
 import com.effectivedisco.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
@@ -15,6 +16,7 @@ import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.LocalDateTime;
 import java.util.List;
 
 /**
@@ -30,10 +32,11 @@ import java.util.List;
 @RequiredArgsConstructor
 public class FollowService {
 
-    private final FollowRepository   followRepository;
-    private final UserRepository     userRepository;
-    private final PostRepository     postRepository;
-    private final UserLookupService  userLookupService;
+    private final FollowRepository        followRepository;
+    private final UserRepository          userRepository;
+    private final PostRepository          postRepository;
+    private final UserLookupService       userLookupService;
+    private final RelationAtomicInserter  relationAtomicInserter;
 
     /**
      * 팔로우 관계를 생성한다.
@@ -48,15 +51,13 @@ public class FollowService {
         if (followerUsername.equals(followingUsername)) {
             throw new IllegalArgumentException("자기 자신을 팔로우할 수 없습니다.");
         }
-        User follower  = userLookupService.findByUsernameForUpdate(followerUsername);
+        User follower  = userLookupService.findByUsername(followerUsername);
         User following = userLookupService.findByUsername(followingUsername);
 
-        // 문제 해결:
-        // 토글은 동일 요청 재시도 시 상태를 뒤집어 버린다.
-        // "팔로우 상태 보장" + 요청 주체 잠금으로 바꾸면 중복 요청이 모두 no-op가 된다.
-        if (!followRepository.existsByFollowerAndFollowing(follower, following)) {
-            followRepository.save(new Follow(follower, following));
-        }
+        // 원자적 idempotent 삽입 (PG: ON CONFLICT DO NOTHING, H2: MERGE KEY).
+        // follower row에 FOR UPDATE를 걸던 기존 직렬화 경로를 제거해 동시 toggle 압력 하에서도
+        // lock contention 없이 unique 제약만으로 중복을 방지한다.
+        relationAtomicInserter.insertFollow(follower.getId(), following.getId(), LocalDateTime.now());
     }
 
     /**
@@ -68,16 +69,12 @@ public class FollowService {
         if (followerUsername.equals(followingUsername)) {
             throw new IllegalArgumentException("자기 자신을 언팔로우할 수 없습니다.");
         }
-        User follower  = userLookupService.findByUsernameForUpdate(followerUsername);
+        User follower  = userLookupService.findByUsername(followerUsername);
         User following = userLookupService.findByUsername(followingUsername);
 
-        // 문제 해결:
-        // 삭제된 행 수에 따라 실제 변경 여부를 판단하면 동일한 언팔로우 요청 재시도가
-        // 시스템 상태를 더 이상 바꾸지 않는 멱등 연산이 된다.
-        long deleted = followRepository.deleteByFollowerAndFollowing(follower, following);
-        if (deleted == 0) {
-            return;
-        }
+        // deleteByFollowerAndFollowing는 DELETE ... WHERE 단일 문으로 이미 원자적이다.
+        // 반복 요청이어도 삭제 결과 0이 되어 최종 상태는 "언팔로우"로 수렴한다.
+        followRepository.deleteByFollowerAndFollowing(follower, following);
     }
 
     /**

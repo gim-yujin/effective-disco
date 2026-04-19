@@ -6,6 +6,7 @@ import com.effectivedisco.domain.User;
 import com.effectivedisco.dto.response.PostResponse;
 import com.effectivedisco.repository.FollowRepository;
 import com.effectivedisco.repository.PostRepository;
+import com.effectivedisco.repository.RelationAtomicInserter;
 import com.effectivedisco.repository.UserRepository;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -17,12 +18,14 @@ import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.test.util.ReflectionTestUtils;
 
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.BDDMockito.given;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -30,27 +33,28 @@ import static org.mockito.Mockito.verify;
 @ExtendWith(MockitoExtension.class)
 class FollowServiceTest {
 
-    @Mock FollowRepository   followRepository;
-    @Mock UserRepository     userRepository;
-    @Mock PostRepository     postRepository;
-    @Mock UserLookupService  userLookupService;
+    @Mock FollowRepository        followRepository;
+    @Mock UserRepository          userRepository;
+    @Mock PostRepository          postRepository;
+    @Mock UserLookupService       userLookupService;
+    @Mock RelationAtomicInserter  relationAtomicInserter;
 
     @InjectMocks FollowService followService;
 
     // ── follow / unfollow ─────────────────────────────────
 
     @Test
-    void follow_notFollowing_savesFollow() {
+    void follow_notFollowing_insertsAtomically() {
         User follower  = makeUser("alice");
         User following = makeUser("bob");
 
-        given(userLookupService.findByUsernameForUpdate("alice")).willReturn(follower);
+        given(userLookupService.findByUsername("alice")).willReturn(follower);
         given(userLookupService.findByUsername("bob")).willReturn(following);
-        given(followRepository.existsByFollowerAndFollowing(follower, following)).willReturn(false);
 
         followService.follow("alice", "bob");
 
-        verify(followRepository).save(any(Follow.class));
+        verify(relationAtomicInserter).insertFollow(eq(follower.getId()), eq(following.getId()), any(LocalDateTime.class));
+        verify(followRepository, never()).save(any());
     }
 
     @Test
@@ -58,12 +62,13 @@ class FollowServiceTest {
         User follower  = makeUser("alice");
         User following = makeUser("bob");
 
-        given(userLookupService.findByUsernameForUpdate("alice")).willReturn(follower);
+        given(userLookupService.findByUsername("alice")).willReturn(follower);
         given(userLookupService.findByUsername("bob")).willReturn(following);
-        given(followRepository.existsByFollowerAndFollowing(follower, following)).willReturn(true);
+        given(relationAtomicInserter.insertFollow(any(), any(), any(LocalDateTime.class))).willReturn(0);
 
         followService.follow("alice", "bob");
 
+        verify(relationAtomicInserter).insertFollow(eq(follower.getId()), eq(following.getId()), any(LocalDateTime.class));
         verify(followRepository, never()).save(any());
     }
 
@@ -74,6 +79,7 @@ class FollowServiceTest {
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("자기 자신을 팔로우할 수 없습니다");
 
+        verify(relationAtomicInserter, never()).insertFollow(any(), any(), any(LocalDateTime.class));
         verify(followRepository, never()).save(any());
     }
 
@@ -82,7 +88,7 @@ class FollowServiceTest {
         User follower  = makeUser("alice");
         User following = makeUser("bob");
 
-        given(userLookupService.findByUsernameForUpdate("alice")).willReturn(follower);
+        given(userLookupService.findByUsername("alice")).willReturn(follower);
         given(userLookupService.findByUsername("bob")).willReturn(following);
         given(followRepository.deleteByFollowerAndFollowing(follower, following)).willReturn(1L);
 
@@ -96,7 +102,7 @@ class FollowServiceTest {
         User follower  = makeUser("alice");
         User following = makeUser("bob");
 
-        given(userLookupService.findByUsernameForUpdate("alice")).willReturn(follower);
+        given(userLookupService.findByUsername("alice")).willReturn(follower);
         given(userLookupService.findByUsername("bob")).willReturn(following);
         given(followRepository.deleteByFollowerAndFollowing(follower, following)).willReturn(0L);
 

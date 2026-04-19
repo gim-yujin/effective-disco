@@ -8,10 +8,12 @@ import com.effectivedisco.dto.response.PostResponse;
 import com.effectivedisco.repository.BookmarkFolderRepository;
 import com.effectivedisco.repository.BookmarkRepository;
 import com.effectivedisco.repository.PostRepository;
+import com.effectivedisco.repository.RelationAtomicInserter;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.LocalDateTime;
 import java.util.List;
 
 @Service
@@ -22,6 +24,7 @@ public class BookmarkService {
     private final BookmarkFolderRepository folderRepository;
     private final PostRepository           postRepository;
     private final UserLookupService        userLookupService;
+    private final RelationAtomicInserter   relationAtomicInserter;
 
     /* ── 북마크 CRUD ─────────────────────────────────────────── */
 
@@ -31,16 +34,14 @@ public class BookmarkService {
      */
     @Transactional
     public void bookmark(String username, Long postId) {
-        User user = userLookupService.findByUsernameForUpdate(username);
+        User user = userLookupService.findByUsername(username);
         Post post = postRepository.findById(postId)
                 .orElseThrow(() -> new IllegalArgumentException("게시물을 찾을 수 없습니다: " + postId));
 
-        // 문제 해결:
-        // 토글을 "북마크 상태 보장"으로 바꾸고 요청 주체 User를 잠그면
-        // 같은 북마크 요청이 중복 도착해도 중복 row 생성 경쟁이 발생하지 않는다.
-        if (!bookmarkRepository.existsByUserAndPost(user, post)) {
-            bookmarkRepository.save(new Bookmark(user, post));
-        }
+        // 원자적 idempotent 삽입 (PG: ON CONFLICT DO NOTHING, H2: MERGE KEY). folder는 NULL로 시작.
+        // user row에 FOR UPDATE를 걸던 기존 직렬화 경로를 제거해 동시 toggle 압력 하에서도
+        // lock contention 없이 unique 제약만으로 중복을 방지한다.
+        relationAtomicInserter.insertBookmark(user.getId(), post.getId(), LocalDateTime.now());
     }
 
     /**
@@ -49,16 +50,13 @@ public class BookmarkService {
      */
     @Transactional
     public void unbookmark(String username, Long postId) {
-        User user = userLookupService.findByUsernameForUpdate(username);
+        User user = userLookupService.findByUsername(username);
         Post post = postRepository.findById(postId)
                 .orElseThrow(() -> new IllegalArgumentException("게시물을 찾을 수 없습니다: " + postId));
 
-        // 문제 해결:
-        // delete 결과가 0이면 이미 해제된 상태이므로 그대로 no-op로 끝낸다.
-        long deleted = bookmarkRepository.deleteByUserAndPost(user, post);
-        if (deleted == 0) {
-            return;
-        }
+        // deleteByUserAndPost는 DELETE ... WHERE 단일 문으로 이미 원자적이다.
+        // 반복 요청이어도 삭제 결과 0이 되어 최종 상태는 "북마크 해제"로 수렴한다.
+        bookmarkRepository.deleteByUserAndPost(user, post);
     }
 
     /** 현재 사용자가 해당 게시물을 북마크했는지 여부 */

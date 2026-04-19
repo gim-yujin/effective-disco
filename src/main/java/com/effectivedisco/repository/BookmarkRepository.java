@@ -16,7 +16,16 @@ public interface BookmarkRepository extends JpaRepository<Bookmark, Long> {
 
     boolean existsByUserAndPost(User user, Post post);
 
-    long deleteByUserAndPost(User user, Post post);
+    /**
+     * 북마크를 단일 bulk DELETE로 제거한다.
+     *
+     * <p>파생 delete는 엔티티 로드 → {@code em.remove()} 순서로 동작해 동시 호출 시
+     * 두 번째 호출에서 {@code StaleObjectState} 가 발생한다. bulk DELETE는 0건/1건 결과 모두
+     * 정상 처리되므로 lock 없이 idempotent 삭제가 가능하다.
+     */
+    @Modifying(clearAutomatically = true)
+    @Query("DELETE FROM Bookmark b WHERE b.user = :user AND b.post = :post")
+    long deleteByUserAndPost(@Param("user") User user, @Param("post") Post post);
 
     long countByUserAndPost(User user, Post post);
 

@@ -3,10 +3,12 @@ package com.effectivedisco.service;
 import com.effectivedisco.domain.Block;
 import com.effectivedisco.domain.User;
 import com.effectivedisco.repository.BlockRepository;
+import com.effectivedisco.repository.RelationAtomicInserter;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Set;
 import java.util.stream.Collectors;
@@ -21,8 +23,9 @@ import java.util.stream.Collectors;
 @RequiredArgsConstructor
 public class BlockService {
 
-    private final BlockRepository  blockRepository;
-    private final UserLookupService userLookupService;
+    private final BlockRepository         blockRepository;
+    private final UserLookupService       userLookupService;
+    private final RelationAtomicInserter  relationAtomicInserter;
 
     /**
      * 차단 관계를 생성한다.
@@ -38,15 +41,13 @@ public class BlockService {
             throw new IllegalArgumentException("자기 자신을 차단할 수 없습니다.");
         }
 
-        User blocker = userLookupService.findByUsernameForUpdate(blockerUsername);
+        User blocker = userLookupService.findByUsername(blockerUsername);
         User blocked = userLookupService.findByUsername(blockedUsername);
 
-        // 문제 해결:
-        // 토글은 재시도 시 차단이 풀리는 잘못된 결과를 만들 수 있다.
-        // "차단 상태 보장" 연산으로 고정하면 중복 요청은 모두 no-op로 수렴한다.
-        if (!blockRepository.existsByBlockerAndBlocked(blocker, blocked)) {
-            blockRepository.save(new Block(blocker, blocked));
-        }
+        // 원자적 idempotent 삽입 (PG: ON CONFLICT DO NOTHING, H2: MERGE KEY).
+        // blocker row에 FOR UPDATE를 걸던 기존 직렬화 경로를 제거해 동시 toggle 압력 하에서도
+        // lock contention 없이 unique 제약만으로 중복을 방지한다.
+        relationAtomicInserter.insertBlock(blocker.getId(), blocked.getId(), LocalDateTime.now());
     }
 
     /**
@@ -59,15 +60,12 @@ public class BlockService {
             throw new IllegalArgumentException("자기 자신을 차단 해제할 수 없습니다.");
         }
 
-        User blocker = userLookupService.findByUsernameForUpdate(blockerUsername);
+        User blocker = userLookupService.findByUsername(blockerUsername);
         User blocked = userLookupService.findByUsername(blockedUsername);
 
-        // 문제 해결:
-        // delete count 기반 해제는 같은 요청이 여러 번 반복돼도 최종 상태를 false로 유지한다.
-        long deleted = blockRepository.deleteByBlockerAndBlocked(blocker, blocked);
-        if (deleted == 0) {
-            return;
-        }
+        // deleteByBlockerAndBlocked는 DELETE ... WHERE 단일 문으로 이미 원자적이다.
+        // 반복 요청이어도 삭제 결과 0이 되어 최종 상태는 "차단 해제"로 수렴한다.
+        blockRepository.deleteByBlockerAndBlocked(blocker, blocked);
     }
 
     /**

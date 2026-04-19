@@ -3,18 +3,21 @@ package com.effectivedisco.service;
 import com.effectivedisco.domain.Block;
 import com.effectivedisco.domain.User;
 import com.effectivedisco.repository.BlockRepository;
+import com.effectivedisco.repository.RelationAtomicInserter;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.BDDMockito.given;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -22,25 +25,27 @@ import static org.mockito.Mockito.verify;
 @ExtendWith(MockitoExtension.class)
 class BlockServiceTest {
 
-    @Mock BlockRepository   blockRepository;
-    @Mock UserLookupService userLookupService;
+    @Mock BlockRepository         blockRepository;
+    @Mock UserLookupService       userLookupService;
+    @Mock RelationAtomicInserter  relationAtomicInserter;
 
     @InjectMocks BlockService blockService;
 
     // ── block / unblock ───────────────────────────────────
 
     @Test
-    void block_notBlocking_createsBlock() {
+    void block_notBlocking_insertsAtomically() {
         User blocker = makeUser("alice");
         User blocked = makeUser("bob");
 
-        given(userLookupService.findByUsernameForUpdate("alice")).willReturn(blocker);
+        given(userLookupService.findByUsername("alice")).willReturn(blocker);
         given(userLookupService.findByUsername("bob")).willReturn(blocked);
-        given(blockRepository.existsByBlockerAndBlocked(blocker, blocked)).willReturn(false);
 
         blockService.block("alice", "bob");
 
-        verify(blockRepository).save(any(Block.class));
+        // 원자적 upsert가 FOR UPDATE lock 없이 호출됨
+        verify(relationAtomicInserter).insertBlock(eq(blocker.getId()), eq(blocked.getId()), any(LocalDateTime.class));
+        verify(blockRepository, never()).save(any());
     }
 
     @Test
@@ -48,12 +53,14 @@ class BlockServiceTest {
         User blocker = makeUser("alice");
         User blocked = makeUser("bob");
 
-        given(userLookupService.findByUsernameForUpdate("alice")).willReturn(blocker);
+        given(userLookupService.findByUsername("alice")).willReturn(blocker);
         given(userLookupService.findByUsername("bob")).willReturn(blocked);
-        given(blockRepository.existsByBlockerAndBlocked(blocker, blocked)).willReturn(true);
+        // upsert는 이미 존재할 경우 0을 반환하지만 호출 자체는 수행됨 (idempotent)
+        given(relationAtomicInserter.insertBlock(any(), any(), any(LocalDateTime.class))).willReturn(0);
 
         blockService.block("alice", "bob");
 
+        verify(relationAtomicInserter).insertBlock(eq(blocker.getId()), eq(blocked.getId()), any(LocalDateTime.class));
         verify(blockRepository, never()).save(any());
     }
 
@@ -64,6 +71,7 @@ class BlockServiceTest {
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("자기 자신을 차단할 수 없습니다");
 
+        verify(relationAtomicInserter, never()).insertBlock(any(), any(), any(LocalDateTime.class));
         verify(blockRepository, never()).save(any());
     }
 
@@ -72,7 +80,7 @@ class BlockServiceTest {
         User blocker = makeUser("alice");
         User blocked = makeUser("bob");
 
-        given(userLookupService.findByUsernameForUpdate("alice")).willReturn(blocker);
+        given(userLookupService.findByUsername("alice")).willReturn(blocker);
         given(userLookupService.findByUsername("bob")).willReturn(blocked);
         given(blockRepository.deleteByBlockerAndBlocked(blocker, blocked)).willReturn(1L);
 
@@ -86,7 +94,7 @@ class BlockServiceTest {
         User blocker = makeUser("alice");
         User blocked = makeUser("bob");
 
-        given(userLookupService.findByUsernameForUpdate("alice")).willReturn(blocker);
+        given(userLookupService.findByUsername("alice")).willReturn(blocker);
         given(userLookupService.findByUsername("bob")).willReturn(blocked);
         given(blockRepository.deleteByBlockerAndBlocked(blocker, blocked)).willReturn(0L);
 

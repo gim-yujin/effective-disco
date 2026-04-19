@@ -3,6 +3,9 @@ package com.effectivedisco.repository;
 import com.effectivedisco.domain.Block;
 import com.effectivedisco.domain.User;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Modifying;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
 
 import java.util.List;
 import java.util.Optional;
@@ -18,7 +21,16 @@ public interface BlockRepository extends JpaRepository<Block, Long> {
      */
     Optional<Block> findByBlockerAndBlocked(User blocker, User blocked);
 
-    long deleteByBlockerAndBlocked(User blocker, User blocked);
+    /**
+     * 차단 관계를 단일 bulk DELETE로 제거한다.
+     *
+     * <p>Spring Data의 파생 delete 메서드는 엔티티를 로드한 뒤 {@code em.remove()}로 삭제하므로,
+     * 동시 호출에서 두 세션이 같은 row를 로드·삭제할 경우 두 번째 세션이 {@code StaleObjectState}
+     * (0 rows affected)로 실패한다. 단일 bulk DELETE는 "없으면 0건 삭제"로 자연스럽게 idempotent하다.
+     */
+    @Modifying(clearAutomatically = true)
+    @Query("DELETE FROM Block b WHERE b.blocker = :blocker AND b.blocked = :blocked")
+    long deleteByBlockerAndBlocked(@Param("blocker") User blocker, @Param("blocked") User blocked);
 
     long countByBlockerAndBlocked(User blocker, User blocked);
 
