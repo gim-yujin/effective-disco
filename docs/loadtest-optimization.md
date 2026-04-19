@@ -5573,3 +5573,58 @@ sub-profile 분해에서 확정된 원인(`resolve-user` FOR UPDATE 가 15ms 중
 
 1. 동일 조건(0.95 / 2h) 재측정으로 `post.like.add/remove` avgWall 하락 및 k6 per-scenario p95 개선 확정
 2. 예상대로 하락 시 per-scenario threshold 재조정 검토 (post-optimization baseline 반영)
+
+### `post.like` atomic 전환 2h/0.95 재측정 (2026-04-20)
+
+`soak-20260420-051735.md` — `post.like` FOR UPDATE 제거 + atomic upsert/bulk DELETE 전환 직후 2h/0.95 재측정. **모든 per-scenario threshold PASS**, invariant 전부 0(postLikeMismatchPosts, duplicateKeyConflicts, dbPoolTimeouts 등).
+
+#### `post.like` sub-profile (FOR UPDATE 제거 전 vs 후)
+
+직전 측정(`soak-20260420-023930`, sub-profile + lock on) 대비.
+
+| step | samples | pre avgWall | post avgWall | 감소 |
+|------|---------|-------------|--------------|------|
+| `post.like.add` | 5,288,552 | **15.41ms** | **2.52ms** | −83.7% |
+| `post.like.add.resolve-user` | 5,288,552 | **14.33ms** | **0.96ms** | −93.3% |
+| `post.like.add.resolve-post` | 5,288,552 | 0.74ms | 0.61ms | −17.6% |
+| `post.like.add.insert` (구 `exists+save`) | 5,288,552 | 0.17+0.05 ms | **0.40ms** (1 SQL) | SQL 2→1, atomic |
+| `post.like.remove` | 5,312,816 | **15.08ms** | **2.83ms** | −81.2% |
+| `post.like.remove.resolve-user` | 5,312,816 | ~14.3ms | **0.96ms** | −93% |
+| `post.like.remove.delete` | 5,312,816 | ~0.24ms (derived) | **0.79ms** (bulk DELETE) | +0.55ms |
+
+해석:
+- **resolve-user FOR UPDATE 제거가 예측대로 −13ms.** sub-profile 분해에서 원인으로 지목한 경로가 정확히 사라짐.
+- insert 경로는 SQL 1개로 합쳐지며 **원자적 0/1 반환**을 얻었고, 평균 0.40ms 로 이전 "exists + save" 합(0.22ms) 대비 미세 증가하지만 lock 경합 소거로 얻은 게인이 압도.
+- delete 경로는 bulk DELETE(0.79ms)가 derived delete(0.24ms)보다 평균은 약간 높지만 **stale entity 문제 + concurrent StaleObjectState 예외 리스크를 근본 제거**한 trade-off. counter-decrement/increment 게이팅도 `affected rows > 0` 반환으로 정확.
+- counter-increment/notify 발생 횟수: 5,288,552 샘플 중 **2건** (add), 5,312,816 샘플 중 **1건** (remove) — 99.99996% 가 no-op idempotent 경로임이 재확인됨.
+
+#### k6 per-scenario p95 (pre vs post)
+
+| scenario | pre p95 | post p95 | 감소 | threshold |
+|----------|---------|----------|------|-----------|
+| `like_add_race_duration` | 221.38ms | **175.86ms** | −45.52ms (−20.6%) | <400 ✅ |
+| `like_remove_race_duration` | 220.90ms | **175.32ms** | −45.58ms (−20.6%) | <400 ✅ |
+| `block_mixed_duration` | 378.30ms | **283.45ms** | −94.85ms (−25.1%) | <400 ✅ |
+| `bookmark_mixed_duration` | 379.01ms | **284.73ms** | −94.28ms (−24.9%) | <400 ✅ |
+| `follow_mixed_duration` | 382.74ms | **295.94ms** | −86.80ms (−22.7%) | <400 ✅ |
+| `http_req_duration` | 331.63ms | **242.03ms** | −89.60ms (−27.0%) | — |
+| `http_req_duration` p99 | 397.11ms | **312.34ms** | −84.77ms (−21.3%) | — |
+
+`like_*_race` 는 예상 "210ms 미만"을 **훌쩍 넘어 175ms** 로 내려왔다. 동시에 직접 경로가 아닌 block/bookmark/follow 시나리오도 −90ms 대 개선이 발생했는데, `post.like` 경로가 FOR UPDATE 경합으로 HikariCP 풀과 tomcat worker 를 점유하고 있던 것이 해소되면서 **다른 쓰기 경로 queue depth 도 동반 감소**한 파급 효과로 해석된다.
+
+#### 소크 안정성 (full 2h)
+
+- `dbPoolTimeouts=0`, `duplicateKeyConflicts=0`, `relationDuplicateRows=0`
+- `postLikeMismatchPosts=0`, `postCommentMismatchPosts=0`, `unreadNotificationMismatchUsers=0`
+- `maxActiveConnections=28` (풀 상한 도달 지속, 정상), `maxThreadsAwaitingConnection=190`
+- `longestTransactionMs`: 10m=13, 20m=16, 30m=13, 40m=10, 50m=4, 60m=8, 70m=9, 80m=8, 90m=6, 100m=25(일시 스파이크), 110m=6, 120m=**1**
+  - 이전 런의 10-43ms 대역 대비 4-16ms(+ 1회 25ms) 로 체감 절반. tx tail 도 lock 제거로 개선됨.
+
+#### 결론
+
+`post.like` FOR UPDATE 제거 + atomic upsert/bulk DELETE 전환은 **예측을 초과 달성**. 2h 소크 full PASS, invariant 위반 0, sub-profile avgWall 목표치 달성. block/bookmark/follow 와 동일 패턴이 `post.like` (counter+notify side-effect 포함)에도 통용됨을 확인.
+
+#### 다음 단계 후보
+
+1. 새로운 dominant bottleneck 식별 — `comment.create` 7.41ms / `notification.read-page.summary` 6.24ms / `post.create` 4.90ms 가 현재 top.
+2. per-scenario threshold 재조정 — 현 threshold(p95<400 / p99<700 등)가 post-atomic 실측(175ms 대)에 비해 과하게 느슨함. regression gate 로서 실효성 확보를 위한 tightening 검토.
