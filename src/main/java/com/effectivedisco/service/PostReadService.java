@@ -221,6 +221,7 @@ public class PostReadService {
     /* ── 단일 조회 / 작성자별 / 초안 ─────────────────────── */
 
     /** 단일 게시물 조회 */
+    @Transactional(readOnly = true)
     public PostResponse getPost(Long id) {
         return new PostResponse(findPost(id));
     }
