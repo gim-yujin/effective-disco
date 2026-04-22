@@ -238,7 +238,8 @@ public class BoardWebController {
             }
         }
 
-        Page<CommentResponse> commentsPage = commentService.getCommentsPage(id, commentPage, commentSize);
+        String viewerUsername = userDetails != null ? userDetails.getUsername() : null;
+        Page<CommentResponse> commentsPage = commentService.getCommentsPage(id, commentPage, commentSize, viewerUsername);
         model.addAttribute("post",           post);
         model.addAttribute("comments",       commentsPage.getContent());
         model.addAttribute("commentsPage",   commentsPage);
@@ -344,6 +345,30 @@ public class BoardWebController {
                              @AuthenticationPrincipal UserDetails userDetails) {
         postService.unlikePost(id, userDetails.getUsername());
         return "redirect:/posts/" + id;
+    }
+
+    /** 댓글 좋아요 등록 */
+    @PostMapping("/posts/{postId}/comments/{id}/like")
+    public String likeComment(@PathVariable Long postId,
+                              @PathVariable Long id,
+                              @RequestParam(defaultValue = "0") int commentPage,
+                              @RequestParam(defaultValue = "50") int commentSize,
+                              @AuthenticationPrincipal UserDetails userDetails) {
+        commentService.likeComment(id, userDetails.getUsername());
+        return "redirect:/posts/" + postId + "?commentPage=" + commentPage
+                + "&commentSize=" + commentSize + "#comment-" + id;
+    }
+
+    /** 댓글 좋아요 해제 */
+    @PostMapping("/posts/{postId}/comments/{id}/unlike")
+    public String unlikeComment(@PathVariable Long postId,
+                                @PathVariable Long id,
+                                @RequestParam(defaultValue = "0") int commentPage,
+                                @RequestParam(defaultValue = "50") int commentSize,
+                                @AuthenticationPrincipal UserDetails userDetails) {
+        commentService.unlikeComment(id, userDetails.getUsername());
+        return "redirect:/posts/" + postId + "?commentPage=" + commentPage
+                + "&commentSize=" + commentSize + "#comment-" + id;
     }
 
     /** 북마크 등록 */

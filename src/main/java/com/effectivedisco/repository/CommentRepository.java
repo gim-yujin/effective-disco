@@ -4,6 +4,7 @@ import com.effectivedisco.domain.Comment;
 import com.effectivedisco.domain.User;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
+import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.repository.query.Param;
@@ -23,6 +24,10 @@ public interface CommentRepository extends JpaRepository<Comment, Long> {
         int getDepth();
         String getAuthorUsername();
         String getAuthorProfileImageUrl();
+        /** 댓글 비정규화 좋아요 수 */
+        long getLikeCount();
+        /** 현재 뷰어가 이 댓글에 좋아요를 눌렀는지 여부 (비로그인 = false) */
+        boolean getLikedByMe();
     }
 
     interface TopLevelCommentCursor {
@@ -41,6 +46,9 @@ public interface CommentRepository extends JpaRepository<Comment, Long> {
      * 문제 해결:
      * 게시물 상세는 댓글 수가 많을수록 "최상위 댓글 전체 조회 + 각 댓글 replies/author LAZY 접근" 때문에
      * N+1 과 거대한 서버 렌더링이 동시에 터진다. 최상위 댓글은 projection + Page 로 먼저 자른다.
+     *
+     * viewerUserId 는 현재 로그인 사용자의 ID 이며 비로그인은 -1L sentinel 을 넘긴다.
+     * EXISTS 서브쿼리가 sentinel 과 매칭되는 행이 없어 항상 false 로 평가된다.
      */
     @Query(value = """
             SELECT
@@ -51,7 +59,12 @@ public interface CommentRepository extends JpaRepository<Comment, Long> {
                 c.parent.id AS parentId,
                 c.depth AS depth,
                 a.username AS authorUsername,
-                a.profileImageUrl AS authorProfileImageUrl
+                a.profileImageUrl AS authorProfileImageUrl,
+                c.likeCount AS likeCount,
+                (CASE WHEN EXISTS (
+                    SELECT 1 FROM CommentLike cl
+                    WHERE cl.comment.id = c.id AND cl.user.id = :viewerUserId
+                ) THEN TRUE ELSE FALSE END) AS likedByMe
             FROM Comment c
             JOIN c.author a
             WHERE c.post.id = :postId
@@ -65,6 +78,7 @@ public interface CommentRepository extends JpaRepository<Comment, Long> {
               AND c.parent IS NULL
             """)
     Page<CommentViewRow> findTopLevelCommentRowsByPostIdOrderByCreatedAtAsc(@Param("postId") Long postId,
+                                                                            @Param("viewerUserId") Long viewerUserId,
                                                                             Pageable pageable);
 
     /**
@@ -81,13 +95,19 @@ public interface CommentRepository extends JpaRepository<Comment, Long> {
                 c.parent.id AS parentId,
                 c.depth AS depth,
                 a.username AS authorUsername,
-                a.profileImageUrl AS authorProfileImageUrl
+                a.profileImageUrl AS authorProfileImageUrl,
+                c.likeCount AS likeCount,
+                (CASE WHEN EXISTS (
+                    SELECT 1 FROM CommentLike cl
+                    WHERE cl.comment.id = c.id AND cl.user.id = :viewerUserId
+                ) THEN TRUE ELSE FALSE END) AS likedByMe
             FROM Comment c
             JOIN c.author a
             WHERE c.parent.id IN :parentIds
             ORDER BY c.parent.id ASC, c.createdAt ASC, c.id ASC
             """)
-    List<CommentViewRow> findReplyRowsByParentIdInOrderByCreatedAtAsc(@Param("parentIds") List<Long> parentIds);
+    List<CommentViewRow> findReplyRowsByParentIdInOrderByCreatedAtAsc(@Param("parentIds") List<Long> parentIds,
+                                                                      @Param("viewerUserId") Long viewerUserId);
 
     @Query("""
             SELECT COALESCE(c.parent.id, c.id)
@@ -124,4 +144,20 @@ public interface CommentRepository extends JpaRepository<Comment, Long> {
     long countByAuthorUsernameStartingWith(String prefix);
 
     long countByPostIdAndParentIsNull(Long postId);
+
+    // ══════════════════════════════════════════════════════
+    // 원자적 좋아요 카운트 UPDATE (동시성 안전, PostRepository 와 동일 패턴)
+    // ══════════════════════════════════════════════════════
+
+    @Modifying
+    @Query("UPDATE Comment c SET c.likeCount = c.likeCount + 1 WHERE c.id = :id")
+    void incrementLikeCount(@Param("id") Long id);
+
+    @Modifying
+    @Query("UPDATE Comment c SET c.likeCount = c.likeCount - 1 WHERE c.id = :id AND c.likeCount > 0")
+    void decrementLikeCount(@Param("id") Long id);
+
+    /** 좋아요 응답에는 stale entity 값 대신 DB 의 최신 카운트를 사용한다. */
+    @Query("SELECT c.likeCount FROM Comment c WHERE c.id = :id")
+    long findLikeCountById(@Param("id") Long id);
 }

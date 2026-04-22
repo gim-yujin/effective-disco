@@ -42,6 +42,13 @@ public interface UserRepository extends JpaRepository<User, Long> {
     Optional<User> findByUsername(String username);
 
     /**
+     * 댓글 목록 조회 hot path 에서 현재 뷰어의 user id 만 필요할 때 사용하는 경량 projection.
+     * 전체 엔티티 hydration 없이 likedByMe CASE WHEN EXISTS 서브쿼리에 넘길 id 만 얻는다.
+     */
+    @Query("SELECT u.id FROM User u WHERE u.username = :username")
+    Optional<Long> findIdByUsername(@Param("username") String username);
+
+    /**
      * 문제 해결:
      * 같은 사용자가 같은 의도의 쓰기 요청을 동시에 여러 번 보내면
      * "조회 후 삽입" 사이에 경합이 생긴다. 요청 주체 User 행을 잠궈 해당 사용자의

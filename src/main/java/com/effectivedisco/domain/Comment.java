@@ -49,6 +49,12 @@ public class Comment {
     @Column(nullable = false, columnDefinition = "int default 0")
     private int depth = 0;
 
+    /**
+     * 비정규화 좋아요 수. CommentRepository 의 incrementLikeCount / decrementLikeCount 원자 UPDATE 로만 갱신한다.
+     */
+    @Column(nullable = false, columnDefinition = "int default 0")
+    private int likeCount = 0;
+
     @Column(nullable = false)
     private LocalDateTime createdAt;
 

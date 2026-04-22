@@ -5,8 +5,12 @@ import com.effectivedisco.domain.Post;
 import com.effectivedisco.domain.User;
 import com.effectivedisco.dto.request.CommentRequest;
 import com.effectivedisco.dto.response.CommentResponse;
+import com.effectivedisco.dto.response.LikeResponse;
+import com.effectivedisco.loadtest.LoadTestStepProfiler;
+import com.effectivedisco.repository.CommentLikeRepository;
 import com.effectivedisco.repository.CommentRepository;
 import com.effectivedisco.repository.PostRepository;
+import com.effectivedisco.repository.RelationAtomicInserter;
 import com.effectivedisco.repository.UserRepository;
 import jakarta.persistence.EntityManager;
 import org.springframework.beans.factory.annotation.Value;
@@ -18,6 +22,7 @@ import org.springframework.security.core.userdetails.UsernameNotFoundException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -26,40 +31,54 @@ import java.util.Map;
 @Service
 public class CommentService {
 
-    private final CommentRepository   commentRepository;
-    private final PostRepository      postRepository;
-    private final UserRepository      userRepository;
-    private final NotificationService notificationService;
-    private final EntityManager       entityManager;
-    private final UserLookupService   userLookupService;
+    /** 비로그인/익명 뷰어 id sentinel — EXISTS 서브쿼리가 절대 매칭되지 않도록 음수 값을 사용한다. */
+    private static final Long ANONYMOUS_VIEWER_ID = -1L;
+
+    private final CommentRepository       commentRepository;
+    private final CommentLikeRepository   commentLikeRepository;
+    private final PostRepository          postRepository;
+    private final UserRepository          userRepository;
+    private final NotificationService     notificationService;
+    private final EntityManager           entityManager;
+    private final UserLookupService       userLookupService;
+    private final LoadTestStepProfiler    loadTestStepProfiler;
+    private final RelationAtomicInserter  relationAtomicInserter;
 
     /** 댓글 최대 깊이. 0 = 최상위만, 1 = 1단계 대댓글, 2 = 2단계까지 허용 (기본값 2) */
     private final int maxDepth;
 
     public CommentService(CommentRepository commentRepository,
+                          CommentLikeRepository commentLikeRepository,
                           PostRepository postRepository,
                           UserRepository userRepository,
                           NotificationService notificationService,
                           EntityManager entityManager,
                           UserLookupService userLookupService,
+                          LoadTestStepProfiler loadTestStepProfiler,
+                          RelationAtomicInserter relationAtomicInserter,
                           @Value("${app.comment.max-depth:2}") int maxDepth) {
-        this.commentRepository   = commentRepository;
-        this.postRepository      = postRepository;
-        this.userRepository      = userRepository;
-        this.notificationService = notificationService;
-        this.entityManager       = entityManager;
-        this.userLookupService   = userLookupService;
-        this.maxDepth            = maxDepth;
+        this.commentRepository      = commentRepository;
+        this.commentLikeRepository  = commentLikeRepository;
+        this.postRepository         = postRepository;
+        this.userRepository         = userRepository;
+        this.notificationService    = notificationService;
+        this.entityManager          = entityManager;
+        this.userLookupService      = userLookupService;
+        this.loadTestStepProfiler   = loadTestStepProfiler;
+        this.relationAtomicInserter = relationAtomicInserter;
+        this.maxDepth               = maxDepth;
     }
 
     @Transactional(readOnly = true)
-    public Page<CommentResponse> getCommentsPage(Long postId, int page, int size) {
+    public Page<CommentResponse> getCommentsPage(Long postId, int page, int size, String viewerUsername) {
         int pageNumber = Math.max(page, 0);
         int pageSize = PaginationUtils.clampPageSize(size, 100);
         PageRequest pageable = PageRequest.of(pageNumber, pageSize);
 
+        Long viewerUserId = resolveViewerUserId(viewerUsername);
+
         Page<CommentRepository.CommentViewRow> topLevelComments =
-                commentRepository.findTopLevelCommentRowsByPostIdOrderByCreatedAtAsc(postId, pageable);
+                commentRepository.findTopLevelCommentRowsByPostIdOrderByCreatedAtAsc(postId, viewerUserId, pageable);
 
         List<Long> parentIds = topLevelComments.getContent().stream()
                 .map(CommentRepository.CommentViewRow::getId)
@@ -68,7 +87,7 @@ public class CommentService {
         Map<Long, List<CommentResponse>> repliesByParentId = new LinkedHashMap<>();
         if (!parentIds.isEmpty()) {
             for (CommentRepository.CommentViewRow replyRow :
-                    commentRepository.findReplyRowsByParentIdInOrderByCreatedAtAsc(parentIds)) {
+                    commentRepository.findReplyRowsByParentIdInOrderByCreatedAtAsc(parentIds, viewerUserId)) {
                 repliesByParentId.computeIfAbsent(replyRow.getParentId(), ignored -> new ArrayList<>())
                         .add(toCommentResponse(replyRow, List.of()));
             }
@@ -84,9 +103,20 @@ public class CommentService {
         return new PageImpl<>(content, pageable, topLevelComments.getTotalElements());
     }
 
+    /** 하위 호환: viewer 미지정 경로는 익명으로 취급 (likedByMe 항상 false). */
+    @Transactional(readOnly = true)
+    public Page<CommentResponse> getCommentsPage(Long postId, int page, int size) {
+        return getCommentsPage(postId, page, size, null);
+    }
+
+    @Transactional(readOnly = true)
+    public List<CommentResponse> getComments(Long postId, String viewerUsername) {
+        return getCommentsPage(postId, 0, 50, viewerUsername).getContent();
+    }
+
     @Transactional(readOnly = true)
     public List<CommentResponse> getComments(Long postId) {
-        return getCommentsPage(postId, 0, 50).getContent();
+        return getComments(postId, null);
     }
 
     @Transactional(readOnly = true)
@@ -192,6 +222,82 @@ public class CommentService {
         }
     }
 
+    /* ── 댓글 좋아요 ───────────────────────────────────────── */
+
+    /**
+     * 댓글에 좋아요를 건다.
+     * 이미 좋아요 상태이면 그대로 성공 처리한다 (idempotent).
+     *
+     * PostService.likePost 와 동일한 패턴:
+     * unique (comment_id, user_id) 제약 + atomic upsert (PG: ON CONFLICT DO NOTHING,
+     * H2: INSERT ... WHERE NOT EXISTS) 로 no-op 경로에서 lock 없이 상수-시간으로 완료된다.
+     */
+    @Transactional
+    public LikeResponse likeComment(Long commentId, String username) {
+        return loadTestStepProfiler.profile(
+                "comment.like.add",
+                true,
+                () -> {
+                    User user = loadTestStepProfiler.profile(
+                            "comment.like.add.resolve-user", true,
+                            () -> userLookupService.findByUsername(username));
+                    Comment comment = loadTestStepProfiler.profile(
+                            "comment.like.add.resolve-comment", true,
+                            () -> findCommentById(commentId));
+
+                    int inserted = loadTestStepProfiler.profile(
+                            "comment.like.add.insert", true,
+                            () -> relationAtomicInserter.insertCommentLike(
+                                    comment.getId(), user.getId(), LocalDateTime.now()));
+                    if (inserted > 0) {
+                        loadTestStepProfiler.profile(
+                                "comment.like.add.counter-increment", true,
+                                () -> commentRepository.incrementLikeCount(commentId));
+                        loadTestStepProfiler.profile(
+                                "comment.like.add.notify", true,
+                                () -> notificationService.notifyCommentLike(comment, username));
+                    }
+                    return loadTestStepProfiler.profile(
+                            "comment.like.add.response", true,
+                            () -> buildLikeResponse(commentId, true));
+                }
+        );
+    }
+
+    /**
+     * 댓글 좋아요를 해제한다.
+     * 이미 해제된 상태이면 그대로 성공 처리한다 (idempotent).
+     *
+     * PostService.unlikePost 와 동일한 패턴: bulk DELETE 의 반환 row 수로 counter 감소를 gating 한다.
+     */
+    @Transactional
+    public LikeResponse unlikeComment(Long commentId, String username) {
+        return loadTestStepProfiler.profile(
+                "comment.like.remove",
+                true,
+                () -> {
+                    User user = loadTestStepProfiler.profile(
+                            "comment.like.remove.resolve-user", true,
+                            () -> userLookupService.findByUsername(username));
+                    Comment comment = loadTestStepProfiler.profile(
+                            "comment.like.remove.resolve-comment", true,
+                            () -> findCommentById(commentId));
+
+                    long deleted = loadTestStepProfiler.profile(
+                            "comment.like.remove.delete", true,
+                            () -> commentLikeRepository.deleteByCommentAndUser(comment, user));
+                    if (deleted > 0) {
+                        loadTestStepProfiler.profile(
+                                "comment.like.remove.counter-decrement", true,
+                                () -> commentRepository.decrementLikeCount(commentId));
+                    }
+                    return loadTestStepProfiler.profile(
+                            "comment.like.remove.response", true,
+                            () -> buildLikeResponse(commentId, false));
+                }
+        );
+    }
+
     /**
      * 댓글 ID로 해당 댓글이 속한 게시물 ID를 반환한다.
      * 관리자 신고 패널에서 댓글 신고의 "보기" 링크가 올바른 게시물로 이동하도록 사용한다.
@@ -231,6 +337,11 @@ public class CommentService {
         return comment;
     }
 
+    private Comment findCommentById(Long commentId) {
+        return commentRepository.findById(commentId)
+                .orElseThrow(() -> new IllegalArgumentException("Comment not found: " + commentId));
+    }
+
     private Post findPost(Long postId) {
         return postRepository.findById(postId)
                 .orElseThrow(() -> new IllegalArgumentException("Post not found: " + postId));
@@ -250,6 +361,18 @@ public class CommentService {
         OwnershipChecker.check(ownerUsername, requestUsername);
     }
 
+    /** viewer username → user id (비로그인/미존재 시 sentinel -1L). */
+    private Long resolveViewerUserId(String viewerUsername) {
+        if (viewerUsername == null || viewerUsername.isBlank()) {
+            return ANONYMOUS_VIEWER_ID;
+        }
+        return userRepository.findIdByUsername(viewerUsername).orElse(ANONYMOUS_VIEWER_ID);
+    }
+
+    private LikeResponse buildLikeResponse(Long commentId, boolean liked) {
+        return new LikeResponse(liked, commentRepository.findLikeCountById(commentId));
+    }
+
     private CommentResponse toCommentResponse(CommentRepository.CommentViewRow comment,
                                               List<CommentResponse> replies) {
         return new CommentResponse(
@@ -260,6 +383,8 @@ public class CommentService {
                 comment.getUpdatedAt(),
                 comment.getDepth(),
                 comment.getAuthorProfileImageUrl(),
+                comment.getLikeCount(),
+                comment.getLikedByMe(),
                 replies
         );
     }

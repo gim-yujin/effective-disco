@@ -41,6 +41,12 @@ public class CommentResponse {
             example = "/uploads/profile/alice.jpg", nullable = true)
     private final String authorProfileImageUrl;
 
+    @Schema(description = "댓글 좋아요 수", example = "3")
+    private final long likeCount;
+
+    @Schema(description = "현재 뷰어가 이 댓글에 좋아요를 눌렀는지 여부 (비로그인 = false)", example = "false")
+    private final boolean likedByMe;
+
     public CommentResponse(Comment comment) {
         this(
                 comment,
@@ -54,6 +60,7 @@ public class CommentResponse {
      * 문제 해결:
      * freshly-created 댓글 응답은 이미 작성자 username/profile 을 알고 있으므로
      * author/replies LAZY 로딩을 다시 타지 않고도 DTO 를 만들 수 있어야 한다.
+     * 갓 생성된 댓글은 likeCount=0, likedByMe=false 로 고정된다.
      */
     public CommentResponse(Comment comment, String authorUsername, String authorProfileImageUrl) {
         this(comment, authorUsername, authorProfileImageUrl, List.of());
@@ -71,6 +78,8 @@ public class CommentResponse {
                            LocalDateTime updatedAt,
                            int depth,
                            String authorProfileImageUrl,
+                           long likeCount,
+                           boolean likedByMe,
                            List<CommentResponse> replies) {
         this.id = id;
         this.content = content;
@@ -79,6 +88,8 @@ public class CommentResponse {
         this.updatedAt = updatedAt;
         this.depth = depth;
         this.authorProfileImageUrl = authorProfileImageUrl;
+        this.likeCount = likeCount;
+        this.likedByMe = likedByMe;
         this.replies = List.copyOf(replies);
     }
 
@@ -93,6 +104,8 @@ public class CommentResponse {
         this.updatedAt = comment.getUpdatedAt();
         this.depth = comment.getDepth();
         this.authorProfileImageUrl = authorProfileImageUrl;
+        this.likeCount = comment.getLikeCount();
+        this.likedByMe = false;
         this.replies = replies;
     }
 }

@@ -29,6 +29,7 @@ public class RelationAtomicInserter {
     private String bookmarkInsertSql;
     private String followInsertSql;
     private String postLikeInsertSql;
+    private String commentLikeInsertSql;
     private boolean h2Dialect;
 
     @PostConstruct
@@ -54,6 +55,11 @@ public class RelationAtomicInserter {
                 postLikeInsertSql = "INSERT INTO post_likes (post_id, user_id, created_at) "
                                   + "SELECT ?, ?, ? WHERE NOT EXISTS ("
                                   + "SELECT 1 FROM post_likes WHERE post_id = ? AND user_id = ?)";
+                // comment.like 도 post.like 와 동일한 이유로 MERGE 대신 INSERT ... WHERE NOT EXISTS 로 실제 삽입 건수를 반환해
+                // counter UPDATE / 알림 이벤트 게이팅에 사용한다.
+                commentLikeInsertSql = "INSERT INTO comment_likes (comment_id, user_id, created_at) "
+                                     + "SELECT ?, ?, ? WHERE NOT EXISTS ("
+                                     + "SELECT 1 FROM comment_likes WHERE comment_id = ? AND user_id = ?)";
             } else {
                 // PostgreSQL: ON CONFLICT DO NOTHING — race-free idempotent 삽입.
                 blockInsertSql    = "INSERT INTO blocks (blocker_id, blocked_id, created_at) "
@@ -64,6 +70,8 @@ public class RelationAtomicInserter {
                                   + "VALUES (?, ?, ?) ON CONFLICT (follower_id, following_id) DO NOTHING";
                 postLikeInsertSql = "INSERT INTO post_likes (post_id, user_id, created_at) "
                                   + "VALUES (?, ?, ?) ON CONFLICT (post_id, user_id) DO NOTHING";
+                commentLikeInsertSql = "INSERT INTO comment_likes (comment_id, user_id, created_at) "
+                                     + "VALUES (?, ?, ?) ON CONFLICT (comment_id, user_id) DO NOTHING";
             }
         }
     }
@@ -90,5 +98,16 @@ public class RelationAtomicInserter {
             }
         }
         return jdbc.update(postLikeInsertSql, postId, userId, createdAt);
+    }
+
+    public int insertCommentLike(Long commentId, Long userId, LocalDateTime createdAt) {
+        if (h2Dialect) {
+            try {
+                return jdbc.update(commentLikeInsertSql, commentId, userId, createdAt, commentId, userId);
+            } catch (DuplicateKeyException ignored) {
+                return 0;
+            }
+        }
+        return jdbc.update(commentLikeInsertSql, commentId, userId, createdAt);
     }
 }

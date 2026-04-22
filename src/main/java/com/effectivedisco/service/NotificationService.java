@@ -86,6 +86,20 @@ public class NotificationService {
     }
 
     /**
+     * 댓글에 좋아요가 눌렸을 때 댓글 작성자에게 알림을 요청한다.
+     * 좋아요 취소 시에는 호출되지 않는다.
+     */
+    public void notifyCommentLike(Comment comment, String likerUsername) {
+        if (comment.getAuthor().getUsername().equals(likerUsername)) return;
+        publishNotification(new NotificationRequestedEvent(
+                comment.getAuthor().getUsername(),
+                NotificationType.COMMENT_LIKE,
+                likerUsername + "님이 회원님의 댓글을 좋아합니다.",
+                "/posts/" + comment.getPost().getId() + "#comment-" + comment.getId()
+        ));
+    }
+
+    /**
      * 쪽지 도착 알림을 요청한다.
      * MessageService가 본문 저장을 커밋한 뒤에만 실제 알림이 만들어지도록 이벤트로 분리한다.
      */
