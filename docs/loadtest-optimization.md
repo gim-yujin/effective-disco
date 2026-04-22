@@ -5628,3 +5628,102 @@ sub-profile 분해에서 확정된 원인(`resolve-user` FOR UPDATE 가 15ms 중
 
 1. 새로운 dominant bottleneck 식별 — `comment.create` 7.41ms / `notification.read-page.summary` 6.24ms / `post.create` 4.90ms 가 현재 top.
 2. per-scenario threshold 재조정 — 현 threshold(p95<400 / p99<700 등)가 post-atomic 실측(175ms 대)에 비해 과하게 느슨함. regression gate 로서 실효성 확보를 위한 tightening 검토.
+
+### `comment.like` 기능 신설 — no-lock atomic 패턴으로 첫 구현 (2026-04-23)
+
+`post.like` 에서 확정된 atomic upsert + bulk DELETE 패턴을 **첫 구현부터 그대로 적용**해 댓글 좋아요 기능을 추가. 기능 관점에서는 긴 스레드의 좋은 답변을 가시화할 수단이 생겼고, 부하 관점에서는 lock 경합 없이 `post.like` 와 동일 수준의 avgWall 을 확보하는 것이 목표.
+
+#### 변경 내용
+
+| 영역 | 추가 / 수정 |
+|------|-------------|
+| 도메인 | `CommentLike` 신설 (`comment_id, user_id` unique, `idx_commentlike_user`); `Comment.likeCount` 컬럼 추가 (counter는 `@Modifying` 쿼리로만 갱신) |
+| Repository | `CommentLikeRepository` (bulk `deleteByCommentAndUser`, `deleteByUser`, `deleteByCommentAuthor`); `CommentRepository` 에 `incrementLikeCount/decrementLikeCount/findLikeCountById` 추가 |
+| `RelationAtomicInserter` | `insertCommentLike(commentId, userId, createdAt)` — PG `ON CONFLICT DO NOTHING`, H2 `INSERT … SELECT … WHERE NOT EXISTS` + `DuplicateKeyException`=0 해석 |
+| Projection | `CommentViewRow` 에 `getLikeCount`, `getLikedByMe` 추가 후, `findTopLevelCommentRowsByPostId…` / `findReplyRowsByParentIdIn…` 두 쿼리에 `:viewerUserId` 바인딩 (`CASE WHEN EXISTS …`). 비로그인 = sentinel `-1L` |
+| Service | `CommentService.likeComment/unlikeComment` — `PostService.likePost/unlikePost` 구조 복제, step profiler 이름 `comment.like.add.*` / `comment.like.remove.*` |
+| Notification | `NotificationType.COMMENT_LIKE` 신설; `NotificationService.notifyCommentLike(Comment, String)` (self-like skip, 링크 `/posts/{postId}#comment-{commentId}`) |
+| DTO/Controller | `CommentResponse` 에 `likeCount/likedByMe` 필드; REST `POST|DELETE /api/posts/{postId}/comments/{id}/like`; 웹 `POST /posts/{postId}/comments/{id}/like|unlike` |
+| Template | `post/detail.html` — 최상위 / 대댓글 메타 영역에 ♡/♥ 버튼 + count, 비로그인 시 숫자만 표시 |
+| 계정 탈퇴 | `UserService.withdraw` cascade 체인에 `commentLikeRepository.deleteByUser / deleteByCommentAuthor` 삽입 |
+
+구조가 `post.like` 와 완전히 대칭이라 side-effect (counter UPDATE + notify) 게이팅 규칙도 동일: **`insert/delete affected rows > 0` 일 때만 counter 와 notify 가 발화**. race 시에도 counter drift 없음.
+
+#### k6 race 시나리오 추가
+
+`loadtest/k6/bbs-load.js` 에 다음을 추가해 post.like race 와 대칭 가드.
+
+- Trend: `comment_like_add_race_duration`, `comment_like_remove_race_duration`
+- 함수: `commentLikeAddRace(data)` / `commentLikeRemoveRace(data)` — seed 된 race user/comment 에 `POST|DELETE /api/posts/{postId}/comments/{commentId}/like`
+- setup: `createSeedCommentId()` 로 race 용 comment id 확보, remove race 는 사전 like 로 초기 상태 보장
+- 시나리오 프로필: `comment_like_idempotent_add_race`, `comment_like_idempotent_remove_race`, `comment_like_mixed`
+- threshold: `p(95)<400`, `p(99)<700` (post.like 와 동일)
+
+env fallback (`COMMENT_LIKE_ADD_VUS || LIKE_ADD_VUS`, `… || LIKE_ADD_DURATION`) 덕분에 기존 2h 소크 스크립트 변수 건드릴 필요 없이 comment race 가 자동 포함.
+
+#### 2h / 0.95 소크 결과 (`soak-20260423-033503.md`)
+
+- status: **PASS**
+- http p95 **320.41ms** / p99 **388.90ms** (threshold 400/700)
+- unexpected_response_rate **0.0000**, http_reqs **26,062,189** (≈3,559 req/s)
+- dbPoolTimeouts **0**, duplicateKeyConflicts **0**, relationDuplicateRows **0**
+- postLikeMismatchPosts / postCommentMismatchPosts / unreadNotificationMismatchUsers **0** (SQL invariant 유지)
+- maxActiveConnections **28** (풀 상한), maxThreadsAwaitingConnection **190** (타임아웃 0)
+
+##### `comment.like` sub-profile vs `post.like` (같은 런)
+
+| step | `comment.like` samples | `comment.like` avgWall | `post.like` samples | `post.like` avgWall |
+|------|----------------------:|----------------------:|-------------------:|-------------------:|
+| `*.like.add` | 3,638,907 | **2.67ms** | 3,648,836 | **2.71ms** |
+| `*.like.add.insert` | 3,638,907 | 0.43ms | 3,648,836 | 0.44ms |
+| `*.like.add.resolve-user` | 3,638,907 | 1.05ms | 3,648,836 | 1.06ms |
+| `*.like.add.resolve-{comment,post}` | 3,638,907 | 0.63ms | 3,648,836 | 0.65ms |
+| `*.like.add.response` | 3,638,907 | 0.55ms | 3,648,836 | 0.56ms |
+| `*.like.remove` | 3,635,290 | **3.02ms** | 3,657,375 | **3.03ms** |
+| `*.like.remove.delete` | 3,635,290 | 0.84ms | 3,657,375 | 0.84ms |
+| `*.like.remove.resolve-user` | 3,635,290 | 1.05ms | 3,657,375 | 1.05ms |
+
+`comment.like` 와 `post.like` 가 sub-profile 단위에서 **거의 동일 분포**. 첫 구현부터 no-lock 패턴을 적용했기 때문에 `post.like` 초기의 FOR UPDATE convoy (resolve-user 14ms) 단계를 아예 건너뛰었다. counter-increment/decrement + notify 샘플이 3.6M 중 각 1~2 건인 것도 post.like 와 동일 — 시나리오가 idempotent no-op 경로를 지배.
+
+##### k6 per-scenario p95 / p99
+
+| scenario | p95 | p99 | threshold |
+|----------|-----|-----|-----------|
+| `comment_like_add_race_duration` | **273.37ms** | 312.60ms | <400 / <700 ✅ |
+| `comment_like_remove_race_duration` | **273.53ms** | 313.05ms | <400 / <700 ✅ |
+| `like_add_race_duration` | 272.83ms | 312.14ms | <400 / <700 ✅ |
+| `like_remove_race_duration` | 272.43ms | 311.88ms | <400 / <700 ✅ |
+| `create_comment_duration` | 331.90ms | 385.07ms | <400 / <700 ✅ |
+| `block_mixed_duration` | 369.84ms | 434.94ms | <400 / <700 ✅ |
+| `bookmark_mixed_duration` | 371.83ms | 436.56ms | <400 / <700 ✅ |
+| `follow_mixed_duration` | 383.07ms | 446.64ms | <400 / <700 ✅ |
+| `http_req_duration` | 320.41ms | 388.90ms | — |
+
+post.like 런(175ms 대)에 비해 p95 가 전반적으로 100ms 대 올라 보이는 것은 같은 풀(28)과 tomcat worker 를 comment.like 2종 race 가 **추가로 100VU 이상 공유**해서 생긴 queue 지연이지, 경로 자체의 저하는 아님 — sub-profile avgWall 이 post.like 와 완전 일치하는 것이 근거. p95/p99 모두 threshold 여유 있는 범위.
+
+##### 10분 틱 안정성
+
+| elapsed | dbPoolTimeouts | duplicateKeyConflicts | maxThreadsAwaitingConnection | longestTransactionMs |
+|---:|---:|---:|---:|---:|
+| 10m | 0 | 0 | 190 | 16 |
+| 20m | 0 | 0 | 190 | 8 |
+| 30m | 0 | 0 | 190 | 5 |
+| 40m | 0 | 0 | 190 | 5 |
+| 50m | 0 | 0 | 190 | 9 |
+| 60m | 0 | 0 | 190 | 7 |
+| 70m | 0 | 0 | 190 | 9 |
+| 80m | 0 | 0 | 190 | 8 |
+| 90m | 0 | 0 | 190 | 13 |
+| 100m | 0 | 0 | 190 | 17 |
+| 110m | 0 | 0 | 190 | 7 |
+| 120m | 0 | 0 | 190 | 2 |
+
+longestTransactionMs 2–17ms 로 내내 tight, dbPoolTimeouts/duplicateKeyConflicts 는 전 구간 0. `maxThreadsAwaitingConnection=190` 은 피크 시점 스냅샷 값이 누적 유지된 것이지 정체가 누적되는 것이 아니다 (pool 이 풀 활용되는 정상 상태).
+
+##### 운영 주의 (차단 없음)
+
+- cleanup endpoint 가 타임아웃/409 로 실패 (`cleanupStatus: failed`). 캡처된 아티팩트로 summary 는 정상 생성됐고 perf 결과엔 영향 없음. scope 데이터(`soakcl0423033453` prefix) 는 테스트 DB 에 잔류하므로 주기적 수동/자동 cleanup 검토.
+
+#### 결론
+
+`comment.like` 는 첫 구현부터 `post.like` atomic 패턴을 그대로 가져가 **별도 최적화 없이 post.like 와 동일한 avgWall 분포** 를 달성. 2h/0.95 소크 full PASS, invariant 위반 0, 새 race 시나리오도 threshold 여유. 대칭성 확보로 이후 코멘트 좋아요 관련 유지보수 시에도 post.like 와 동일 튜닝 레버를 그대로 사용 가능.
