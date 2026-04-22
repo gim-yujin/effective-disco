@@ -5,8 +5,12 @@ import com.effectivedisco.domain.Post;
 import com.effectivedisco.domain.User;
 import com.effectivedisco.dto.request.CommentRequest;
 import com.effectivedisco.dto.response.CommentResponse;
+import com.effectivedisco.dto.response.LikeResponse;
+import com.effectivedisco.loadtest.NoOpLoadTestStepProfiler;
+import com.effectivedisco.repository.CommentLikeRepository;
 import com.effectivedisco.repository.CommentRepository;
 import com.effectivedisco.repository.PostRepository;
+import com.effectivedisco.repository.RelationAtomicInserter;
 import com.effectivedisco.repository.UserRepository;
 import jakarta.persistence.EntityManager;
 import org.junit.jupiter.api.BeforeEach;
@@ -14,26 +18,36 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageImpl;
+import org.springframework.data.domain.Pageable;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.test.util.ReflectionTestUtils;
 
+import java.time.LocalDateTime;
+import java.util.List;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.BDDMockito.given;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 
 @ExtendWith(MockitoExtension.class)
 class CommentServiceTest {
 
-    @Mock CommentRepository   commentRepository;
-    @Mock PostRepository      postRepository;
-    @Mock UserRepository      userRepository;
-    @Mock NotificationService notificationService;
-    @Mock EntityManager       entityManager;
-    @Mock UserLookupService   userLookupService;
+    @Mock CommentRepository      commentRepository;
+    @Mock CommentLikeRepository  commentLikeRepository;
+    @Mock PostRepository         postRepository;
+    @Mock UserRepository         userRepository;
+    @Mock NotificationService    notificationService;
+    @Mock EntityManager          entityManager;
+    @Mock UserLookupService      userLookupService;
+    @Mock RelationAtomicInserter relationAtomicInserter;
 
     CommentService commentService;
 
@@ -41,8 +55,16 @@ class CommentServiceTest {
     void setUp() {
         // 기본 최대 깊이 2로 설정
         commentService = new CommentService(
-                commentRepository, postRepository, userRepository,
-                notificationService, entityManager, userLookupService, 2
+                commentRepository,
+                commentLikeRepository,
+                postRepository,
+                userRepository,
+                notificationService,
+                entityManager,
+                userLookupService,
+                new NoOpLoadTestStepProfiler(),
+                relationAtomicInserter,
+                2
         );
     }
 
@@ -172,6 +194,126 @@ class CommentServiceTest {
                 .hasMessageContaining("Comment does not belong to the post");
     }
 
+    // ── like / unlike ────────────────────────────────────
+
+    @Test
+    void likeComment_whenNotLiked_createsLikeAndReturnsLatestCount() {
+        User user = makeUser("alice");
+        ReflectionTestUtils.setField(user, "id", 7L);
+        Post post = makePost(1L, makeUser("author"));
+        Comment comment = makeComment(10L, "body", post, makeUser("author"), null);
+
+        given(userLookupService.findByUsername("alice")).willReturn(user);
+        given(commentRepository.findById(10L)).willReturn(Optional.of(comment));
+        given(relationAtomicInserter.insertCommentLike(eq(10L), eq(7L), any(LocalDateTime.class))).willReturn(1);
+        given(commentRepository.findLikeCountById(10L)).willReturn(1L);
+
+        LikeResponse response = commentService.likeComment(10L, "alice");
+
+        assertThat(response.isLiked()).isTrue();
+        assertThat(response.getLikeCount()).isEqualTo(1L);
+        verify(commentRepository).incrementLikeCount(10L);
+        verify(notificationService).notifyCommentLike(comment, "alice");
+    }
+
+    @Test
+    void likeComment_whenAlreadyLiked_isIdempotent() {
+        User user = makeUser("alice");
+        ReflectionTestUtils.setField(user, "id", 7L);
+        Post post = makePost(1L, makeUser("author"));
+        Comment comment = makeComment(10L, "body", post, makeUser("author"), null);
+
+        given(userLookupService.findByUsername("alice")).willReturn(user);
+        given(commentRepository.findById(10L)).willReturn(Optional.of(comment));
+        given(relationAtomicInserter.insertCommentLike(eq(10L), eq(7L), any(LocalDateTime.class))).willReturn(0);
+        given(commentRepository.findLikeCountById(10L)).willReturn(1L);
+
+        LikeResponse response = commentService.likeComment(10L, "alice");
+
+        assertThat(response.isLiked()).isTrue();
+        assertThat(response.getLikeCount()).isEqualTo(1L);
+        verify(commentRepository, never()).incrementLikeCount(anyLong());
+        verify(notificationService, never()).notifyCommentLike(any(), any());
+    }
+
+    @Test
+    void unlikeComment_whenLiked_deletesLikeAndReturnsLatestCount() {
+        User user = makeUser("alice");
+        Post post = makePost(1L, makeUser("author"));
+        Comment comment = makeComment(10L, "body", post, makeUser("author"), null);
+
+        given(userLookupService.findByUsername("alice")).willReturn(user);
+        given(commentRepository.findById(10L)).willReturn(Optional.of(comment));
+        given(commentLikeRepository.deleteByCommentAndUser(comment, user)).willReturn(1L);
+        given(commentRepository.findLikeCountById(10L)).willReturn(0L);
+
+        LikeResponse response = commentService.unlikeComment(10L, "alice");
+
+        assertThat(response.isLiked()).isFalse();
+        assertThat(response.getLikeCount()).isZero();
+        verify(commentRepository).decrementLikeCount(10L);
+    }
+
+    @Test
+    void unlikeComment_whenAlreadyUnliked_isIdempotent() {
+        User user = makeUser("alice");
+        Post post = makePost(1L, makeUser("author"));
+        Comment comment = makeComment(10L, "body", post, makeUser("author"), null);
+
+        given(userLookupService.findByUsername("alice")).willReturn(user);
+        given(commentRepository.findById(10L)).willReturn(Optional.of(comment));
+        given(commentLikeRepository.deleteByCommentAndUser(comment, user)).willReturn(0L);
+        given(commentRepository.findLikeCountById(10L)).willReturn(0L);
+
+        LikeResponse response = commentService.unlikeComment(10L, "alice");
+
+        assertThat(response.isLiked()).isFalse();
+        assertThat(response.getLikeCount()).isZero();
+        verify(commentRepository, never()).decrementLikeCount(anyLong());
+    }
+
+    // ── viewer-aware list (projection) ────────────────────
+
+    @Test
+    void getCommentsPage_populatesLikeCountAndLikedByMe_forViewer() {
+        // viewer 가 id 77L 이고, projection 쿼리가 comment 10L 에 대해 likedByMe=true/likeCount=3 을 돌려준다.
+        given(userRepository.findIdByUsername("alice")).willReturn(Optional.of(77L));
+
+        CommentRepository.CommentViewRow topRow = commentViewRow(10L, null, 0, 3L, true);
+        Page<CommentRepository.CommentViewRow> topPage =
+                new PageImpl<>(List.of(topRow), Pageable.ofSize(50), 1L);
+        given(commentRepository.findTopLevelCommentRowsByPostIdOrderByCreatedAtAsc(
+                eq(1L), eq(77L), any(Pageable.class))).willReturn(topPage);
+        given(commentRepository.findReplyRowsByParentIdInOrderByCreatedAtAsc(
+                eq(List.of(10L)), eq(77L))).willReturn(List.of());
+
+        Page<CommentResponse> page = commentService.getCommentsPage(1L, 0, 50, "alice");
+
+        assertThat(page.getContent()).hasSize(1);
+        CommentResponse top = page.getContent().get(0);
+        assertThat(top.getLikeCount()).isEqualTo(3L);
+        assertThat(top.isLikedByMe()).isTrue();
+    }
+
+    @Test
+    void getCommentsPage_likedByMeIsFalse_forAnonymousViewer() {
+        // 비로그인 뷰어는 sentinel -1L 로 변환되어야 한다 — userRepository.findIdByUsername 호출 없이 바로 projection 에 넘어간다.
+        CommentRepository.CommentViewRow topRow = commentViewRow(10L, null, 0, 5L, false);
+        Page<CommentRepository.CommentViewRow> topPage =
+                new PageImpl<>(List.of(topRow), Pageable.ofSize(50), 1L);
+        given(commentRepository.findTopLevelCommentRowsByPostIdOrderByCreatedAtAsc(
+                eq(1L), eq(-1L), any(Pageable.class))).willReturn(topPage);
+        given(commentRepository.findReplyRowsByParentIdInOrderByCreatedAtAsc(
+                eq(List.of(10L)), eq(-1L))).willReturn(List.of());
+
+        Page<CommentResponse> page = commentService.getCommentsPage(1L, 0, 50, null);
+
+        assertThat(page.getContent()).hasSize(1);
+        CommentResponse top = page.getContent().get(0);
+        assertThat(top.getLikeCount()).isEqualTo(5L);
+        assertThat(top.isLikedByMe()).isFalse();
+    }
+
     // --- helpers ---
 
     private User makeUser(String username) {
@@ -228,6 +370,25 @@ class CommentServiceTest {
             public String getProfileImageUrl() {
                 return profileImageUrl;
             }
+        };
+    }
+
+    private CommentRepository.CommentViewRow commentViewRow(Long id,
+                                                            Long parentId,
+                                                            int depth,
+                                                            long likeCount,
+                                                            boolean likedByMe) {
+        return new CommentRepository.CommentViewRow() {
+            @Override public Long getId() { return id; }
+            @Override public String getContent() { return "content"; }
+            @Override public LocalDateTime getCreatedAt() { return LocalDateTime.now(); }
+            @Override public LocalDateTime getUpdatedAt() { return LocalDateTime.now(); }
+            @Override public Long getParentId() { return parentId; }
+            @Override public int getDepth() { return depth; }
+            @Override public String getAuthorUsername() { return "author"; }
+            @Override public String getAuthorProfileImageUrl() { return null; }
+            @Override public long getLikeCount() { return likeCount; }
+            @Override public boolean getLikedByMe() { return likedByMe; }
         };
     }
 }

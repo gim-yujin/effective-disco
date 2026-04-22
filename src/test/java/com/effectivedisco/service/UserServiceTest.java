@@ -4,6 +4,7 @@ import com.effectivedisco.domain.User;
 import com.effectivedisco.dto.request.PasswordChangeRequest;
 import com.effectivedisco.dto.request.ProfileEditRequest;
 import com.effectivedisco.repository.BlockRepository;
+import com.effectivedisco.repository.CommentLikeRepository;
 import com.effectivedisco.repository.CommentRepository;
 import com.effectivedisco.repository.FollowRepository;
 import com.effectivedisco.repository.MessageRepository;
@@ -33,6 +34,7 @@ class UserServiceTest {
     @Mock PostRepository         postRepository;
     @Mock CommentRepository      commentRepository;
     @Mock PostLikeRepository     postLikeRepository;
+    @Mock CommentLikeRepository  commentLikeRepository;
     @Mock NotificationRepository notificationRepository;
     @Mock MessageRepository      messageRepository;
     @Mock ReportRepository       reportRepository;
@@ -143,6 +145,8 @@ class UserServiceTest {
         verify(messageRepository).deleteAllByUser(user);
         verify(postLikeRepository).deleteByUser(user);
         verify(postLikeRepository).deleteByPostAuthor(user);
+        verify(commentLikeRepository).deleteByUser(user);
+        verify(commentLikeRepository).deleteByCommentAuthor(user);
         verify(reportRepository).deleteByReporter(user);
         verify(userRepository).delete(user);
     }

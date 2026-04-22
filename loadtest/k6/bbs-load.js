@@ -18,6 +18,8 @@ const createPostDuration = new Trend('create_post_duration');
 const createCommentDuration = new Trend('create_comment_duration');
 const likeAddRaceDuration = new Trend('like_add_race_duration');
 const likeRemoveRaceDuration = new Trend('like_remove_race_duration');
+const commentLikeAddRaceDuration = new Trend('comment_like_add_race_duration');
+const commentLikeRemoveRaceDuration = new Trend('comment_like_remove_race_duration');
 const bookmarkMixedDuration = new Trend('bookmark_mixed_duration');
 const followMixedDuration = new Trend('follow_mixed_duration');
 const blockMixedDuration = new Trend('block_mixed_duration');
@@ -183,6 +185,24 @@ addConstantVusScenario(
 );
 
 addConstantVusScenario(
+  'comment_like_idempotent_add_race',
+  'commentLikeAddRace',
+  Number(__ENV.COMMENT_LIKE_ADD_VUS || __ENV.LIKE_ADD_VUS || 30),
+  __ENV.COMMENT_LIKE_ADD_DURATION || __ENV.LIKE_ADD_DURATION || '45s',
+  'relation_mixed',
+  'comment_like_mixed'
+);
+
+addConstantVusScenario(
+  'comment_like_idempotent_remove_race',
+  'commentLikeRemoveRace',
+  Number(__ENV.COMMENT_LIKE_REMOVE_VUS || __ENV.LIKE_REMOVE_VUS || 30),
+  __ENV.COMMENT_LIKE_REMOVE_DURATION || __ENV.LIKE_REMOVE_DURATION || '45s',
+  'relation_mixed',
+  'comment_like_mixed'
+);
+
+addConstantVusScenario(
   'bookmark_mixed_race',
   'bookmarkMixedRace',
   bookmarkMixedVus,
@@ -238,6 +258,8 @@ export const options = {
     create_comment_duration: ['p(95)<700', 'p(99)<1300'],
     like_add_race_duration: ['p(95)<400', 'p(99)<700'],
     like_remove_race_duration: ['p(95)<400', 'p(99)<700'],
+    comment_like_add_race_duration: ['p(95)<400', 'p(99)<700'],
+    comment_like_remove_race_duration: ['p(95)<400', 'p(99)<700'],
     bookmark_mixed_duration: ['p(95)<400', 'p(99)<700'],
     follow_mixed_duration: ['p(95)<400', 'p(99)<700'],
     block_mixed_duration: ['p(95)<400', 'p(99)<700'],
@@ -312,6 +334,27 @@ export function setup() {
 
   http.post(`${BASE_URL}/api/posts/${likeRemoveRacePostId}/like`, null, authParams(likeRemoveRaceUser.token));
 
+  // 문제 해결:
+  // post.like와 대칭으로 comment.like race용 댓글/사용자 한 세트를 추가 seeding.
+  // remove race 쪽은 사전 like 상태를 만들어 두어야 "이미 해제됨" 경로만 두드리는 편향을 피할 수 있다.
+  const commentLikeAddRaceUser = signupUser(`${prefix}cla0`);
+  const commentLikeRemoveRaceUser = signupUser(`${prefix}clr0`);
+  const commentLikeAddRaceCommentId = createSeedCommentId(
+    seedUsers[0].token,
+    likeAddRacePostId,
+    `${prefix} comment like add race seed`
+  );
+  const commentLikeRemoveRaceCommentId = createSeedCommentId(
+    seedUsers[0].token,
+    likeRemoveRacePostId,
+    `${prefix} comment like remove race seed`
+  );
+  http.post(
+    `${BASE_URL}/api/posts/${likeRemoveRacePostId}/comments/${commentLikeRemoveRaceCommentId}/like`,
+    null,
+    authParams(commentLikeRemoveRaceUser.token)
+  );
+
   return {
     boards,
     hotPostIds,
@@ -329,6 +372,12 @@ export function setup() {
     likeAddRacePostId,
     likeRemoveRaceUser,
     likeRemoveRacePostId,
+    commentLikeAddRaceUser,
+    commentLikeAddRacePostId: likeAddRacePostId,
+    commentLikeAddRaceCommentId,
+    commentLikeRemoveRaceUser,
+    commentLikeRemoveRacePostId: likeRemoveRacePostId,
+    commentLikeRemoveRaceCommentId,
   };
 }
 
@@ -420,6 +469,28 @@ export function likeRemoveRace(data) {
 
   likeRemoveRaceDuration.add(response.timings.duration);
   recordResponse(response, [200], 'idempotent like remove');
+}
+
+export function commentLikeAddRace(data) {
+  const response = http.post(
+    `${BASE_URL}/api/posts/${data.commentLikeAddRacePostId}/comments/${data.commentLikeAddRaceCommentId}/like`,
+    null,
+    authParams(data.commentLikeAddRaceUser.token)
+  );
+
+  commentLikeAddRaceDuration.add(response.timings.duration);
+  recordResponse(response, [200], 'idempotent comment like add');
+}
+
+export function commentLikeRemoveRace(data) {
+  const response = http.del(
+    `${BASE_URL}/api/posts/${data.commentLikeRemoveRacePostId}/comments/${data.commentLikeRemoveRaceCommentId}/like`,
+    null,
+    authParams(data.commentLikeRemoveRaceUser.token)
+  );
+
+  commentLikeRemoveRaceDuration.add(response.timings.duration);
+  recordResponse(response, [200], 'idempotent comment like remove');
 }
 
 export function bookmarkMixedRace(data) {
@@ -532,6 +603,8 @@ export function handleSummary(data) {
     `create_comment_duration p95=${formatMetric(data, 'create_comment_duration', 'p(95)')} p99=${formatMetric(data, 'create_comment_duration', 'p(99)')}`,
     `like_add_race_duration p95=${formatMetric(data, 'like_add_race_duration', 'p(95)')} p99=${formatMetric(data, 'like_add_race_duration', 'p(99)')}`,
     `like_remove_race_duration p95=${formatMetric(data, 'like_remove_race_duration', 'p(95)')} p99=${formatMetric(data, 'like_remove_race_duration', 'p(99)')}`,
+    `comment_like_add_race_duration p95=${formatMetric(data, 'comment_like_add_race_duration', 'p(95)')} p99=${formatMetric(data, 'comment_like_add_race_duration', 'p(99)')}`,
+    `comment_like_remove_race_duration p95=${formatMetric(data, 'comment_like_remove_race_duration', 'p(95)')} p99=${formatMetric(data, 'comment_like_remove_race_duration', 'p(99)')}`,
     `bookmark_mixed_duration p95=${formatMetric(data, 'bookmark_mixed_duration', 'p(95)')} p99=${formatMetric(data, 'bookmark_mixed_duration', 'p(99)')}`,
     `follow_mixed_duration p95=${formatMetric(data, 'follow_mixed_duration', 'p(95)')} p99=${formatMetric(data, 'follow_mixed_duration', 'p(99)')}`,
     `block_mixed_duration p95=${formatMetric(data, 'block_mixed_duration', 'p(95)')} p99=${formatMetric(data, 'block_mixed_duration', 'p(99)')}`,
@@ -614,6 +687,11 @@ function createComment(token, postId, content, strict = false) {
     recordResponse(response, [201], `seed comment ${postId}`);
   }
   return response;
+}
+
+function createSeedCommentId(token, postId, content) {
+  const response = createComment(token, postId, content, true);
+  return response.json().id;
 }
 
 function resetLoadTestMetrics() {

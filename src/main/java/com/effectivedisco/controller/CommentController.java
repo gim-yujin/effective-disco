@@ -2,6 +2,7 @@ package com.effectivedisco.controller;
 
 import com.effectivedisco.dto.request.CommentRequest;
 import com.effectivedisco.dto.response.CommentResponse;
+import com.effectivedisco.dto.response.LikeResponse;
 import com.effectivedisco.service.CommentService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
@@ -42,8 +43,10 @@ public class CommentController {
             @Parameter(description = "댓글 페이지 번호 (0부터 시작)", example = "0")
             @RequestParam(defaultValue = "0") int page,
             @Parameter(description = "댓글 페이지 크기", example = "50")
-            @RequestParam(defaultValue = "50") int size) {
-        return ResponseEntity.ok(commentService.getCommentsPage(postId, page, size));
+            @RequestParam(defaultValue = "50") int size,
+            @AuthenticationPrincipal UserDetails userDetails) {
+        String viewerUsername = userDetails != null ? userDetails.getUsername() : null;
+        return ResponseEntity.ok(commentService.getCommentsPage(postId, page, size, viewerUsername));
     }
 
     @Operation(summary = "댓글 작성", security = @SecurityRequirement(name = "bearerAuth"))
@@ -92,6 +95,34 @@ public class CommentController {
             @Valid @RequestBody CommentRequest request,
             @AuthenticationPrincipal UserDetails userDetails) {
         return ResponseEntity.ok(commentService.updateComment(postId, id, request, userDetails.getUsername()));
+    }
+
+    @Operation(summary = "댓글 좋아요 등록", description = "idempotent — 이미 좋아요 상태면 그대로 성공 처리.",
+               security = @SecurityRequirement(name = "bearerAuth"))
+    @ApiResponses({
+        @ApiResponse(responseCode = "200", description = "좋아요 상태 반환"),
+        @ApiResponse(responseCode = "401", description = "인증 토큰 없음 또는 만료")
+    })
+    @PostMapping("/{id}/like")
+    public ResponseEntity<LikeResponse> likeComment(
+            @Parameter(description = "게시물 ID") @PathVariable Long postId,
+            @Parameter(description = "댓글 ID") @PathVariable Long id,
+            @AuthenticationPrincipal UserDetails userDetails) {
+        return ResponseEntity.ok(commentService.likeComment(id, userDetails.getUsername()));
+    }
+
+    @Operation(summary = "댓글 좋아요 해제", description = "idempotent — 이미 해제 상태면 그대로 성공 처리.",
+               security = @SecurityRequirement(name = "bearerAuth"))
+    @ApiResponses({
+        @ApiResponse(responseCode = "200", description = "좋아요 상태 반환"),
+        @ApiResponse(responseCode = "401", description = "인증 토큰 없음 또는 만료")
+    })
+    @DeleteMapping("/{id}/like")
+    public ResponseEntity<LikeResponse> unlikeComment(
+            @Parameter(description = "게시물 ID") @PathVariable Long postId,
+            @Parameter(description = "댓글 ID") @PathVariable Long id,
+            @AuthenticationPrincipal UserDetails userDetails) {
+        return ResponseEntity.ok(commentService.unlikeComment(id, userDetails.getUsername()));
     }
 
     @Operation(summary = "댓글 삭제", security = @SecurityRequirement(name = "bearerAuth"))
