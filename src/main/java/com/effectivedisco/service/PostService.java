@@ -107,6 +107,7 @@ public class PostService {
             post.addImage(new PostImage(post, imageUrls.get(i), i));
         }
         Post saved = loadTestStepProfiler.profile("post.create.persist", true, () -> postRepository.save(post));
+        notificationService.notifyMentions(saved.getContent(), username, "/posts/" + saved.getId());
         return loadTestStepProfiler.profile(
                 "post.create.response",
                 true,
@@ -131,7 +132,9 @@ public class PostService {
     public PostResponse updatePost(Long id, PostRequest request, String username) {
         Post post = findPost(id);
         checkOwnership(post.getAuthor().getUsername(), username);
+        String oldContent = post.getContent();
         post.update(request.getTitle(), request.getContent());
+        notificationService.notifyNewMentions(oldContent, post.getContent(), username, "/posts/" + post.getId());
 
         post.getTags().clear();
         post.getTags().addAll(resolveTagsForWrite(request.getTagsInput()).entities());

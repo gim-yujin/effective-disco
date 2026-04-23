@@ -24,6 +24,7 @@ import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 import java.util.List;
+import java.util.Set;
 
 @Service
 @RequiredArgsConstructor
@@ -110,6 +111,42 @@ public class NotificationService {
                 senderUsername + "님이 쪽지를 보냈습니다: " + title,
                 "/messages/" + messageId
         ));
+    }
+
+    /**
+     * 게시물/댓글 본문에서 @username 을 파싱해 언급된 사용자에게 알림을 요청한다.
+     * 자기 자신은 제외하고, 존재하는 username 만 벌크 조회 1회로 필터링한다.
+     */
+    public void notifyMentions(String content, String actorUsername, String link) {
+        Set<String> candidates = MentionParser.extract(content);
+        candidates.remove(actorUsername);
+        publishMentions(candidates, actorUsername, link);
+    }
+
+    /**
+     * 본문 수정 시 "새로 추가된" 멘션에만 알림을 발행한다.
+     * 기존 본문에 이미 있던 멘션 대상은 재알림하지 않는다.
+     */
+    public void notifyNewMentions(String oldContent, String newContent, String actorUsername, String link) {
+        Set<String> newMentions = MentionParser.extract(newContent);
+        newMentions.removeAll(MentionParser.extract(oldContent));
+        newMentions.remove(actorUsername);
+        publishMentions(newMentions, actorUsername, link);
+    }
+
+    private void publishMentions(Set<String> recipients, String actorUsername, String link) {
+        if (recipients.isEmpty()) return;
+        List<String> existing = userRepository.findExistingUsernames(recipients);
+        if (existing.isEmpty()) return;
+        String message = actorUsername + "님이 회원님을 언급했습니다.";
+        for (String recipient : existing) {
+            publishNotification(new NotificationRequestedEvent(
+                    recipient,
+                    NotificationType.MENTION,
+                    message,
+                    link
+            ));
+        }
     }
 
     /**

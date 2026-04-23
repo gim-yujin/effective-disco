@@ -166,6 +166,12 @@ public class CommentService {
         postRepository.incrementCommentCount(postId);
         // 게시물 작성자에게 댓글 알림 (본인 댓글은 제외)
         notificationService.notifyComment(postTarget.getAuthorUsername(), postId, username);
+        // 댓글 본문에서 @username 언급된 사용자에게 알림
+        notificationService.notifyMentions(
+                savedComment.getContent(),
+                username,
+                "/posts/" + postId + "#comment-" + savedComment.getId()
+        );
         return new CommentResponse(savedComment, authorSnapshot.getUsername(), authorSnapshot.getProfileImageUrl());
     }
 
@@ -206,7 +212,14 @@ public class CommentService {
     public CommentResponse updateComment(Long postId, Long commentId, CommentRequest request, String username) {
         Comment comment = findComment(commentId, postId);
         checkOwnership(comment.getAuthor().getUsername(), username);
+        String oldContent = comment.getContent();
         comment.update(request.getContent());
+        notificationService.notifyNewMentions(
+                oldContent,
+                comment.getContent(),
+                username,
+                "/posts/" + postId + "#comment-" + commentId
+        );
         return new CommentResponse(comment);
     }
 

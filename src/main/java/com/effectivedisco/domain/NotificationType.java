@@ -11,5 +11,7 @@ public enum NotificationType {
     /** 내 댓글에 좋아요가 눌렸을 때 */
     COMMENT_LIKE,
     /** 새 쪽지(DM)가 도착했을 때 */
-    MESSAGE
+    MESSAGE,
+    /** 게시물/댓글 본문에서 @username 으로 언급되었을 때 */
+    MENTION
 }

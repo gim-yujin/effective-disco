@@ -8,6 +8,7 @@ import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 
@@ -70,6 +71,13 @@ public interface UserRepository extends JpaRepository<User, Long> {
 
     boolean existsByUsername(String username);
     boolean existsByEmail(String email);
+
+    /**
+     * 주어진 username 후보 중 실제로 존재하는 것만 반환한다.
+     * @mention 알림 발행 전에 존재하지 않는 username 을 걸러 이벤트 발행을 줄이기 위한 벌크 조회.
+     */
+    @Query("SELECT u.username FROM User u WHERE u.username IN :usernames")
+    List<String> findExistingUsernames(@Param("usernames") Collection<String> usernames);
 
     /**
      * 문제 해결:
