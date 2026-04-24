@@ -844,6 +844,49 @@
 - 30분 장시간 관찰에서도 정합성, pool timeout, 응답 오류는 발생하지 않았다.
 - 다만 장시간 누적 profile 에서는 `notification.read-all.summary`, `notification.store`, `post.list.browse.rows` wall time 이 상대적으로 커졌으므로, 다음 장기 관찰 우선순위는 이 세 경로다.
 
+## 29차 결과
+
+상태: 완료
+
+검증 날짜:
+
+- 2026-04-24
+
+검증 범위:
+
+- clean 전용 `effectivedisco_loadtest` DB 재생성
+- 전체 Gradle 회귀 테스트
+- broad mixed `0.9 / 2시간 soak`
+  - `WARMUP=2m`
+  - `SOAK=2h`
+  - `BASE_URL=http://127.0.0.1:18082`
+
+핵심 결론:
+
+- 전체 Gradle 회귀 테스트는 `BUILD SUCCESSFUL` 로 통과했다.
+- 실행 artifact:
+  - [suite](/home/admin0/effective-disco/loadtest/results/soak-20260424-071239.md)
+  - [server metrics](/home/admin0/effective-disco/loadtest/results/soak-20260424-071239-server.json)
+  - [metrics timeline](/home/admin0/effective-disco/loadtest/results/soak-20260424-071239-metrics.jsonl)
+  - [sql snapshot](/home/admin0/effective-disco/loadtest/results/soak-20260424-071239-sql.tsv)
+- 결과는 `PASS` 였다.
+  - `http p95 = 255.01ms`
+  - `http p99 = 325.26ms`
+  - `unexpected_response_rate = 0.0000`
+  - `dbPoolTimeouts = 0`
+  - `duplicateKeyConflicts = 0`
+  - `maxActiveConnections = 28`
+  - `maxThreadsAwaitingConnection = 190`
+- SQL 정합성 snapshot 은 전부 `0` 이었다.
+  - 관계 중복 row `0`
+  - `postLike/comment/unread mismatch = 0`
+- 종료 후 cleanup endpoint 가 `409` 를 반환해 리포트의 `cleanupStatus` 는 `failed` 로 남았다.
+  - 앱 로그 기준 원인은 `comments` 삭제가 `comment_likes` FK 에 막힌 cleanup 삭제 순서 문제였다.
+  - 이는 summary 생성 이후 후처리 실패라서 soak PASS 판정과 정합성 snapshot 에는 영향을 주지 않았다.
+  - artifact 수집 후 전용 DB 는 수동 재생성해 로컬 잔여 loadtest 데이터를 제거했다.
+- 2시간 누적 profile 에서 평균 wall time 상위 경로는 `jwt.auth.load-user.db`, `comment.create`, `notification.read-page.summary`, `post.create`, `notification.store`, `post.list.search.rows` 였다.
+- 결론적으로 clean 전용 DB 기준 broad mixed `0.9` 는 2시간 장시간 검증에서도 정합성, pool timeout, 예상 밖 응답 없이 유지됐다.
+
 ## 1차에서 보장한 불변식
 
 ### 관계형 쓰기 경로
