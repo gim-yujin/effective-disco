@@ -21,7 +21,7 @@ SUMMARY_REPORT_FILE="$RESULT_DIR/soak-$SUITE_TIMESTAMP.md"
 
 export PGHOST="${PGHOST:-localhost}"
 export PGPORT="${PGPORT:-5432}"
-export PGDATABASE="${PGDATABASE:-effectivedisco}"
+export PGDATABASE="${PGDATABASE:-${APP_LOAD_TEST_DB_NAME:-effectivedisco_loadtest}}"
 export PGUSER="${PGUSER:-postgres}"
 export PGPASSWORD="${PGPASSWORD:-4321}"
 

@@ -2,6 +2,7 @@ package com.effectivedisco.loadtest;
 
 import com.effectivedisco.domain.User;
 import com.effectivedisco.repository.BlockRepository;
+import com.effectivedisco.repository.CommentLikeRepository;
 import com.effectivedisco.repository.CommentRepository;
 import com.effectivedisco.repository.MessageRepository;
 import com.effectivedisco.repository.NotificationRepository;
@@ -36,6 +37,7 @@ public class LoadTestDataCleanupService {
     private final MessageRepository messageRepository;
     private final PasswordResetTokenRepository passwordResetTokenRepository;
     private final PostLikeRepository postLikeRepository;
+    private final CommentLikeRepository commentLikeRepository;
     private final ReportRepository reportRepository;
     private final BlockRepository blockRepository;
 
@@ -59,6 +61,9 @@ public class LoadTestDataCleanupService {
             messageRepository.deleteAllByUser(user);
             postLikeRepository.deleteByUser(user);
             postLikeRepository.deleteByPostAuthor(user);
+            commentLikeRepository.deleteByUser(user);
+            commentLikeRepository.deleteByCommentAuthor(user);
+            commentLikeRepository.deleteByPostAuthor(user);
             reportRepository.deleteByReporter(user);
             blockRepository.deleteAllByBlocker(user);
             blockRepository.deleteAllByBlocked(user);

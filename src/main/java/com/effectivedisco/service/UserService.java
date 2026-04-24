@@ -145,6 +145,7 @@ public class UserService {
         // 4. 이 사용자 게시물/댓글에 달린 좋아요 (cascade 전 선행 삭제)
         postLikeRepository.deleteByPostAuthor(user);
         commentLikeRepository.deleteByCommentAuthor(user);
+        commentLikeRepository.deleteByPostAuthor(user);
         // 5. 제출한 신고 (reporter FK)
         reportRepository.deleteByReporter(user);
         // 6. 차단 관계 — blocker/blocked 양방향 모두 삭제

@@ -147,6 +147,7 @@ class UserServiceTest {
         verify(postLikeRepository).deleteByPostAuthor(user);
         verify(commentLikeRepository).deleteByUser(user);
         verify(commentLikeRepository).deleteByCommentAuthor(user);
+        verify(commentLikeRepository).deleteByPostAuthor(user);
         verify(reportRepository).deleteByReporter(user);
         verify(userRepository).delete(user);
     }
