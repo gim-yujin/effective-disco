@@ -16,6 +16,9 @@ out/
 # IDE — VS Code
 .vscode/
 
+# Local agent tools
+.codex
+
 # Compiled output
 *.class
 *.jar
