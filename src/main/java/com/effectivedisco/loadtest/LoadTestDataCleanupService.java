@@ -1,22 +1,10 @@
 package com.effectivedisco.loadtest;
 
-import com.effectivedisco.domain.User;
-import com.effectivedisco.repository.BlockRepository;
-import com.effectivedisco.repository.CommentLikeRepository;
-import com.effectivedisco.repository.CommentRepository;
-import com.effectivedisco.repository.MessageRepository;
-import com.effectivedisco.repository.NotificationRepository;
-import com.effectivedisco.repository.PasswordResetTokenRepository;
-import com.effectivedisco.repository.PostLikeRepository;
-import com.effectivedisco.repository.PostRepository;
-import com.effectivedisco.repository.ReportRepository;
-import com.effectivedisco.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-
-import java.util.List;
 
 /**
  * 문제 해결:
@@ -30,16 +18,7 @@ import java.util.List;
 @ConditionalOnProperty(name = "app.load-test.enabled", havingValue = "true")
 public class LoadTestDataCleanupService {
 
-    private final UserRepository userRepository;
-    private final PostRepository postRepository;
-    private final CommentRepository commentRepository;
-    private final NotificationRepository notificationRepository;
-    private final MessageRepository messageRepository;
-    private final PasswordResetTokenRepository passwordResetTokenRepository;
-    private final PostLikeRepository postLikeRepository;
-    private final CommentLikeRepository commentLikeRepository;
-    private final ReportRepository reportRepository;
-    private final BlockRepository blockRepository;
+    private final JdbcTemplate jdbcTemplate;
 
     @Transactional
     public CleanupSummary cleanupByPrefix(String prefix) {
@@ -47,30 +26,35 @@ public class LoadTestDataCleanupService {
             throw new IllegalArgumentException("load test cleanup prefix must not be blank");
         }
 
-        List<User> users = userRepository.findByUsernameStartingWithOrderByIdAsc(prefix);
-        long matchedUsers = users.size();
-        long matchedPosts = postRepository.countByAuthorUsernameStartingWith(prefix);
-        long matchedComments = commentRepository.countByAuthorUsernameStartingWith(prefix);
-        long matchedNotifications = notificationRepository.countByRecipientUsernameStartingWith(prefix);
-        long matchedMessages = messageRepository.countBySenderUsernameStartingWithOrRecipientUsernameStartingWith(prefix, prefix);
-        long matchedPasswordResetTokens = passwordResetTokenRepository.countByUserUsernameStartingWith(prefix);
+        String prefixPattern = prefix + "%";
+        prepareScopeTables(prefixPattern);
 
-        for (User user : users) {
-            passwordResetTokenRepository.deleteByUser(user);
-            notificationRepository.deleteAllByRecipient(user);
-            messageRepository.deleteAllByUser(user);
-            postLikeRepository.deleteByUser(user);
-            postLikeRepository.deleteByPostAuthor(user);
-            commentLikeRepository.deleteByUser(user);
-            commentLikeRepository.deleteByCommentAuthor(user);
-            commentLikeRepository.deleteByPostAuthor(user);
-            reportRepository.deleteByReporter(user);
-            blockRepository.deleteAllByBlocker(user);
-            blockRepository.deleteAllByBlocked(user);
-            userRepository.delete(user);
-        }
+        long matchedUsers = count("SELECT COUNT(*) FROM loadtest_cleanup_users");
+        long matchedPosts = count("SELECT COUNT(*) FROM loadtest_cleanup_posts");
+        long matchedComments = count("""
+                SELECT COUNT(*)
+                FROM comments c
+                WHERE c.user_id IN (SELECT id FROM loadtest_cleanup_users)
+                """);
+        long matchedNotifications = count("""
+                SELECT COUNT(*)
+                FROM notifications n
+                WHERE n.recipient_id IN (SELECT id FROM loadtest_cleanup_users)
+                """);
+        long matchedMessages = count("""
+                SELECT COUNT(*)
+                FROM messages m
+                WHERE m.sender_id IN (SELECT id FROM loadtest_cleanup_users)
+                   OR m.recipient_id IN (SELECT id FROM loadtest_cleanup_users)
+                """);
+        long matchedPasswordResetTokens = count("""
+                SELECT COUNT(*)
+                FROM password_reset_tokens t
+                WHERE t.user_id IN (SELECT id FROM loadtest_cleanup_users)
+                """);
 
-        userRepository.flush();
+        deleteScope();
+        clearScopeTables();
 
         return new CleanupSummary(
                 prefix,
@@ -81,6 +65,107 @@ public class LoadTestDataCleanupService {
                 matchedMessages,
                 matchedPasswordResetTokens
         );
+    }
+
+    private void prepareScopeTables(String prefixPattern) {
+        jdbcTemplate.execute("CREATE TEMPORARY TABLE IF NOT EXISTS loadtest_cleanup_users (id BIGINT PRIMARY KEY)");
+        jdbcTemplate.execute("CREATE TEMPORARY TABLE IF NOT EXISTS loadtest_cleanup_posts (id BIGINT PRIMARY KEY)");
+        jdbcTemplate.execute("CREATE TEMPORARY TABLE IF NOT EXISTS loadtest_cleanup_comments (id BIGINT PRIMARY KEY)");
+        clearScopeTables();
+
+        jdbcTemplate.update("""
+                INSERT INTO loadtest_cleanup_users (id)
+                SELECT u.id
+                FROM users u
+                WHERE u.username LIKE ?
+                """, prefixPattern);
+        jdbcTemplate.update("""
+                INSERT INTO loadtest_cleanup_posts (id)
+                SELECT p.id
+                FROM posts p
+                WHERE p.user_id IN (SELECT id FROM loadtest_cleanup_users)
+                """);
+        jdbcTemplate.update("""
+                INSERT INTO loadtest_cleanup_comments (id)
+                SELECT id
+                FROM (
+                    WITH RECURSIVE comments_to_delete(id) AS (
+                        SELECT c.id
+                        FROM comments c
+                        WHERE c.user_id IN (SELECT id FROM loadtest_cleanup_users)
+                           OR c.post_id IN (SELECT id FROM loadtest_cleanup_posts)
+                        UNION
+                        SELECT child.id
+                        FROM comments child
+                        JOIN comments_to_delete parent ON child.parent_id = parent.id
+                    )
+                    SELECT id FROM comments_to_delete
+                ) scoped_comments
+                """);
+    }
+
+    private void clearScopeTables() {
+        jdbcTemplate.update("DELETE FROM loadtest_cleanup_comments");
+        jdbcTemplate.update("DELETE FROM loadtest_cleanup_posts");
+        jdbcTemplate.update("DELETE FROM loadtest_cleanup_users");
+    }
+
+    private void deleteScope() {
+        jdbcTemplate.update("DELETE FROM password_reset_tokens WHERE user_id IN (SELECT id FROM loadtest_cleanup_users)");
+        jdbcTemplate.update("DELETE FROM notification_settings WHERE user_id IN (SELECT id FROM loadtest_cleanup_users)");
+        jdbcTemplate.update("DELETE FROM notifications WHERE recipient_id IN (SELECT id FROM loadtest_cleanup_users)");
+        jdbcTemplate.update("""
+                DELETE FROM messages
+                WHERE sender_id IN (SELECT id FROM loadtest_cleanup_users)
+                   OR recipient_id IN (SELECT id FROM loadtest_cleanup_users)
+                """);
+
+        jdbcTemplate.update("""
+                DELETE FROM comment_likes
+                WHERE comment_id IN (SELECT id FROM loadtest_cleanup_comments)
+                   OR user_id IN (SELECT id FROM loadtest_cleanup_users)
+                """);
+        jdbcTemplate.update("""
+                DELETE FROM post_likes
+                WHERE post_id IN (SELECT id FROM loadtest_cleanup_posts)
+                   OR user_id IN (SELECT id FROM loadtest_cleanup_users)
+                """);
+        jdbcTemplate.update("""
+                DELETE FROM bookmarks
+                WHERE post_id IN (SELECT id FROM loadtest_cleanup_posts)
+                   OR user_id IN (SELECT id FROM loadtest_cleanup_users)
+                """);
+        jdbcTemplate.update("""
+                DELETE FROM follows
+                WHERE follower_id IN (SELECT id FROM loadtest_cleanup_users)
+                   OR following_id IN (SELECT id FROM loadtest_cleanup_users)
+                """);
+        jdbcTemplate.update("""
+                DELETE FROM blocks
+                WHERE blocker_id IN (SELECT id FROM loadtest_cleanup_users)
+                   OR blocked_id IN (SELECT id FROM loadtest_cleanup_users)
+                """);
+        jdbcTemplate.update("""
+                DELETE FROM reports
+                WHERE reporter_id IN (SELECT id FROM loadtest_cleanup_users)
+                   OR (target_type = 'POST' AND target_id IN (SELECT id FROM loadtest_cleanup_posts))
+                   OR (target_type = 'COMMENT' AND target_id IN (SELECT id FROM loadtest_cleanup_comments))
+                """);
+
+        jdbcTemplate.update("DELETE FROM post_tags WHERE post_id IN (SELECT id FROM loadtest_cleanup_posts)");
+        jdbcTemplate.update("DELETE FROM post_images WHERE post_id IN (SELECT id FROM loadtest_cleanup_posts)");
+        jdbcTemplate.update("""
+                DELETE FROM comments
+                WHERE id IN (SELECT id FROM loadtest_cleanup_comments)
+                """);
+        jdbcTemplate.update("DELETE FROM posts WHERE id IN (SELECT id FROM loadtest_cleanup_posts)");
+        jdbcTemplate.update("DELETE FROM bookmark_folders WHERE user_id IN (SELECT id FROM loadtest_cleanup_users)");
+        jdbcTemplate.update("DELETE FROM users WHERE id IN (SELECT id FROM loadtest_cleanup_users)");
+    }
+
+    private long count(String sql, Object... args) {
+        Long result = jdbcTemplate.queryForObject(sql, Long.class, args);
+        return result == null ? 0L : result;
     }
 
     public record CleanupSummary(

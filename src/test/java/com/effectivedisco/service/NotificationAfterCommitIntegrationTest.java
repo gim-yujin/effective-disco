@@ -1,8 +1,9 @@
 package com.effectivedisco.service;
 
+import com.effectivedisco.domain.Notification;
+import com.effectivedisco.domain.NotificationType;
 import com.effectivedisco.domain.Post;
 import com.effectivedisco.domain.User;
-import com.effectivedisco.domain.NotificationType;
 import com.effectivedisco.event.NotificationRequestedEvent;
 import com.effectivedisco.repository.BlockRepository;
 import com.effectivedisco.repository.BookmarkRepository;
@@ -209,6 +210,35 @@ class NotificationAfterCommitIntegrationTest {
                 .isEqualTo(unreadRows);
     }
 
+    @Test
+    void markPageAsReadByIds_nativeQueryTransitionsOnlyScopedUnreadRows() {
+        User recipient = saveUser("recipient-native");
+        User other = saveUser("other-native");
+
+        Notification first = saveNotification(recipient, "first");
+        Notification second = saveNotification(recipient, "second");
+        Notification third = saveNotification(recipient, "third");
+        saveNotification(other, "other");
+
+        int transitioned = transactionTemplate.execute(status -> notificationRepository.markPageAsReadByIds(
+                recipient.getId(),
+                List.of(third.getId(), first.getId(), second.getId())
+        ));
+
+        assertThat(transitioned)
+                .as("문제 해결 검증: native read-page update는 unsorted 입력이어도 대상 unread row만 전환해야 한다")
+                .isEqualTo(3);
+        assertThat(notificationRepository.countByRecipientAndIsReadFalse(recipient)).isZero();
+        assertThat(notificationRepository.countByRecipientAndIsReadFalse(other)).isEqualTo(1);
+        Integer retriedTransitionCount = transactionTemplate.execute(status -> notificationRepository.markPageAsReadByIds(
+                recipient.getId(),
+                List.of(first.getId(), second.getId(), third.getId())
+        ));
+        assertThat(retriedTransitionCount)
+                .as("문제 해결 검증: 이미 읽은 row는 WHERE is_read=false 조건으로 전환 수에 포함하지 않는다")
+                .isZero();
+    }
+
     private User saveUser(String username) {
         return userRepository.save(User.builder()
                 .username(username)
@@ -222,6 +252,15 @@ class NotificationAfterCommitIntegrationTest {
                 .title("title")
                 .content("content")
                 .author(author)
+                .build());
+    }
+
+    private Notification saveNotification(User recipient, String message) {
+        return notificationRepository.save(Notification.builder()
+                .recipient(recipient)
+                .type(NotificationType.MESSAGE)
+                .message(message)
+                .link("/notifications/" + message)
                 .build());
     }
 

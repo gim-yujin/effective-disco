@@ -127,15 +127,33 @@ public interface NotificationRepository extends JpaRepository<Notification, Long
      * 명시적 "현재 페이지 읽음"은 화면에 보인 알림 id 집합만 읽음 처리하면 충분하다.
      * recipient 전체 unread row 를 한 번에 update 하지 않고 작은 id 집합만 건드려
      * read-all bulk update 가 장시간 soak 에서 병목이 되는 문제를 줄인다.
+     *
+     * deadlock 방지:
+     * 여러 read-page 요청이 같은 수신자의 겹치는 unread row 를 동시에 갱신하면
+     * 단순 UPDATE ... IN (...) 은 실행 계획에 따라 row lock 획득 순서가 달라질 수 있다.
+     * 먼저 대상 row 를 id 오름차순으로 FOR UPDATE 잠근 뒤 update 해, 모든 트랜잭션이
+     * 같은 순서로 notifications row lock 을 획득하도록 강제한다.
      */
     @Modifying(flushAutomatically = true, clearAutomatically = true)
-    @Query("""
-            UPDATE Notification n
-            SET n.isRead = true
-            WHERE n.recipient.id = :recipientId
-              AND n.isRead = false
-              AND n.id IN :notificationIds
-            """)
+    @Query(
+            value = """
+                    UPDATE notifications
+                    SET is_read = true
+                    WHERE id IN (
+                        SELECT locked.id
+                        FROM (
+                            SELECT id
+                            FROM notifications
+                            WHERE recipient_id = :recipientId
+                              AND is_read = false
+                              AND id IN (:notificationIds)
+                            ORDER BY id
+                            FOR UPDATE
+                        ) locked
+                    )
+                    """,
+            nativeQuery = true
+    )
     int markPageAsReadByIds(@Param("recipientId") Long recipientId, @Param("notificationIds") List<Long> notificationIds);
 
     /** 회원 탈퇴: 수신자의 모든 알림 삭제 */

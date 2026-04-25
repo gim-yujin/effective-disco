@@ -402,6 +402,7 @@ public class NotificationService {
         List<Long> unreadIds = slice.getContent().stream()
                 .filter(notification -> !notification.read())
                 .map(NotificationPageState::id)
+                .sorted()
                 .toList();
 
         if (unreadIds.isEmpty()) {

@@ -1,21 +1,34 @@
 package com.effectivedisco.loadtest;
 
+import com.effectivedisco.domain.Block;
+import com.effectivedisco.domain.Bookmark;
+import com.effectivedisco.domain.BookmarkFolder;
 import com.effectivedisco.domain.Comment;
 import com.effectivedisco.domain.CommentLike;
+import com.effectivedisco.domain.Follow;
 import com.effectivedisco.domain.Message;
 import com.effectivedisco.domain.Notification;
+import com.effectivedisco.domain.NotificationSetting;
 import com.effectivedisco.domain.NotificationType;
 import com.effectivedisco.domain.PasswordResetToken;
 import com.effectivedisco.domain.Post;
 import com.effectivedisco.domain.PostLike;
+import com.effectivedisco.domain.Report;
+import com.effectivedisco.domain.ReportTargetType;
 import com.effectivedisco.domain.User;
+import com.effectivedisco.repository.BlockRepository;
+import com.effectivedisco.repository.BookmarkFolderRepository;
+import com.effectivedisco.repository.BookmarkRepository;
 import com.effectivedisco.repository.CommentRepository;
 import com.effectivedisco.repository.CommentLikeRepository;
+import com.effectivedisco.repository.FollowRepository;
 import com.effectivedisco.repository.MessageRepository;
+import com.effectivedisco.repository.NotificationSettingRepository;
 import com.effectivedisco.repository.NotificationRepository;
 import com.effectivedisco.repository.PasswordResetTokenRepository;
 import com.effectivedisco.repository.PostLikeRepository;
 import com.effectivedisco.repository.PostRepository;
+import com.effectivedisco.repository.ReportRepository;
 import com.effectivedisco.repository.UserRepository;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -33,12 +46,19 @@ import static org.assertj.core.api.Assertions.assertThat;
 class LoadTestDataCleanupServiceTest {
 
     @Autowired LoadTestDataCleanupService loadTestDataCleanupService;
+    @Autowired LoadTestSqlProfiler loadTestSqlProfiler;
     @Autowired UserRepository userRepository;
     @Autowired PostRepository postRepository;
     @Autowired CommentRepository commentRepository;
     @Autowired CommentLikeRepository commentLikeRepository;
     @Autowired PostLikeRepository postLikeRepository;
+    @Autowired BookmarkRepository bookmarkRepository;
+    @Autowired BookmarkFolderRepository bookmarkFolderRepository;
+    @Autowired FollowRepository followRepository;
+    @Autowired BlockRepository blockRepository;
+    @Autowired ReportRepository reportRepository;
     @Autowired NotificationRepository notificationRepository;
+    @Autowired NotificationSettingRepository notificationSettingRepository;
     @Autowired MessageRepository messageRepository;
     @Autowired PasswordResetTokenRepository passwordResetTokenRepository;
 
@@ -93,6 +113,31 @@ class LoadTestDataCleanupServiceTest {
         commentLikeRepository.saveAndFlush(new CommentLike(loadtestCommentOnRegularPost, regularUser));
         commentLikeRepository.saveAndFlush(new CommentLike(regularCommentOnRegularPost, loadtestWriter));
 
+        BookmarkFolder loadtestFolder = bookmarkFolderRepository.saveAndFlush(new BookmarkFolder(loadtestWriter, "ltcase folder"));
+        bookmarkRepository.saveAndFlush(new Bookmark(loadtestWriter, regularPost, loadtestFolder));
+        bookmarkRepository.saveAndFlush(new Bookmark(regularUser, loadtestPost));
+        followRepository.saveAndFlush(new Follow(loadtestWriter, regularUser));
+        followRepository.saveAndFlush(new Follow(regularUser, loadtestAuthor));
+        blockRepository.saveAndFlush(new Block(loadtestWriter, regularUser));
+        blockRepository.saveAndFlush(new Block(regularUser, loadtestAuthor));
+        reportRepository.saveAndFlush(Report.builder()
+                .reporter(loadtestWriter)
+                .targetType(ReportTargetType.POST)
+                .targetId(regularPost.getId())
+                .reason("ltcase reporter")
+                .build());
+        reportRepository.saveAndFlush(Report.builder()
+                .reporter(regularUser)
+                .targetType(ReportTargetType.COMMENT)
+                .targetId(loadtestCommentOnLoadtestPost.getId())
+                .reason("ltcase target")
+                .build());
+        notificationSettingRepository.saveAndFlush(new NotificationSetting(
+                loadtestAuthor,
+                NotificationType.COMMENT,
+                false
+        ));
+
         notificationRepository.saveAndFlush(Notification.builder()
                 .recipient(loadtestAuthor)
                 .type(NotificationType.COMMENT)
@@ -113,7 +158,9 @@ class LoadTestDataCleanupServiceTest {
                 LocalDateTime.now().plusHours(1)
         ));
 
+        LoadTestSqlProfiler.ScopeToken cleanupSqlScope = loadTestSqlProfiler.beginScope();
         LoadTestDataCleanupService.CleanupSummary summary = loadTestDataCleanupService.cleanupByPrefix("ltcase");
+        LoadTestSqlProfiler.SqlProfileSnapshot cleanupSql = loadTestSqlProfiler.endScope(cleanupSqlScope);
 
         assertThat(summary.matchedUsers()).isEqualTo(2);
         assertThat(summary.matchedPosts()).isEqualTo(1);
@@ -123,6 +170,9 @@ class LoadTestDataCleanupServiceTest {
         assertThat(summary.matchedNotifications()).isEqualTo(1);
         assertThat(summary.matchedMessages()).isEqualTo(1);
         assertThat(summary.matchedPasswordResetTokens()).isEqualTo(1);
+        assertThat(cleanupSql.sqlStatementCount())
+                .as("cleanup은 prefix 범위 bulk SQL만 써야 하며, 사용자별 delete 루프/N+1로 돌아가면 안 된다")
+                .isLessThanOrEqualTo(40);
 
         assertThat(userRepository.findByUsername("ltcase-u0")).isEmpty();
         assertThat(userRepository.findByUsername("ltcase-u1")).isEmpty();
@@ -132,6 +182,12 @@ class LoadTestDataCleanupServiceTest {
         assertThat(commentRepository.count()).isEqualTo(1);
         assertThat(postLikeRepository.count()).isZero();
         assertThat(commentLikeRepository.count()).isZero();
+        assertThat(bookmarkRepository.count()).isZero();
+        assertThat(bookmarkFolderRepository.count()).isZero();
+        assertThat(followRepository.count()).isZero();
+        assertThat(blockRepository.count()).isZero();
+        assertThat(reportRepository.count()).isZero();
+        assertThat(notificationSettingRepository.count()).isZero();
         assertThat(notificationRepository.count()).isZero();
         assertThat(messageRepository.count()).isZero();
         assertThat(passwordResetTokenRepository.count()).isZero();
