@@ -35,6 +35,8 @@ loadtest/results/
 # Spring Boot
 application-local.yml
 application-prod.yml
+# Non-secret production defaults are versioned; keep secrets in env vars.
+!src/main/resources/application-prod.yml
 
 # Sensitive / environment
 .env

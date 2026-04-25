@@ -195,6 +195,10 @@ controller/
 
 Swagger UI: `http://localhost:8080/swagger-ui.html`
 
+Swagger/OpenAPI 문서는 `/api/**` REST 엔드포인트만 포함한다. 운영에서는
+`SPRING_PROFILES_ACTIVE=prod`로 실행하면 Swagger UI와 `/v3/api-docs`가
+비활성화된다.
+
 ## CI/CD
 
 GitHub Actions (`.github/workflows/ci.yml`):
