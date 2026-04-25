@@ -120,6 +120,20 @@ BASE_URL=http://127.0.0.1:18082 \
 ./loadtest/run-bbs-managed-soak.sh
 ```
 
+장시간 managed soak 에서 콘솔 진행 상태를 긴 간격으로 남기려면:
+
+```bash
+SOAK_FACTOR=0.95 \
+SOAK_DURATION=2h \
+WARMUP_DURATION=2m \
+SAMPLE_INTERVAL_SECONDS=60 \
+PROGRESS_INTERVAL_SECONDS=600 \
+BASE_URL=http://127.0.0.1:18082 \
+./loadtest/run-bbs-managed-soak.sh
+```
+
+`PROGRESS_INTERVAL_SECONDS=600` 은 10분마다 현재 metrics snapshot 을 콘솔에 출력한다.
+
 주의:
 
 - `run-bbs-soak.sh`는 `BASE_URL=http://localhost:...` 로 호출되면
@@ -129,6 +143,7 @@ BASE_URL=http://127.0.0.1:18082 \
   soak runner가 완전히 끝난 뒤에만 앱을 종료한다.
   수동 터미널 종료 때문에 `write_posts_and_comments -> POST /api/posts`
   가 `connection refused`로 집계되는 teardown artifact를 줄이기 위한 wrapper다.
+  장시간 측정 중에도 soak runner 가 끝나기 전에는 Spring 앱을 수동 종료하지 않는다.
 - `run-bbs-soak.sh`는 이제 `k6` 종료 직후 metrics sampler를 즉시 정리하고,
   final metrics / SQL snapshot / cleanup 단계에 timeout을 건다.
   목적은 main phase 종료 후 sample interval만큼 더 멈춰 보이는 post-processing hang을 줄이는 것이다.
@@ -256,6 +271,12 @@ BASE_URL=http://127.0.0.1:18082 \
 - `loadtest/results/read-relation-pair-matrix-*.tsv`: read/relation pair 별 aggregate 경로와 unstable 여부 원본
 - `loadtest/results/soak-*.md`: 장시간 soak 최종 요약
 - `loadtest/results/soak-*-metrics.jsonl`: soak 중 주기적 서버 메트릭 타임라인
+
+주의:
+
+- `loadtest/results/` 와 `*.log` 는 repository ignore 대상이다.
+- 장시간 실행의 raw `.log`, `*-metrics.jsonl`, `*-server.json`, `*-k6.json` 은 크기가 커서 커밋하지 않는다.
+- 장기 보관이 필요한 값은 `docs/` 문서에 요약 수치와 해석만 남긴다.
 
 `run-bbs-soak.sh` finalization 관련:
 

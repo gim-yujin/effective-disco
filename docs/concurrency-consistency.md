@@ -3120,3 +3120,101 @@ SOAK_FACTOR=0.9 SOAK_DURATION=1h WARMUP_DURATION=2m SAMPLE_INTERVAL_SECONDS=60 \
 - 현재 프로젝트는
   `clean 0.9 / 2시간 = PASS`를 운영형 baseline으로 채택한다.
 - 성능 최적화는 여기서 일시중지한다.
+
+## 2026-04-26 notification read-page deadlock hardening 재측정
+
+상태: 완료
+
+### 검증 범위
+
+- `notification.read-page` 현재 페이지 읽음 처리 deadlock 재현 여부
+- `markPageAsReadByIds` deterministic row lock 변경 후 10초 / 30분 / 2시간 managed soak
+- loadtest cleanup 이 장시간 측정 후 prefix 데이터를 실제로 지우는지 확인
+- N+1 또는 row 수 증가형 SQL fan-out 이 남아 있는지 병목 profile 로 확인
+
+### 변경 전 재현
+
+- summary: `loadtest/results/soak-20260426-021308.md`
+- app log: `loadtest/results/loadtest-app-20260426-021257.log` (raw log, repository 미추적)
+- 조건: `SOAK_FACTOR=1`, `SOAK_DURATION=10s`, `WARMUP_DURATION=5s`
+- 상태: `FAIL`
+- `http p95 = 278.10ms`, `http p99 = 620.78ms`
+- `unexpected_response_rate = 0.0000`
+- `dbPoolTimeouts = 0`
+- `duplicateKeyConflicts = 0`
+- SQL invariant 전부 `0`
+- threshold failure:
+  - `browse_list_duration p95 = 406.85ms` (`p95 < 400` 위반)
+  - `block_mixed_duration p99 = 785.67ms` (`p99 < 700` 위반)
+  - `bookmark_mixed_duration p99 = 788.87ms` (`p99 < 700` 위반)
+- 같은 앱 로그에서 PostgreSQL `40P01` deadlock 이 확인됐다.
+  - deadlock 위치: `while locking tuple ... in relation "notifications"`
+  - 실패 SQL: `update notifications ... where recipient_id=? and is_read=false and id in (...)`
+  - 해석: 겹치는 알림 row 를 여러 read-page 요청이 동시에 갱신하면서,
+    단순 `UPDATE ... IN (...)` 실행계획이 row lock 획득 순서를 보장하지 못했다.
+
+### 적용 변경
+
+- [NotificationRepository.java](/home/admin0/effective-disco/src/main/java/com/effectivedisco/repository/NotificationRepository.java)
+  의 `markPageAsReadByIds` 를 native query 로 전환했다.
+- 대상 row 를 먼저 `ORDER BY id FOR UPDATE` 로 잠근 뒤 update 하도록 바꿔,
+  모든 트랜잭션이 같은 id 오름차순으로 `notifications` row lock 을 잡게 했다.
+- [NotificationService.java](/home/admin0/effective-disco/src/main/java/com/effectivedisco/service/NotificationService.java)
+  에서 unread id 입력도 정렬해 repository 호출 전 순서를 맞췄다.
+- [LoadTestDataCleanupService.java](/home/admin0/effective-disco/src/main/java/com/effectivedisco/loadtest/LoadTestDataCleanupService.java)
+  는 prefix 사용자/게시물/댓글 scope 를 temporary table 에 담고 FK 순서대로 bulk delete 하도록 정리했다.
+- [LoadTestDataCleanupServiceTest.java](/home/admin0/effective-disco/src/test/java/com/effectivedisco/loadtest/LoadTestDataCleanupServiceTest.java)
+  는 cleanup 대상 FK 범위를 확장하고, cleanup SQL 문 수가 `40` 이하인지 검증해 사용자별 delete 루프/N+1 회귀를 막는다.
+- [NotificationAfterCommitIntegrationTest.java](/home/admin0/effective-disco/src/test/java/com/effectivedisco/service/NotificationAfterCommitIntegrationTest.java)
+  는 native read-page update 가 unsorted 입력에서도 대상 unread row 만 전환하고 재시도 시 `0` 을 반환하는지 검증한다.
+
+### 변경 후 측정
+
+| run | 조건 | status | http p95 | http p99 | unexpected | dbPoolTimeouts | duplicateKeyConflicts | invariants | cleanup |
+|-----|------|--------|----------|----------|------------|----------------|-----------------------|------------|---------|
+| `soak-20260426-022736` | `1.0 / 10s`, warmup `5s` | `PASS` | `255.81ms` | `333.82ms` | `0.0000` | `0` | `0` | all `0` | `ok` |
+| `soak-20260426-023316` | `0.95 / 30m`, warmup `2m` | `PASS` | `269.31ms` | `339.92ms` | `0.0000` | `0` | `0` | all `0` | `ok` |
+| `soak-20260426-031511` | `0.95 / 2h`, warmup `2m` | `PASS` | `274.48ms` | `346.48ms` | `0.0000` | `0` | `0` | all `0` | `ok` |
+
+2시간 managed soak 는 `PROGRESS_INTERVAL_SECONDS=600` 으로 10분마다 상태를 출력했다.
+
+| elapsed | dbPoolTimeouts | duplicateKeyConflicts | maxThreadsAwaitingConnection | maxActiveConnections | longestTransactionMs |
+|---------|----------------|-----------------------|------------------------------|----------------------|----------------------|
+| `10m` | `0` | `0` | `188` | `28` | `4` |
+| `20m` | `0` | `0` | `188` | `28` | `6` |
+| `30m` | `0` | `0` | `188` | `28` | `9` |
+| `40m` | `0` | `0` | `188` | `28` | `8` |
+| `50m` | `0` | `0` | `188` | `28` | `9` |
+| `60m` | `0` | `0` | `188` | `28` | `6` |
+| `70m` | `0` | `0` | `188` | `28` | `9` |
+| `80m` | `0` | `0` | `188` | `28` | `15` |
+| `90m` | `0` | `0` | `188` | `28` | `10` |
+| `100m` | `0` | `0` | `188` | `28` | `18` |
+| `110m` | `0` | `0` | `188` | `28` | `15` |
+| `120m` | `0` | `0` | `188` | `28` | `2` |
+
+### N+1 / SQL fan-out 확인
+
+2시간 run 의 final server metrics 기준 `notification.read-page` 는 row 수에 비례해 SQL 문 수가 늘어나는 패턴을 보이지 않았다.
+
+| profile | sampleCount | avgWallMs | maxWallMs | avgSqlMs | maxSqlMs | avgSqlStatementCount | maxSqlStatementCount |
+|---------|-------------|-----------|-----------|----------|----------|----------------------|----------------------|
+| `notification.read-page.summary` | `374581` | `5.69` | `50.28` | `4.52` | `49.11` | `4.62` | `5` |
+| `notification.read-page.summary.transition` | `374581` | `4.54` | `44.51` | `3.63` | `43.85` | `3.62` | `4` |
+| `notification.read-page.mark-ids` | `339683` | `1.68` | `43.58` | `1.39` | `43.31` | `1.00` | `1` |
+| `notification.read-page.counter.decrement` | `303445` | `1.67` | `39.78` | `1.45` | `39.60` | `1.00` | `1` |
+| `notification.read-page.page-state` | `374581` | `1.00` | `25.32` | `0.77` | `19.77` | `1.00` | `1` |
+
+cleanup 도 테스트에서 statement count 상한을 둔 bulk SQL 구조로 바뀌었고,
+2시간 run 이후 DB 직접 확인 결과 prefix 범위 잔여 row 는 `0|0|0|0`
+(`users|posts|comments|notifications`) 이었다.
+
+### 로그 해석
+
+- 변경 후 10초 / 30분 / 2시간 앱 로그에서 `deadlock`, `40P01`, `CannotAcquireLock`,
+  `Connection is not available` 은 재현되지 않았다.
+- 30분과 2시간 run 에서 cleanup 시점의 Hikari leak detection warning 이 각각 1건씩 남았다.
+- 2시간 run 은 `241607` posts, `1347607` notifications 를 cleanup 했으므로,
+  이 warning 은 workload failure 가 아니라 cleanup 트랜잭션이 leak threshold 보다 오래 connection 을 점유한 신호로 해석한다.
+- raw `.log` 파일과 `loadtest/results` 원본 산출물은 크기가 커서 repository 에 업로드하지 않고,
+  이 문서에 요약 수치만 남긴다.

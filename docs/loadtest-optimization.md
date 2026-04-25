@@ -5727,3 +5727,94 @@ longestTransactionMs 2–17ms 로 내내 tight, dbPoolTimeouts/duplicateKeyConfl
 #### 결론
 
 `comment.like` 는 첫 구현부터 `post.like` atomic 패턴을 그대로 가져가 **별도 최적화 없이 post.like 와 동일한 avgWall 분포** 를 달성. 2h/0.95 소크 full PASS, invariant 위반 0, 새 race 시나리오도 threshold 여유. 대칭성 확보로 이후 코멘트 좋아요 관련 유지보수 시에도 post.like 와 동일 튜닝 레버를 그대로 사용 가능.
+
+### loadtest cleanup bulk화 + `notification.read-page` deterministic lock (2026-04-26)
+
+`0.95` managed soak 재개 중 두 가지 운영성 문제가 다시 드러났다.
+
+1. 장시간 run 후 cleanup 이 큰 prefix scope 를 안정적으로 비우지 못하거나, FK 관계 때문에 후속 측정 DB를 오염시킬 수 있었다.
+2. `notification.read-page` 의 `markPageAsReadByIds` 가 겹치는 unread row 를 동시에 update 할 때 PostgreSQL deadlock(`40P01`)을 만들 수 있었다.
+
+#### 변경 내용
+
+| 영역 | 이전 | 이후 |
+|------|------|------|
+| cleanup scope 계산 | repository delete 조합에 의존 | prefix users/posts/comments 를 temporary table 에 담아 고정 |
+| cleanup delete | 일부 FK 범위 누락 가능 | password reset, notification setting, messages, comment/post likes, bookmarks, follows, blocks, reports, post_tags/images, nested comments, posts, folders, users 를 FK 순서대로 bulk delete |
+| cleanup 회귀 테스트 | row 삭제 여부 중심 | FK coverage + SQL statement count `<= 40` 로 사용자별 loop/N+1 방지 |
+| read-page mark | JPQL `UPDATE ... WHERE id IN (...)` | native `UPDATE ... WHERE id IN (SELECT ... ORDER BY id FOR UPDATE)` |
+| id 입력 순서 | page-state 결과 순서 의존 | service 에서 unread id 를 정렬 후 전달 |
+| native query 회귀 테스트 | 없음 | unsorted 입력도 scoped unread row 만 전환하고, 재시도는 `0` 반환 검증 |
+
+`markPageAsReadByIds` 의 핵심은 update 대상 row 를 먼저 `id` 오름차순으로 잠그는 것이다. 단순 `IN (...)` update 는 실행계획에 따라 row lock 순서가 달라질 수 있고, 서로 겹치는 row 집합을 다른 순서로 잡으면 transactionid deadlock 이 가능하다. native query 는 모든 트랜잭션의 lock acquisition order 를 `notifications.id ASC` 로 맞춘다.
+
+#### 변경 전 재현
+
+`soak-20260426-021308.md` (`SOAK_FACTOR=1`, `SOAK_DURATION=10s`) 는 status `FAIL` 이었다.
+
+- `http p95=278.10ms`, `p99=620.78ms`
+- `unexpected_response_rate=0.0000`
+- `dbPoolTimeouts=0`
+- invariant 전부 `0`
+- threshold 위반:
+  - `browse_list_duration p95=406.85ms`
+  - `block_mixed_duration p99=785.67ms`
+  - `bookmark_mixed_duration p99=788.87ms`
+- 앱 로그에는 `ERROR: deadlock detected`, `SQLState: 40P01`,
+  `while locking tuple ... in relation "notifications"` 가 남았다.
+- 실패 SQL 은 기존 JPQL update:
+  `update notifications ... where recipient_id=? and is_read=false and id in (...)`
+
+즉 첫 짧은 run 은 HTTP 오류율이나 pool timeout 이 아니라,
+read-page update 의 row lock 순서 불확정성과 per-scenario latency threshold 가 같이 드러난 사례다.
+
+#### 변경 후 검증
+
+| run | 조건 | status | http p95 | http p99 | dbPoolTimeouts | duplicateKeyConflicts | cleanup |
+|-----|------|--------|----------|----------|----------------|-----------------------|---------|
+| `soak-20260426-022736` | `1.0 / 10s`, warmup `5s` | `PASS` | `255.81ms` | `333.82ms` | `0` | `0` | `ok` |
+| `soak-20260426-023316` | `0.95 / 30m`, warmup `2m` | `PASS` | `269.31ms` | `339.92ms` | `0` | `0` | `ok` |
+| `soak-20260426-031511` | `0.95 / 2h`, warmup `2m` | `PASS` | `274.48ms` | `346.48ms` | `0` | `0` | `ok` |
+
+2시간 run 의 k6 summary:
+
+| scenario | p95 | p99 |
+|----------|-----|-----|
+| `browse_list_duration` | `231.48ms` | `272.32ms` |
+| `hot_post_detail_duration` | `257.46ms` | `309.05ms` |
+| `search_duration` | `230.65ms` | `271.74ms` |
+| `tag_search_duration` | `230.80ms` | `272.06ms` |
+| `sort_catalog_duration` | `232.00ms` | `272.86ms` |
+| `create_post_duration` | `237.01ms` | `282.13ms` |
+| `create_comment_duration` | `289.25ms` | `342.19ms` |
+| `like_add_race_duration` | `226.30ms` | `266.57ms` |
+| `like_remove_race_duration` | `225.87ms` | `266.45ms` |
+| `comment_like_add_race_duration` | `226.71ms` | `267.14ms` |
+| `comment_like_remove_race_duration` | `227.02ms` | `267.50ms` |
+| `bookmark_mixed_duration` | `329.75ms` | `396.46ms` |
+| `follow_mixed_duration` | `342.48ms` | `408.51ms` |
+| `block_mixed_duration` | `328.21ms` | `394.55ms` |
+| `notification_read_write_mixed_duration` | `283.91ms` | `337.40ms` |
+
+모든 threshold 는 통과했고, `unexpected_response_rate=0.0000` 이었다.
+
+#### N+1 확인
+
+2시간 run final server metrics 기준 read-page 경로는 row 수에 따라 SQL 문 수가 증가하지 않았다.
+
+| profile | avgWallMs | maxWallMs | avgSqlMs | maxSqlMs | avgSqlStatements | maxSqlStatements |
+|---------|-----------|-----------|----------|----------|------------------|------------------|
+| `notification.read-page.page-state` | `1.00` | `25.32` | `0.77` | `19.77` | `1.00` | `1` |
+| `notification.read-page.mark-ids` | `1.68` | `43.58` | `1.39` | `43.31` | `1.00` | `1` |
+| `notification.read-page.counter.decrement` | `1.67` | `39.78` | `1.45` | `39.60` | `1.00` | `1` |
+| `notification.read-page.summary.transition` | `4.54` | `44.51` | `3.63` | `43.85` | `3.62` | `4` |
+| `notification.read-page.summary` | `5.69` | `50.28` | `4.52` | `49.11` | `4.62` | `5` |
+
+cleanup 역시 테스트가 SQL statement count 를 `<= 40` 으로 고정한다. 따라서 현재 변경 기준으로는 `notification.read-page` 와 cleanup 둘 다 사용자 수/row 수에 비례해 select/delete loop 가 늘어나는 N+1 패턴은 관측되지 않았다.
+
+#### 남은 관찰점
+
+- 변경 후 10초 / 30분 / 2시간 앱 로그에서 `deadlock`, `40P01`, `CannotAcquireLock`, pool timeout 은 재현되지 않았다.
+- 30분과 2시간 run 의 cleanup 시점에 Hikari leak detection warning 이 1건씩 남았다.
+- 2시간 run 은 cleanup 대상이 `241607` posts, `1347607` notifications 였고, DB 잔여 row 확인은 `0|0|0|0` 이었다.
+- 따라서 이 warning 은 workload failure 가 아니라 cleanup transaction 이 leak threshold 보다 오래 connection 을 점유한 신호다. 다음 cleanup 개선을 한다면 transaction split 또는 cleanup 전용 leak threshold 조정이 후보지만, 현재 측정의 PASS 판정과 정합성에는 영향을 주지 않았다.
